@@ -311,6 +311,42 @@ async function handleSocketMessage(ws, message) {
             return;
         }
 
+        if (packet.type === 'install_log') {
+            const {
+                appendLog,
+                broadcastInstallLog,
+                resolveUserId,
+            } = require('../services/installLogService');
+
+            let userId = ws.authContext?.kind === 'install' ? ws.authContext.userId : null;
+            if (!userId) {
+                userId = await resolveUserId(
+                    packet.pairingToken || packet.pairToken,
+                    packet.pairingUserId || packet.pairUserId
+                );
+            }
+            if (!userId) {
+                ws.send(JSON.stringify({ type: 'sys_ack', status: 'error', message: 'install auth required' }));
+                return;
+            }
+
+            const entry = {
+                sessionId: String(packet.sessionId || ws.authContext?.sessionId || ''),
+                step: Number(packet.step) || 0,
+                total: Number(packet.total) || 0,
+                state: String(packet.state || 'running'),
+                message: String(packet.message || ''),
+                hostname: String(packet.hostname || ''),
+                deviceId: String(packet.deviceId || ''),
+                final: Boolean(packet.final),
+                at: new Date().toISOString(),
+            };
+            appendLog(userId, entry);
+            broadcastInstallLog(userId, entry, activeConnections);
+            ws.send(JSON.stringify({ type: 'sys_ack', status: 'ok' }));
+            return;
+        }
+
         if (packet.type === 'register_channel') {
             const role = String(packet.role || 'AGENT').toUpperCase();
             const deviceOrPanelId = String(packet.id || '').trim();
@@ -371,29 +407,58 @@ async function handleSocketMessage(ws, message) {
                     ws.close();
                     return;
                 }
+            } else if (role === 'INSTALL') {
+                const {
+                    resolveUserId,
+                } = require('../services/installLogService');
+                const pairingToken = packet.pairingToken || packet.pairToken || '';
+                const pairingUserId = packet.pairingUserId || packet.pairUserId || '';
+                const userId = await resolveUserId(pairingToken, pairingUserId);
+                if (!userId) {
+                    ws.send(JSON.stringify({
+                        type: 'sys_ack',
+                        status: 'auth_failed',
+                        message: 'invalid install pairing credentials'
+                    }));
+                    ws.close();
+                    return;
+                }
+                ws.authContext = {
+                    kind: 'install',
+                    userId,
+                    sessionId: String(packet.sessionId || deviceOrPanelId || ''),
+                };
+                if (ws.registrationTimer) {
+                    clearTimeout(ws.registrationTimer);
+                    ws.registrationTimer = null;
+                }
             }
 
             const connectionKey = role === 'DASHBOARD'
                 ? `DASHBOARD_${deviceOrPanelId || 'web-ui'}`
-                : `${role}_${deviceOrPanelId}`;
+                : role === 'INSTALL'
+                    ? `INSTALL_${ws.authContext?.userId || deviceOrPanelId || Date.now()}`
+                    : `${role}_${deviceOrPanelId}`;
 
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
             const userId = ws.authContext?.kind === 'user'
                 ? ws.authContext.user?.id
-                : ws.authContext?.kind === 'agent'
+                : ws.authContext?.kind === 'agent' || ws.authContext?.kind === 'install'
                     ? ws.authContext.userId
                     : null;
 
             console.log(`[GATEWAY] Stream connection assigned registry key: ${connectionKey}`);
-            const devices = await getDeviceOptions(userId);
+            const devices = role === 'INSTALL' ? [] : await getDeviceOptions(userId);
             ws.send(JSON.stringify({
                 type: 'sys_ack',
                 status: 'ready',
                 devices
             }));
-            void broadcastDeviceList();
+            if (role !== 'INSTALL') {
+                void broadcastDeviceList();
+            }
             return;
         }
 
@@ -959,4 +1024,10 @@ function handleSocketClose(ws) {
     broadcastDeviceList();
 }
 
-module.exports = { handleSocketMessage, handleSocketClose, getLiveDeviceOptions, broadcastDeviceList };
+module.exports = {
+    handleSocketMessage,
+    handleSocketClose,
+    getLiveDeviceOptions,
+    broadcastDeviceList,
+    activeConnections,
+};

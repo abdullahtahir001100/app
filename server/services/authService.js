@@ -536,7 +536,8 @@ async function pairAgent(body) {
         agentToken,
         gatewayUrl:
             process.env.ZENVORA_GATEWAY_URL ||
-            "ws://zenvora.abdullahtahir.me/ws/gateway"
+            process.env.NEXT_PUBLIC_GATEWAY_URL ||
+            "wss://zenvora.abdullahtahir.me/ws/gateway"
     };
 }
 async function userOwnsDevice(userId, deviceId) {

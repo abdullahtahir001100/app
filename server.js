@@ -13,6 +13,7 @@ const virtualFileRoutes = require('./server/routes/virtual-files');
 const fileRoutes = require('./server/routes/files');
 const notificationRoutes = require('./server/routes/notifications');
 const logsRoutes = require('./server/routes/logs');
+const installLogsRoutes = require('./server/routes/installLogs');
 const securityAuditRoutes = require('./server/routes/security-audit');
 const { initWebSocketGateway } = require('./server/sockets/gateway');
 const { lookupShareToken, serviceErrorResponse } = require('./server/services/virtualFileService');
@@ -58,6 +59,7 @@ nextApp.prepare().then(async () => {
     app.use('/api/files', express.json(), fileRoutes);
     app.use('/api/notifications', express.json(), notificationRoutes);
     app.use('/api/logs', express.json(), logsRoutes);
+    app.use('/api/install-logs', express.json(), installLogsRoutes);
     app.use('/api/security', express.json(), securityAuditRoutes);
 
     app.get('/api/virtual-files/share/:token', async (req, res) => {

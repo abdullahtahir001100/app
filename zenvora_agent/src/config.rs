@@ -149,11 +149,107 @@ impl AgentConfig {
     }
 
     pub async fn load_or_pair() -> Self {
-        if let Some(config) = Self::load_existing() {
-            println!(
-                "--> [CONFIG] Loaded existing paired credentials from {}",
-                get_config_path().to_string_lossy()
+        let args: Vec<String> = std::env::args().collect();
+        let get_flag = |name: &str| -> Option<String> {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1).cloned())
+                .filter(|v| !v.trim().is_empty())
+        };
+        let force_repair = args.iter().any(|a| a == "--force-repair" || a == "--repair");
+        let cli_gateway = get_flag("--gateway-url")
+            .or_else(|| std::env::var("ZENVORA_GATEWAY_URL").ok());
+        let cli_api = get_flag("--api-url")
+            .or_else(|| std::env::var("ZENVORA_API_URL").ok());
+        let has_cli_pair = get_flag("--pair-token")
+            .or_else(|| std::env::var("ZENVORA_PAIR_TOKEN").ok())
+            .is_some()
+            && get_flag("--pair-user-id")
+                .or_else(|| std::env::var("ZENVORA_PAIR_USER_ID").ok())
+                .is_some();
+
+        // Headless install command always re-applies gateway / re-pairs when tokens are present.
+        // Old agent.dat often pointed at Railway while dashboard is on zenvora.abdullahtahir.me.
+        if has_cli_pair && (force_repair || crate::connection_progress::is_headless()) {
+            println!("--> [CONFIG] Headless/CLI pair flags detected — refreshing credentials + gateway");
+            crate::connection_progress::step(
+                2,
+                8,
+                "Refreshing pair + gateway from install command...",
+                "running",
             );
+            match Self::pair_from_env_or_args().await {
+                Ok(config) => {
+                    println!(
+                        "--> [CONFIG] Using gateway {}",
+                        config.gateway_url
+                    );
+                    return config;
+                }
+                Err(err) => {
+                    println!("--> [CONFIG] Re-pair failed ({}), falling back to agent.dat", err);
+                    crate::connection_progress::step(
+                        2,
+                        8,
+                        &format!("Re-pair failed: {} — trying saved agent.dat", err),
+                        "warn",
+                    );
+                }
+            }
+        }
+
+        if let Some(mut config) = Self::load_existing() {
+            let mut changed = false;
+            if let Some(gw) = cli_gateway.clone() {
+                if config.gateway_url != gw {
+                    println!(
+                        "--> [CONFIG] Overriding gateway\n    old: {}\n    new: {}",
+                        config.gateway_url, gw
+                    );
+                    crate::connection_progress::step(
+                        2,
+                        8,
+                        &format!("Updating gateway → {}", gw),
+                        "running",
+                    );
+                    config.gateway_url = gw;
+                    changed = true;
+                }
+            }
+            if changed {
+                let _ = config.save();
+                crate::connection_progress::step(2, 8, "agent.dat gateway updated", "ok");
+            } else {
+                println!(
+                    "--> [CONFIG] Loaded existing paired credentials from {}",
+                    get_config_path().to_string_lossy()
+                );
+                println!("--> [CONFIG] Gateway: {}", config.gateway_url);
+            }
+
+            // Still wire install telemetry when CLI tokens exist.
+            if let (Some(token), Some(user_id)) = (
+                get_flag("--pair-token").or_else(|| std::env::var("ZENVORA_PAIR_TOKEN").ok()),
+                get_flag("--pair-user-id").or_else(|| std::env::var("ZENVORA_PAIR_USER_ID").ok()),
+            ) {
+                let api = cli_api.unwrap_or_else(|| {
+                    config
+                        .gateway_url
+                        .replacen("wss://", "https://", 1)
+                        .replacen("ws://", "http://", 1)
+                        .trim_end_matches("/ws/gateway")
+                        .to_string()
+                });
+                let session = get_flag("--install-session").unwrap_or_default();
+                crate::install_telemetry::configure(
+                    &api,
+                    &config.gateway_url,
+                    &token,
+                    &user_id,
+                    &session,
+                );
+            }
+
             return config;
         }
 
@@ -300,10 +396,14 @@ impl AgentConfig {
             .ok_or_else(|| "Server response missing agentToken.".to_string())?
             .to_string();
 
-        let gateway_url = res_json["gatewayUrl"]
+        let mut gateway_url = res_json["gatewayUrl"]
             .as_str()
             .unwrap_or("wss://zenvora.abdullahtahir.me/ws/gateway")
             .to_string();
+
+        if api_base_url.starts_with("https://") && gateway_url.starts_with("ws://") {
+            gateway_url = gateway_url.replacen("ws://", "wss://", 1);
+        }
 
         let new_config = Self {
             gateway_url,

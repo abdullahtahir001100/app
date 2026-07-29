@@ -4,15 +4,26 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, Copy, Check } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, Copy, Check, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGateway } from "@/hooks/use-gateway";
 import { toast } from "sonner";
 
+type InstallLogEntry = {
+  step?: number;
+  total?: number;
+  state?: string;
+  message?: string;
+  hostname?: string;
+  final?: boolean;
+  at?: string;
+  sessionId?: string;
+};
+
 export default function DashboardPage() {
-  const { devices: gatewayDevices, devicesLoading, refreshDevices, dispatch, ensureConnected } = useGateway();
+  const { devices: gatewayDevices, devicesLoading, refreshDevices, dispatch, ensureConnected, subscribe } = useGateway();
   const router = useRouter();
   const [showPairModal, setShowPairModal] = useState(false);
   const [pairingToken, setPairingToken] = useState<string | null>(null);
@@ -21,6 +32,10 @@ export default function DashboardPage() {
   const [openControlMenu, setOpenControlMenu] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [restartingId, setRestartingId] = useState<string | null>(null);
+  const [installSessionId] = useState(() => `web-${Date.now().toString(36)}`);
+  const [installLogs, setInstallLogs] = useState<InstallLogEntry[]>([]);
+  const [installLive, setInstallLive] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement | null>(null);
 
   const devices = useMemo(
     () =>
@@ -50,6 +65,53 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval);
   }, [refreshDevices]);
+
+  useEffect(() => {
+    if (!showPairModal) return;
+    ensureConnected();
+    setInstallLive(true);
+
+    const unsub = subscribe((event) => {
+      if (event.type !== "json") return;
+      const packet = event.packet;
+      if (packet.type !== "install_telemetry") return;
+      const entry = packet as InstallLogEntry;
+      setInstallLogs((prev) => {
+        const next = [...prev, entry];
+        return next.slice(-120);
+      });
+      if (entry.final) {
+        if (entry.state === "ok") toast.success(entry.message || "Agent connected");
+        else if (entry.state === "fail") toast.error(entry.message || "Install failed");
+        else toast.message(entry.message || "Install update");
+      }
+    });
+
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/install-logs?sessionId=${encodeURIComponent(installSessionId)}`, {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.success && Array.isArray(data.logs) && data.logs.length > 0) {
+          setInstallLogs(data.logs.slice(-120));
+        }
+      } catch {
+        // ignore
+      }
+    }, 2500);
+
+    return () => {
+      unsub();
+      clearInterval(poll);
+      setInstallLive(false);
+    };
+  }, [showPairModal, subscribe, ensureConnected, installSessionId]);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [installLogs]);
 
   const loadSession = async () => {
     try {
@@ -102,8 +164,9 @@ export default function DashboardPage() {
       "Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing",
       "if (-not (Test-Path $out)) { throw 'Download failed: win_32.exe missing' }",
       "Write-Host '[2/4] Launching headless provision (pair + service + connect)...' -ForegroundColor Cyan",
-      "& $out --headless --pair-token $token --pair-user-id $userId --api-url $api --gateway-url $gw",
-      "Write-Host '[3/4] Done. Check status lines above.' -ForegroundColor Green",
+      "Write-Host '    Keep Pair Device modal open on the website to see LIVE install logs.' -ForegroundColor Yellow",
+      `& $out --headless --force-repair --pair-token $token --pair-user-id $userId --api-url $api --gateway-url $gw --install-session '${installSessionId.replace(/'/g, "''")}'`,
+      "Write-Host '[3/4] Done. Live logs: Dashboard → Pair Device → Live install logs.' -ForegroundColor Green",
     ].join("; ");
 
     const encoded = (() => {
@@ -117,18 +180,27 @@ export default function DashboardPage() {
     })();
 
     if (!encoded) {
-      // SSR / first paint fallback (still escaped for nested PS)
-      return `powershell -ExecutionPolicy Bypass -NoProfile -Command "& { \`$ErrorActionPreference='Stop'; \`$token='${token}'; \`$userId='${userId}'; \`$api='${apiBase}'; \`$gw='${gatewayUrl}'; \`$url='${agentDownloadUrl}'; \`$out=Join-Path \`$env:TEMP 'win_32.exe'; Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan; Invoke-WebRequest -Uri \`$url -OutFile \`$out -UseBasicParsing; Write-Host '[2/4] Launching headless provision...' -ForegroundColor Cyan; & \`$out --headless --pair-token \`$token --pair-user-id \`$userId --api-url \`$api --gateway-url \`$gw; Write-Host '[3/4] Done.' -ForegroundColor Green }"`;
+      return `powershell -ExecutionPolicy Bypass -NoProfile -Command "& { \`$ErrorActionPreference='Stop'; \`$token='${token}'; \`$userId='${userId}'; \`$api='${apiBase}'; \`$gw='${gatewayUrl}'; \`$url='${agentDownloadUrl}'; \`$out=Join-Path \`$env:TEMP 'win_32.exe'; Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan; Invoke-WebRequest -Uri \`$url -OutFile \`$out -UseBasicParsing; Write-Host '[2/4] Launching...' -ForegroundColor Cyan; & \`$out --headless --pair-token \`$token --pair-user-id \`$userId --api-url \`$api --gateway-url \`$gw --install-session '${installSessionId}'; Write-Host '[3/4] Done.' -ForegroundColor Green }"`;
     }
 
     return `powershell -ExecutionPolicy Bypass -NoProfile -EncodedCommand ${encoded}`;
-  }, [pairingToken, pairingUserId, apiBase, gatewayUrl, agentDownloadUrl]);
+  }, [pairingToken, pairingUserId, apiBase, gatewayUrl, agentDownloadUrl, installSessionId]);
 
   const copyInstallCommand = async () => {
     try {
+      setInstallLogs((prev) => [
+        ...prev,
+        {
+          step: 0,
+          total: 8,
+          state: "running",
+          message: "Command copied — run it as Admin. Live logs will appear here.",
+          at: new Date().toISOString(),
+        },
+      ]);
       await navigator.clipboard.writeText(installCommand);
       setCopiedCmd(true);
-      toast.success("Install command copied");
+      toast.success("Install command copied — keep this modal open for live logs");
       setTimeout(() => setCopiedCmd(false), 2000);
     } catch {
       toast.error("Could not copy command");
@@ -502,7 +574,8 @@ export default function DashboardPage() {
             <DialogHeader className="px-8 pt-8 pb-4">
               <DialogTitle>Pair Device ON Zenvora Agent</DialogTitle>
               <DialogDescription className="mt-3 text-sm text-muted-foreground max-w-2xl">
-                Before downloading, you must agree to the following terms and conditions.
+                Copy the install command, run it as Admin, and <strong className="text-foreground">keep this modal open</strong>.
+                Live install logs appear in the black console at the bottom of this dialog.
               </DialogDescription>
             </DialogHeader>
 
@@ -575,11 +648,11 @@ export default function DashboardPage() {
                   <div className="pt-2">
                     <h3 className="text-xl font-semibold mb-2">One-line install (PowerShell)</h3>
                     <p className="text-sm text-muted-foreground mb-3">
-                      Run as Administrator. Uses EncodedCommand so PowerShell does not strip $variables.
-                      Status prints in that terminal (no GUI). Manual EXE double-click still shows the connection window.
+                      Run as Administrator. Keep this modal open — install steps stream here live (HTTP + WSS).
+                      Terminal also shows a step loader. Manual EXE double-click uses the same live feed after pairing.
                     </p>
                     <div className="rounded-xl border border-border bg-muted/40 p-3">
-                      <pre className="whitespace-pre-wrap break-all text-xs font-mono leading-5 max-h-40 overflow-auto">
+                      <pre className="whitespace-pre-wrap break-all text-xs font-mono leading-5 max-h-28 overflow-auto">
                         {installCommand}
                       </pre>
                       <div className="mt-3 flex justify-end">
@@ -588,6 +661,50 @@ export default function DashboardPage() {
                           {copiedCmd ? "Copied" : "Copy command"}
                         </Button>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-xl font-semibold">Live install logs</h3>
+                      <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
+                        {installLive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                        {installLive ? "Listening…" : "Idle"}
+                        <span className="font-mono opacity-70">{installSessionId}</span>
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-border bg-black/90 text-green-400 p-3 h-48 overflow-auto font-mono text-xs leading-5">
+                      {installLogs.length === 0 ? (
+                        <p className="text-green-700/80">Waiting for agent… copy the command and run it on the PC.</p>
+                      ) : (
+                        installLogs.map((log, idx) => {
+                          const tag =
+                            log.state === "ok"
+                              ? "[OK]"
+                              : log.state === "fail"
+                                ? "[FAIL]"
+                                : log.state === "warn"
+                                  ? "[WARN]"
+                                  : "[..]";
+                          const color =
+                            log.state === "ok"
+                              ? "text-emerald-400"
+                              : log.state === "fail"
+                                ? "text-rose-400"
+                                : log.state === "warn"
+                                  ? "text-amber-300"
+                                  : "text-green-400";
+                          return (
+                            <div key={`${log.at || idx}-${idx}`} className={color}>
+                              {tag}{" "}
+                              {log.step && log.total ? `(${log.step}/${log.total}) ` : ""}
+                              {log.message}
+                              {log.hostname ? `  · ${log.hostname}` : ""}
+                            </div>
+                          );
+                        })
+                      )}
+                      <div ref={logsEndRef} />
                     </div>
                   </div>
                 </div>
