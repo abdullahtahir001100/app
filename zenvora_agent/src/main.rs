@@ -25,6 +25,7 @@ mod ui_notify;
 mod input;
 mod connection_status;
 mod connection_progress;
+mod install_telemetry;
 mod session_launch;
 
 use std::env;
@@ -109,16 +110,22 @@ fn relocate_to_system32() -> ! {
 
 #[cfg(windows)]
 fn wait_for_connection_report(timeout_secs: u64) -> Option<String> {
-    for i in 0..timeout_secs {
+    let ticks = timeout_secs.saturating_mul(2); // 500ms polls
+    for i in 0..ticks {
         if let Some(status) = connection_status::read_status() {
             if connection_status::is_final_status(&status) {
                 return Some(status);
             }
-            if status.starts_with("connecting|") && i % 5 == 0 {
-                connection_progress::step(5, 6, "Waiting for gateway handshake...", "running");
+            if status.starts_with("connecting|") && i % 4 == 0 {
+                connection_progress::step(
+                    6,
+                    8,
+                    &format!("Waiting for gateway… {}s", i / 2),
+                    "running",
+                );
             }
         }
-        thread::sleep(std::time::Duration::from_secs(1));
+        thread::sleep(std::time::Duration::from_millis(500));
     }
     connection_status::read_status().filter(|s| connection_status::is_final_status(s))
 }
@@ -129,7 +136,7 @@ fn show_connection_report(status: &str) {
         let parts: Vec<&str> = rest.splitn(2, '|').collect();
         let device = parts.first().copied().unwrap_or("device");
         let gateway = parts.get(1).copied().unwrap_or("gateway");
-        connection_progress::step(6, 6, "Gateway connection established", "ok");
+        connection_progress::step(7, 8, "Gateway connection established", "ok");
         connection_progress::finish_success(device, gateway);
         if !connection_progress::is_headless() {
             connection_progress::wait_gui_closed();
@@ -138,7 +145,7 @@ fn show_connection_report(status: &str) {
     }
 
     if let Some(reason) = status.strip_prefix("failed|") {
-        connection_progress::step(6, 6, reason, "fail");
+        connection_progress::step(7, 8, reason, "fail");
         connection_progress::finish_failed(reason);
         if !connection_progress::is_headless() {
             connection_progress::wait_gui_closed();
@@ -152,37 +159,46 @@ fn ensure_agent_running() -> Result<(), String> {
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| e.to_string())?;
 
-    connection_progress::step(3, 6, "Installing / starting Windows service...", "running");
+    // Fast path first — do not block on SCM.
+    connection_progress::step(3, 8, "Starting agent worker (fast path)...", "running");
+    if let Err(err) = service::spawn_background_agent(&exe) {
+        connection_progress::step(3, 8, &format!("Fast launch failed: {}", err), "warn");
+    } else {
+        connection_progress::step(3, 8, "Agent worker launched", "ok");
+    }
+
+    connection_progress::step(4, 8, "Installing Windows service for auto-start...", "running");
     match service::install_service() {
         Ok(()) => {
             let started = if service::service_running() {
-                service::restart_service()
+                Ok(())
             } else {
                 service::start_service().and_then(|_| {
-                    if service::wait_for_service_running(20) {
+                    if service::wait_for_service_running(12) {
                         Ok(())
                     } else {
-                        Err(format!("Service did not reach RUNNING ({})", service::service_state()))
+                        Err(format!("Service state: {}", service::service_state()))
                     }
                 })
             };
-
-            if started.is_ok() {
-                connection_progress::step(3, 6, "Windows service is running", "ok");
-                return Ok(());
+            match started {
+                Ok(()) => connection_progress::step(4, 8, "Windows service running", "ok"),
+                Err(err) => connection_progress::step(
+                    4,
+                    8,
+                    &format!("Service optional — agent already running ({})", err),
+                    "warn",
+                ),
             }
-
-            connection_progress::step(3, 6, "Service start failed — launching background agent", "warn");
-            service::spawn_background_agent(&exe)
-                .map_err(|e| format!("Service start failed and background launch failed: {}", e))?;
-            connection_progress::step(3, 6, "Background agent started", "ok");
             Ok(())
         }
-        Err(_install_err) => {
-            connection_progress::step(3, 6, "Service install skipped — launching background agent", "warn");
-            service::spawn_background_agent(&exe)
-                .map_err(|e| format!("Service install failed and background launch failed: {}", e))?;
-            connection_progress::step(3, 6, "Background agent started", "ok");
+        Err(err) => {
+            connection_progress::step(
+                4,
+                8,
+                &format!("Service install skipped ({}) — using background agent", err),
+                "warn",
+            );
             Ok(())
         }
     }
@@ -193,10 +209,10 @@ fn bootstrap_service_and_report() {
     connection_status::mark_bootstrap_waiting();
     connection_status::reset_connect_report();
     connection_progress::start_gui();
-    connection_progress::step(1, 6, "Preparing agent install...", "running");
+    connection_progress::step(1, 8, "Preparing agent...", "ok");
 
     if let Err(err) = ensure_agent_running() {
-        connection_progress::step(3, 6, &err, "fail");
+        connection_progress::step(4, 8, &err, "fail");
         connection_progress::finish_failed(&err);
         if !connection_progress::is_headless() {
             connection_progress::wait_gui_closed();
@@ -204,29 +220,23 @@ fn bootstrap_service_and_report() {
         return;
     }
 
-    connection_progress::step(4, 6, "Connecting to gateway WebSocket...", "running");
-    connection_progress::step(5, 6, "Waiting for gateway handshake...", "running");
+    connection_progress::step(5, 8, "Connecting to gateway WebSocket...", "running");
+    connection_progress::step(6, 8, "Waiting for handshake (max ~60s)...", "running");
 
-    if let Some(status) = wait_for_connection_report(150) {
+    if let Some(status) = wait_for_connection_report(60) {
         show_connection_report(&status);
         return;
     }
 
     if let Some(status) = connection_status::read_status() {
-        if status.starts_with("connecting|") {
-            if let Some(final_status) = wait_for_connection_report(60) {
-                show_connection_report(&final_status);
-                return;
-            }
-        }
         if connection_status::is_final_status(&status) {
             show_connection_report(&status);
             return;
         }
     }
 
-    let warn = "Agent is still connecting in background. Check Railway / internet if this persists.";
-    connection_progress::step(6, 6, warn, "warn");
+    let warn = "Still connecting in background. Watch live logs on Pair Device modal — agent keeps retrying.";
+    connection_progress::step(8, 8, warn, "warn");
     connection_progress::finish_warning(warn);
     if !connection_progress::is_headless() {
         connection_progress::wait_gui_closed();
@@ -243,6 +253,7 @@ fn run_async_main(args: &[String]) {
 
     let headless = args.iter().any(|a| a == "--headless" || a == "--provision");
     connection_progress::set_headless(headless);
+    install_telemetry::configure_from_args(args);
 
     #[cfg(windows)]
     if headless || args.iter().any(|a| a == "--console") {
@@ -274,7 +285,9 @@ fn run_async_main(args: &[String]) {
                     }
                     // Ensure credentials exist before service start (esp. PowerShell install).
                     runtime.block_on(async {
+                        connection_progress::step(2, 8, "Pairing / loading credentials...", "running");
                         let _ = config::AgentConfig::load_or_pair().await;
+                        connection_progress::step(2, 8, "Credentials ready", "ok");
                     });
                     bootstrap_service_and_report();
                 }
@@ -329,9 +342,11 @@ fn run_async_main(args: &[String]) {
     if headless {
         #[cfg(windows)]
         {
-            connection_progress::step(1, 6, "Headless provision started", "running");
+            connection_progress::step(1, 8, "Headless provision started", "running");
             runtime.block_on(async {
+                connection_progress::step(2, 8, "Pairing / loading credentials...", "running");
                 let _ = config::AgentConfig::load_or_pair().await;
+                connection_progress::step(2, 8, "Credentials ready (agent.dat)", "ok");
             });
             if let Ok(current_exe) = env::current_exe() {
                 if !is_in_system32(&current_exe) {

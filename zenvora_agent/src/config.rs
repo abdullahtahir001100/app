@@ -231,6 +231,18 @@ impl AgentConfig {
             config.gateway_url = gw;
             let _ = config.save();
         }
+        crate::install_telemetry::configure(
+            &api_base_url,
+            &config.gateway_url,
+            &pairing_token,
+            &pairing_user_id,
+            &std::env::args()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .find(|w| w[0] == "--install-session")
+                .map(|w| w[1].clone())
+                .unwrap_or_default(),
+        );
         crate::connection_progress::step(2, 6, "Credentials saved to agent.dat", "ok");
         Ok(config)
     }
@@ -357,6 +369,15 @@ impl AgentConfig {
         let api_base_url = std::env::var("ZENVORA_API_URL")
             .unwrap_or_else(|_| "https://zenvora.abdullahtahir.me".to_string());
 
-        Self::pair_with_credentials(&pairing_token, &pairing_user_id, &api_base_url).await
+        Self::pair_with_credentials(&pairing_token, &pairing_user_id, &api_base_url).await.map(|config| {
+            crate::install_telemetry::configure(
+                &api_base_url,
+                &config.gateway_url,
+                &pairing_token,
+                &pairing_user_id,
+                "",
+            );
+            config
+        })
     }
 }

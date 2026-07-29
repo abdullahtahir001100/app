@@ -59,41 +59,39 @@ pub fn step(index: u32, total: u32, message: &str, state: &str) {
     let line = format!("step|{}|{}|{}|{}", index, total, state, message.replace('|', "/"));
     write_progress_line(&line);
     crate::connection_status::log(format!("[{}/{}] {} ({})", index, total, message, state));
+    crate::install_telemetry::step(index, total, message, state);
 
-    if is_headless() {
-        let icon = match state {
-            "ok" => "[OK]",
-            "fail" => "[FAIL]",
-            "warn" => "[WARN]",
-            _ => "[..]",
-        };
-        println!("{} ({}/{}) {}", icon, index, total, message);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-    }
+    // Always print clear CLI lines (headless OR console attached).
+    let icon = match state {
+        "ok" => "[OK]  ",
+        "fail" => "[FAIL]",
+        "warn" => "[WARN]",
+        _ => "[..]  ",
+    };
+    println!("{} ({}/{}) {}", icon, index, total, message);
+    let _ = std::io::Write::flush(&mut std::io::stdout());
 }
 
 pub fn finish_success(device: &str, gateway: &str) {
     write_progress_line(&format!("final|connected|{}|{}", device, gateway));
-    if is_headless() {
-        println!("[SUCCESS] Connected as {} via {}", device, gateway);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-    }
+    let msg = format!("Connected as {} via {}", device, gateway);
+    crate::install_telemetry::finish_success(&msg);
+    println!("[SUCCESS] {}", msg);
+    let _ = std::io::Write::flush(&mut std::io::stdout());
 }
 
 pub fn finish_failed(reason: &str) {
     write_progress_line(&format!("final|failed|{}", reason.replace('|', "/")));
-    if is_headless() {
-        eprintln!("[FAILED] {}", reason);
-        let _ = std::io::Write::flush(&mut std::io::stderr());
-    }
+    crate::install_telemetry::finish_failed(reason);
+    eprintln!("[FAILED] {}", reason);
+    let _ = std::io::Write::flush(&mut std::io::stderr());
 }
 
 pub fn finish_warning(message: &str) {
     write_progress_line(&format!("final|warn|{}", message.replace('|', "/")));
-    if is_headless() {
-        println!("[WARN] {}", message);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-    }
+    crate::install_telemetry::finish_warning(message);
+    println!("[WARN] {}", message);
+    let _ = std::io::Write::flush(&mut std::io::stdout());
 }
 
 /// Launch a non-blocking WinForms progress window that polls connection.progress.
