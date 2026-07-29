@@ -72,18 +72,56 @@ export default function DashboardPage() {
       Math.max(1, devices.filter((device) => typeof device.battery === "number").length)
   );
 
-  const apiBase =
-    process.env.NEXT_PUBLIC_API_URL || "https://zenvora.abdullahtahir.me";
+  const apiBase = (
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "https://zenvora.abdullahtahir.me"
+  ).replace(/\/$/, "");
   const gatewayUrl =
-    process.env.NEXT_PUBLIC_GATEWAY_URL || "wss://zenvora.abdullahtahir.me/ws/gateway";
+    process.env.NEXT_PUBLIC_GATEWAY_URL ||
+    process.env.ZENVORA_GATEWAY_URL ||
+    "wss://zenvora.abdullahtahir.me/ws/gateway";
   const agentDownloadUrl =
-    process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL ||
-    `${apiBase}/downloads/win_32.exe`;
+    process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL || `${apiBase}/api/agent/download`;
 
   const installCommand = useMemo(() => {
     const token = pairingToken || "<PAIR_TOKEN>";
     const userId = pairingUserId || "<PAIR_USER_ID>";
-    return `powershell -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $token='${token}'; $userId='${userId}'; $api='${apiBase}'; $gw='${gatewayUrl}'; $url='${agentDownloadUrl}'; $out=Join-Path $env:TEMP 'win_32.exe'; Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan; Invoke-WebRequest -Uri $url -OutFile $out; Write-Host '[2/4] Launching headless provision...' -ForegroundColor Cyan; & $out --headless --pair-token $token --pair-user-id $userId --api-url $api --gateway-url $gw; Write-Host '[3/4] Done. Check status above.' -ForegroundColor Green"`;
+
+    // Build script body, then UTF-16LE Base64 encode for -EncodedCommand.
+    // This avoids outer PowerShell eating $token / $url when the one-liner is pasted.
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      `$token = '${token.replace(/'/g, "''")}'`,
+      `$userId = '${userId.replace(/'/g, "''")}'`,
+      `$api = '${apiBase.replace(/'/g, "''")}'`,
+      `$gw = '${gatewayUrl.replace(/'/g, "''")}'`,
+      `$url = '${agentDownloadUrl.replace(/'/g, "''")}'`,
+      "$out = Join-Path $env:TEMP 'win_32.exe'",
+      "Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan",
+      "Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing",
+      "if (-not (Test-Path $out)) { throw 'Download failed: win_32.exe missing' }",
+      "Write-Host '[2/4] Launching headless provision (pair + service + connect)...' -ForegroundColor Cyan",
+      "& $out --headless --pair-token $token --pair-user-id $userId --api-url $api --gateway-url $gw",
+      "Write-Host '[3/4] Done. Check status lines above.' -ForegroundColor Green",
+    ].join("; ");
+
+    const encoded = (() => {
+      if (typeof window === "undefined") return "";
+      const codes = new Uint16Array(script.length);
+      for (let i = 0; i < script.length; i += 1) codes[i] = script.charCodeAt(i);
+      const bytes = new Uint8Array(codes.buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    })();
+
+    if (!encoded) {
+      // SSR / first paint fallback (still escaped for nested PS)
+      return `powershell -ExecutionPolicy Bypass -NoProfile -Command "& { \`$ErrorActionPreference='Stop'; \`$token='${token}'; \`$userId='${userId}'; \`$api='${apiBase}'; \`$gw='${gatewayUrl}'; \`$url='${agentDownloadUrl}'; \`$out=Join-Path \`$env:TEMP 'win_32.exe'; Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan; Invoke-WebRequest -Uri \`$url -OutFile \`$out -UseBasicParsing; Write-Host '[2/4] Launching headless provision...' -ForegroundColor Cyan; & \`$out --headless --pair-token \`$token --pair-user-id \`$userId --api-url \`$api --gateway-url \`$gw; Write-Host '[3/4] Done.' -ForegroundColor Green }"`;
+    }
+
+    return `powershell -ExecutionPolicy Bypass -NoProfile -EncodedCommand ${encoded}`;
   }, [pairingToken, pairingUserId, apiBase, gatewayUrl, agentDownloadUrl]);
 
   const copyInstallCommand = async () => {
@@ -537,7 +575,8 @@ export default function DashboardPage() {
                   <div className="pt-2">
                     <h3 className="text-xl font-semibold mb-2">One-line install (PowerShell)</h3>
                     <p className="text-sm text-muted-foreground mb-3">
-                      Run as Administrator on the PC. Status prints in that terminal (no GUI). Manual double-click of the EXE still shows the connection window.
+                      Run as Administrator. Uses EncodedCommand so PowerShell does not strip $variables.
+                      Status prints in that terminal (no GUI). Manual EXE double-click still shows the connection window.
                     </p>
                     <div className="rounded-xl border border-border bg-muted/40 p-3">
                       <pre className="whitespace-pre-wrap break-all text-xs font-mono leading-5 max-h-40 overflow-auto">
