@@ -40,6 +40,11 @@ const BrowserHistorySchema = new mongoose.Schema({
         type: String,
         default: '',
         index: true
+    },
+    browserProfile: {
+        type: String,
+        default: '',
+        index: true
     }
 }, {
     timestamps: true
@@ -47,5 +52,14 @@ const BrowserHistorySchema = new mongoose.Schema({
 
 BrowserHistorySchema.index({ deviceId: 1, visitTime: -1 });
 BrowserHistorySchema.index({ browser: 1, visitTime: -1 });
+BrowserHistorySchema.index({
+    deviceId: 1,
+    userId: 1,
+    browser: 1,
+    url: 1,
+    visitTime: 1,
+    windowsUser: 1,
+    browserProfile: 1
+});
 
 module.exports = mongoose.models.BrowserHistory || mongoose.model('BrowserHistory', BrowserHistorySchema);

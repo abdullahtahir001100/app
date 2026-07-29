@@ -1,7 +1,6 @@
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::{codecs::jpeg::JpegEncoder, imageops, ExtendedColorType, ImageBuffer, ImageEncoder, Rgb};
 use serde_json::{json, Value};
 use xcap::Monitor;
@@ -49,7 +48,9 @@ pub fn handle_screen_command(
     packet: IncomingPacket,
     state: &mut ScreenState,
 ) -> Option<CommandResponse> {
-    println!("[RUST AGENT] Screen action: {}", packet.action);
+    if !is_remote_input_action(&packet.action) {
+        println!("[RUST AGENT] Screen action: {}", packet.action);
+    }
 
     let include_frame = should_include_screen_frame(&packet.action, &packet.payload);
     let mut action_message: Option<String> = None;
@@ -181,19 +182,13 @@ pub fn handle_screen_command(
             let (screen_w, screen_h) = state.active_screen_dimensions();
             let mut payload = packet.payload.clone();
             if let Some(obj) = payload.as_object_mut() {
-                obj.entry("screen_width".to_string())
-                    .or_insert(json!(screen_w));
-                obj.entry("screen_height".to_string())
-                    .or_insert(json!(screen_h));
+                // Always use native display size — never trust JPEG/stream dimensions.
+                obj.insert("screen_width".to_string(), json!(screen_w));
+                obj.insert("screen_height".to_string(), json!(screen_h));
             }
-            match handle_remote_input(action, &payload) {
-                Ok(()) => {
-                    action_message = Some(format!("Remote input applied: {}", action));
-                }
-                Err(err) => {
-                    action_message = Some(format!("Remote input failed: {}", err));
-                }
-            }
+            let _ = handle_remote_input(action, &payload);
+            // No ack / telemetry — keeps mouse moves from flooding the gateway.
+            return None;
         }
         _ => return None,
     }
@@ -389,7 +384,9 @@ fn resize_rgb(
 
 fn should_include_screen_frame(action: &str, payload: &Value) -> bool {
     match action {
-        "CAPTURE_SCREENSHOT" | "SWITCH_DISPLAY" | "START_SCREEN_STREAM" => true,
+        // Stream frames come from the binary pump — don't encode a JPEG here too.
+        "CAPTURE_SCREENSHOT" | "SWITCH_DISPLAY" => true,
+        "START_SCREEN_STREAM" => false,
         "FETCH_SCREEN_TELEMETRY" => payload
             .get("include_frame")
             .and_then(|v| v.as_bool())
@@ -424,13 +421,8 @@ fn build_screen_telemetry_json(
     action_message: Option<String>,
 ) -> Value {
     let frame_bytes = frame_result.map(|f| f.payload.len());
-    let live_frame_b64 = frame_result.and_then(|f| {
-        if f.payload.len() > 100 {
-            Some(STANDARD.encode(&f.payload))
-        } else {
-            None
-        }
-    });
+    // Never embed base64 frames in telemetry — binary WS frames are enough.
+    let live_frame_b64: Option<String> = None;
 
     let status = if state.streaming_active {
         "ACTIVE_STREAMING"

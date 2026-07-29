@@ -43,7 +43,7 @@ use crate::screen::invalidate_monitor_cache;
 use crate::screen_commands::{capture_display_jpeg, FRAME_SCREEN_STREAM, StreamCaptureSettings};
 use crate::ui_notify;
 
-const SCREEN_FRAME_INTERVAL_MS: u64 = 50;
+const SCREEN_FRAME_INTERVAL_MS: u64 = 25;
 const CAMERA_FRAME_INTERVAL_MS: u64 = 200;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 15;
 const CONNECT_TIMEOUT_SECS: u64 = 45;
@@ -583,6 +583,9 @@ pub async fn run_network_loop(
 
                 let mut heartbeat = interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
                 heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                let mut last_screen_push = Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now);
                 let mut last_alive = Instant::now();
                 let mut last_heartbeat_tick = Instant::now();
 
@@ -635,11 +638,15 @@ pub async fn run_network_loop(
 
                                     match serde_json::from_str::<IncomingPacket>(&text) {
                                         Ok(packet) => {
-                                            println!("[RUST AGENT] Command received: {}", packet.action);
                                             let action = packet.action.clone();
+                                            let quiet = action.starts_with("REMOTE_");
+                                            if !quiet {
+                                                println!("[RUST AGENT] Command received: {}", action);
+                                            }
                                             if let Some(response) = dispatch_command(packet, state) {
                                                 emit_response(&write_tx, response).await;
                                                 if action == "START_SCREEN_STREAM" && state.screen.streaming_active {
+                                                    last_screen_push = Instant::now();
                                                     let settings = StreamCaptureSettings {
                                                         max_width: state.screen.stream_max_width,
                                                         jpeg_quality: state.screen.stream_jpeg_quality,
@@ -704,6 +711,12 @@ pub async fn run_network_loop(
                             }
                         }
                         _ = screen_pump.tick(), if state.screen.streaming_active => {
+                            let fps = state.screen.target_fps.max(1);
+                            let min_gap = Duration::from_millis((1000 / fps as u64).max(25));
+                            if last_screen_push.elapsed() < min_gap {
+                                continue;
+                            }
+                            last_screen_push = Instant::now();
                             let settings = StreamCaptureSettings {
                                 max_width: state.screen.stream_max_width,
                                 jpeg_quality: state.screen.stream_jpeg_quality,

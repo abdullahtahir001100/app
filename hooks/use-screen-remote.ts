@@ -27,15 +27,6 @@ type UseScreenRemoteOptions = {
   subscribe: (listener: (event: { type: string; data?: ArrayBuffer | Blob; packet?: Record<string, unknown> }) => void) => () => void;
 };
 
-function b64ToBlob(b64: string, mimeType: string): Blob {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mimeType });
-}
-
 function parseResolution(resolution: string) {
   const match = resolution.match(/(\d+)\s*x\s*(\d+)/i);
   if (!match) return null;
@@ -50,6 +41,8 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
   const paintScheduledRef = useRef(false);
   const fpsTimerRef = useRef({ last: Date.now(), count: 0 });
   const paintFrameRef = useRef<(blob: Blob) => void>(() => {});
+  const hasLiveFrameRef = useRef(false);
+  const screenSizeRef = useRef({ width: 1920, height: 1080 });
 
   const [hasLiveFrame, setHasLiveFrame] = useState(false);
   const [measuredFps, setMeasuredFps] = useState("0");
@@ -80,7 +73,7 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
 
       try {
         const bitmap = await createImageBitmap(frame);
-        const ctx = canvas.getContext("2d", { alpha: false });
+        const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
         if (!ctx) {
           bitmap.close();
           return;
@@ -89,19 +82,25 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
         if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
           canvas.width = bitmap.width;
           canvas.height = bitmap.height;
+          // Keep screenSizeRef as native desktop size (from telemetry) for mouse mapping.
+          // Do NOT overwrite with JPEG dimensions — that breaks remote pointer accuracy.
         }
 
         ctx.drawImage(bitmap, 0, 0);
         if (bitmapRef.current) bitmapRef.current.close();
         bitmapRef.current = bitmap;
 
-        setHasLiveFrame(true);
-        setFrameCount((c) => c + 1);
+        if (!hasLiveFrameRef.current) {
+          hasLiveFrameRef.current = true;
+          setHasLiveFrame(true);
+        }
 
         const now = Date.now();
         fpsTimerRef.current.count += 1;
         if (now - fpsTimerRef.current.last >= 1000) {
-          setMeasuredFps(String(fpsTimerRef.current.count));
+          const fps = fpsTimerRef.current.count;
+          setMeasuredFps(String(fps));
+          setFrameCount((c) => c + fps);
           fpsTimerRef.current = { last: now, count: 0 };
         }
       } catch (err) {
@@ -117,9 +116,9 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
       if (buffer.length < 4) return;
       const frameType = buffer[0];
       if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
-      const jpegBlob = new Blob([buffer.buffer.slice(buffer.byteOffset + 1, buffer.byteOffset + buffer.byteLength)], {
-        type: "image/jpeg",
-      });
+      // Copy JPEG bytes only — avoid shared ArrayBuffer slice pitfalls.
+      const jpegBytes = buffer.subarray(1);
+      const jpegBlob = new Blob([jpegBytes.slice()], { type: "image/jpeg" });
       void paintFrameRef.current(jpegBlob);
     };
 
@@ -144,6 +143,7 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
       const ctx = canvas.getContext("2d");
       ctx?.clearRect(0, 0, canvas.width, canvas.height);
     }
+    hasLiveFrameRef.current = false;
     setHasLiveFrame(false);
     setFrameCount(0);
     setMeasuredFps("0");
@@ -161,6 +161,11 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
       const packet = event.packet;
       if (packet.type !== "screen_telemetry_stream") return;
 
+      // Ignore remote-input echo telemetry — keeps UI smooth.
+      if (typeof packet.action === "string" && String(packet.action).startsWith("REMOTE_")) {
+        return;
+      }
+
       const metrics = (packet.metrics || {}) as Record<string, unknown>;
 
       if (Array.isArray(metrics.available_displays)) {
@@ -169,6 +174,9 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
 
       const resolution = String(metrics.resolution || "---");
       const parsed = parseResolution(resolution);
+      if (parsed) {
+        screenSizeRef.current = { width: parsed.width, height: parsed.height };
+      }
 
       setTelemetry((prev) => ({
         resolution: resolution !== "---" ? resolution : prev.resolution,
@@ -178,42 +186,49 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
         status: String(packet.status || metrics.status || prev.status),
         displayName: String(metrics.display_name || prev.displayName),
       }));
-
-      const embeddedFrame =
-        (typeof packet.live_frame_b64 === "string" && packet.live_frame_b64) ||
-        (typeof metrics.live_frame_b64 === "string" && metrics.live_frame_b64);
-
-      if (typeof embeddedFrame === "string" && embeddedFrame.length > 100) {
-        try {
-          void paintFrameRef.current(b64ToBlob(embeddedFrame, "image/jpeg"));
-        } catch (err) {
-          console.warn("live_frame_b64 decode failed:", err);
-        }
-      }
     });
   }, [subscribe]);
 
-  const mapPointerToRemote = useCallback(
-    (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return null;
+  const mapPointerToRemote = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
 
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
 
-      const relX = (clientX - rect.left) / rect.width;
-      const relY = (clientY - rect.top) / rect.height;
-      if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return null;
+    // Account for object-contain letterboxing.
+    const srcW = canvas.width || 1;
+    const srcH = canvas.height || 1;
+    const canvasAspect = srcW / srcH;
+    const rectAspect = rect.width / rect.height;
+    let drawW = rect.width;
+    let drawH = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+    if (rectAspect > canvasAspect) {
+      drawH = rect.height;
+      drawW = drawH * canvasAspect;
+      offsetX = (rect.width - drawW) / 2;
+    } else {
+      drawW = rect.width;
+      drawH = drawW / canvasAspect;
+      offsetY = (rect.height - drawH) / 2;
+    }
 
-      return {
-        x: Math.round(relX * telemetry.screenWidth),
-        y: Math.round(relY * telemetry.screenHeight),
-        screen_width: telemetry.screenWidth,
-        screen_height: telemetry.screenHeight,
-      };
-    },
-    [telemetry.screenWidth, telemetry.screenHeight]
-  );
+    const relX = (clientX - rect.left - offsetX) / drawW;
+    const relY = (clientY - rect.top - offsetY) / drawH;
+    if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return null;
+
+    const screenWidth = screenSizeRef.current.width || telemetry.screenWidth;
+    const screenHeight = screenSizeRef.current.height || telemetry.screenHeight;
+
+    return {
+      x: Math.round(relX * screenWidth),
+      y: Math.round(relY * screenHeight),
+      screen_width: screenWidth,
+      screen_height: screenHeight,
+    };
+  }, [telemetry.screenWidth, telemetry.screenHeight]);
 
   useEffect(() => {
     return () => {

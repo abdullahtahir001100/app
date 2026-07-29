@@ -47,5 +47,13 @@ const AppHistorySchema = new mongoose.Schema({
 
 AppHistorySchema.index({ deviceId: 1, lastOpened: -1 });
 AppHistorySchema.index({ appType: 1, lastOpened: -1 });
+AppHistorySchema.index({
+    deviceId: 1,
+    userId: 1,
+    appName: 1,
+    executablePath: 1,
+    lastOpened: 1,
+    windowsUser: 1
+});
 
 module.exports = mongoose.models.AppHistory || mongoose.model('AppHistory', AppHistorySchema);

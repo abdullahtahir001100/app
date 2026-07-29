@@ -31,13 +31,16 @@ function normalizeAppType(value) {
     return 'app';
 }
 
+/**
+ * Upsert only — never delete existing history.
+ * Dedupes on device + user + browser + url + visitTime + windowsUser + profile.
+ */
 async function syncBrowserHistory(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) {
         return { count: 0 };
     }
 
     if (entries.length === 0) {
-        // Never wipe existing history on an empty scrape (Session 0 / locked DBs).
         return { count: 0 };
     }
 
@@ -50,16 +53,62 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
         visitTime: parseFlexibleDate(entry.visitTime),
         visitCount: Number(entry.visitCount) || 1,
         domain: extractDomain(entry.url),
-        windowsUser: String(entry.windowsUser || entry.windows_user || '')
+        windowsUser: String(entry.windowsUser || entry.windows_user || ''),
+        browserProfile: String(entry.browserProfile || entry.browser_profile || entry.profile || '')
     })).filter((doc) => doc.url);
 
     if (docs.length === 0) return { count: 0 };
 
-    await BrowserHistory.deleteMany({ deviceId, userId });
-    await BrowserHistory.insertMany(docs, { ordered: false });
-    return { count: docs.length };
+    const ops = docs.map((doc) => ({
+        updateOne: {
+            filter: {
+                deviceId: doc.deviceId,
+                userId: doc.userId,
+                browser: doc.browser,
+                url: doc.url,
+                visitTime: doc.visitTime,
+                windowsUser: doc.windowsUser,
+                browserProfile: doc.browserProfile
+            },
+            update: {
+                $set: {
+                    title: doc.title,
+                    visitCount: doc.visitCount,
+                    domain: doc.domain
+                },
+                $setOnInsert: {
+                    deviceId: doc.deviceId,
+                    userId: doc.userId,
+                    browser: doc.browser,
+                    url: doc.url,
+                    visitTime: doc.visitTime,
+                    windowsUser: doc.windowsUser,
+                    browserProfile: doc.browserProfile
+                }
+            },
+            upsert: true
+        }
+    }));
+
+    try {
+        const result = await BrowserHistory.bulkWrite(ops, { ordered: false });
+        return {
+            count: (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0)
+        };
+    } catch (err) {
+        // Partial bulkWrite success still inserts most docs.
+        if (err?.result) {
+            return {
+                count: (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0)
+            };
+        }
+        throw err;
+    }
 }
 
+/**
+ * Upsert only — never delete existing app activity.
+ */
 async function syncAppHistory(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) {
         return { count: 0 };
@@ -80,9 +129,47 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         windowsUser: String(entry.windowsUser || entry.windows_user || '')
     }));
 
-    await AppHistory.deleteMany({ deviceId, userId });
-    await AppHistory.insertMany(docs, { ordered: false });
-    return { count: docs.length };
+    const ops = docs.map((doc) => ({
+        updateOne: {
+            filter: {
+                deviceId: doc.deviceId,
+                userId: doc.userId,
+                appName: doc.appName,
+                executablePath: doc.executablePath,
+                lastOpened: doc.lastOpened,
+                windowsUser: doc.windowsUser
+            },
+            update: {
+                $set: {
+                    appType: doc.appType,
+                    ...(doc.category ? { category: doc.category } : {})
+                },
+                $setOnInsert: {
+                    deviceId: doc.deviceId,
+                    userId: doc.userId,
+                    appName: doc.appName,
+                    executablePath: doc.executablePath,
+                    lastOpened: doc.lastOpened,
+                    windowsUser: doc.windowsUser
+                }
+            },
+            upsert: true
+        }
+    }));
+
+    try {
+        const result = await AppHistory.bulkWrite(ops, { ordered: false });
+        return {
+            count: (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0)
+        };
+    } catch (err) {
+        if (err?.result) {
+            return {
+                count: (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0)
+            };
+        }
+        throw err;
+    }
 }
 
 async function syncSystemNotifications(deviceId, entries, userId = null) {
@@ -124,6 +211,7 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
 
     return { count };
 }
+
 async function persistHistoryPayload(deviceId, packet) {
     const command = String(packet.command || '');
     const data = Array.isArray(packet.data)

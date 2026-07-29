@@ -29,9 +29,11 @@ function parseDisplayIndex(payload = {}) {
 
 function handleScreenCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
-    console.log('[screenHandler] Received screen command:', packet);
+    const isRemoteInput = typeof action === 'string' && action.startsWith('REMOTE_');
 
-    console.log(`[SCREEN ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
+    if (!isRemoteInput) {
+        console.log(`[SCREEN ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
+    }
 
     if (!targetDeviceId) {
         ws.send(JSON.stringify({
@@ -107,12 +109,14 @@ function handleScreenCommand(ws, packet, activeConnections) {
         }
 
         targetAgentSocket.send(JSON.stringify(outboundPacket));
-        console.log(`[SCREEN ENGINE] Forwarded [${action}] to ${targetKey}`);
 
-        ws.send(JSON.stringify({
-            type: 'sys_ack',
-            status: `Screen operation [${action}] piped downstream safely.`
-        }));
+        // Remote input is fire-and-forget — no sys_ack spam (keeps UI smooth).
+        if (!isRemoteInput) {
+            ws.send(JSON.stringify({
+                type: 'sys_ack',
+                status: `Screen operation [${action}] piped downstream safely.`
+            }));
+        }
     } else {
         const liveAgents = Array.from(activeConnections.keys()).filter((k) => k.startsWith('AGENT_'));
         console.warn(
@@ -126,9 +130,15 @@ function handleScreenCommand(ws, packet, activeConnections) {
 }
 
 function handleScreenTelemetry(ws, packet, activeConnections) {
-    
+    // Drop remote-input / silent acks — they only slow the dashboard.
+    if (packet.silent === true) return;
+    if (typeof packet.last_action === 'string' && packet.last_action.startsWith('REMOTE_')) {
+        return;
+    }
+
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
+    delete metrics.live_frame_b64;
 
     const payload = {
         type: 'screen_telemetry_stream',
@@ -139,7 +149,6 @@ function handleScreenTelemetry(ws, packet, activeConnections) {
         status: packet.status || 'RUNNING',
         has_binary_frame: !!packet.has_binary_frame,
         frame_bytes: packet.frame_bytes || 0,
-        live_frame_b64: metrics.live_frame_b64 || null
     };
 
     activeConnections.forEach((clientSocket, key) => {

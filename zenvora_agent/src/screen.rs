@@ -24,11 +24,12 @@ pub struct ScreenState {
 }
 
 pub fn quality_preset(name: &str) -> (u32, u8, u32) {
+    // (max_width, jpeg_quality, target_fps)
     match name.to_lowercase().as_str() {
-        "low" => (960, 58, 20),
-        "high" => (1600, 82, 15),
-        "ultra" => (1920, 90, 12),
-        _ => (1280, 72, 15), // medium
+        "low" => (854, 52, 24),
+        "high" => (1280, 70, 18),
+        "ultra" => (1600, 78, 15),
+        _ => (1024, 62, 20), // medium — balanced for remote control
     }
 }
 

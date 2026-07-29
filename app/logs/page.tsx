@@ -30,6 +30,7 @@ interface BrowserEntry {
   visitTime: string;
   visitCount: number;
   windowsUser?: string;
+  browserProfile?: string;
 }
 
 interface AppEntry {
@@ -412,6 +413,11 @@ export default function LogsPage() {
                       <div className="mt-1 p-2 rounded-lg bg-muted"><Globe className="w-5 h-5" /></div>
                       <div className="flex-1 min-w-0">
                         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{entry.browser}</span>
+                        {entry.browserProfile ? (
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded ml-2">
+                            Profile: {entry.browserProfile}
+                          </span>
+                        ) : null}
                         {entry.windowsUser ? (
                           <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded ml-2">User: {entry.windowsUser}</span>
                         ) : null}

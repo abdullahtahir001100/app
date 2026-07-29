@@ -212,14 +212,21 @@ export default function ScreenPage() {
     setCommandStatus("Remote desktop stopped.");
   }, [dispatchControl, resetPreview]);
 
+  // On enter: stop any stale agent stream. Never auto-start. Stop again on leave.
   useEffect(() => {
-    if (!isConnected || !selectedDevice) return;
-    void probeAndStream();
+    dispatchControl("STOP_SCREEN_STREAM", {});
+    setIsStreaming(false);
+    resetPreview();
+    try {
+      sessionStorage.setItem("zenvora_screen_streaming", "0");
+    } catch {
+      // ignore
+    }
     return () => {
       dispatchControl("STOP_SCREEN_STREAM", {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, selectedDevice]);
+  }, []);
 
   useEffect(() => {
     return subscribe((event) => {
@@ -255,15 +262,29 @@ export default function ScreenPage() {
             setStreamQuality(q);
           }
         }
-        if (packet.message) setCommandStatus(String(packet.message));
-        if (hasLiveFrame) setCommandStatus("Remote desktop active — click canvas to control.");
+        // Don't overwrite status with every telemetry spam during mouse moves.
+        if (
+          packet.message &&
+          typeof packet.action === "string" &&
+          !String(packet.action).startsWith("REMOTE_")
+        ) {
+          setCommandStatus(String(packet.message));
+        }
+        if (hasLiveFrame && isStreaming) {
+          setCommandStatus("Remote desktop active — click canvas to control.");
+        }
       }
 
-      if (packet.type === "sys_ack" && typeof packet.message === "string" && packet.message) {
+      if (
+        packet.type === "sys_ack" &&
+        typeof packet.message === "string" &&
+        packet.message &&
+        !String(packet.message).includes("REMOTE_")
+      ) {
         setCommandStatus(packet.message);
       }
     });
-  }, [subscribe, hasLiveFrame]);
+  }, [subscribe, hasLiveFrame, isStreaming]);
 
   const sendPointer = useCallback(
     (action: string, e: React.MouseEvent, extra: Record<string, unknown> = {}) => {
@@ -277,7 +298,7 @@ export default function ScreenPage() {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const now = Date.now();
-    if (now - moveThrottleRef.current < 33) return;
+    if (now - moveThrottleRef.current < 16) return;
     moveThrottleRef.current = now;
     sendPointer("REMOTE_MOUSE_MOVE", e);
   };
