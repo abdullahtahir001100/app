@@ -73,9 +73,9 @@ export default function DashboardPage() {
   );
 
   const apiBase =
-    process.env.NEXT_PUBLIC_API_URL || "https://optimas-production.up.railway.app";
+    process.env.NEXT_PUBLIC_API_URL || "https://zenvora.abdullahtahir.me";
   const gatewayUrl =
-    process.env.NEXT_PUBLIC_GATEWAY_URL || "wss://optimas-production.up.railway.app/ws/gateway";
+    process.env.NEXT_PUBLIC_GATEWAY_URL || "wss://zenvora.abdullahtahir.me/ws/gateway";
   const agentDownloadUrl =
     process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL ||
     `${apiBase}/downloads/win_32.exe`;

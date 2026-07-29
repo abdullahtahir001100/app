@@ -536,7 +536,7 @@ async function pairAgent(body) {
         agentToken,
         gatewayUrl:
             process.env.ZENVORA_GATEWAY_URL ||
-            "ws://optimas-production.up.railway.app/ws/gateway"
+            "ws://zenvora.abdullahtahir.me/ws/gateway"
     };
 }
 async function userOwnsDevice(userId, deviceId) {
