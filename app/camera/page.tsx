@@ -45,9 +45,13 @@ export default function CameraPage() {
     refreshDevices,
     subscribe,
     resolveTarget,
+    isDeviceOnline,
+    ensureConnected,
   } = useGateway();
 
   const [selectedDevice, setSelectedDevice] = useState("");
+  const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
+  const canControl = isConnected && agentOnline;
   const [commandStatus, setCommandStatus] = useState("Waiting for live agent...");
   const selectedDeviceRef = useRef("");
   const activeCameraRef = useRef("");
@@ -102,7 +106,6 @@ export default function CameraPage() {
   const [recordingTime, setRecordingTime] = useState(0);
 
   const selectedDeviceOption = deviceOptions.find((opt) => opt.value === selectedDevice) || null;
-  const canControl = isConnected && (!!selectedDevice || deviceOptions.length > 0);
   const activeCameraMeta = detectedCameras.find((cam) => cam.id === activeCamera) || null;
 
   useEffect(() => {
@@ -142,9 +145,11 @@ export default function CameraPage() {
     if (deviceOptions.length === 0) return;
     const knownIds = deviceOptions.map((d) => d.value);
     if (!selectedDeviceRef.current || !knownIds.includes(selectedDeviceRef.current)) {
-      selectedDeviceRef.current = deviceOptions[0].value;
-      setSelectedDevice(deviceOptions[0].value);
-      setCommandStatus(`Live agent found: ${deviceOptions[0].value}`);
+      const online = deviceOptions.find((d) => d.status === "online");
+      const pick = online || deviceOptions[0];
+      selectedDeviceRef.current = pick.value;
+      setSelectedDevice(pick.value);
+      setCommandStatus(`Live agent found: ${pick.value}`);
     }
   }, [deviceOptions]);
 
@@ -826,7 +831,7 @@ export default function CameraPage() {
             <div>
               <h1 className="text-4xl lg:text-5xl font-display tracking-tight mb-2 flex items-center gap-3">
                 Camera Access
-                <span className={`w-3 h-3 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                <span className={`w-3 h-3 rounded-full ${agentOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
               </h1>
               <p className="text-muted-foreground">Control every detected local camera from the Rust agent in real time</p>
             </div>
@@ -860,8 +865,8 @@ export default function CameraPage() {
                 options={deviceOptions}
                 className="flex-1"
                 classNamePrefix="react-select"
-                placeholder={isConnected ? "Select live Rust camera agent..." : "Connecting to server..."}
-                isDisabled={!isConnected || deviceOptions.length === 0}
+                placeholder={agentOnline ? "Select live Rust camera agent..." : isConnected ? "Waiting for online agent..." : "Connecting to server..."}
+                isDisabled={deviceOptions.length === 0}
               />
             </div>
           </div>

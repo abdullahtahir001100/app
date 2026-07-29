@@ -30,9 +30,6 @@ export function useGateway() {
         setSocket(null);
       }
       if (event.type === "devices") {
-        if (event.devices.length === 0 && devicesRef.current.length > 0) {
-          return;
-        }
         setDevices(event.devices);
         setDevicesLoading(false);
       }
@@ -40,14 +37,34 @@ export function useGateway() {
   }, []);
 
   const resolveTarget = useCallback(
-    (override?: string) => override || devicesRef.current[0]?.value || "",
+    (override?: string) => {
+      if (override) return override;
+      const online = devicesRef.current.find((d) => d.status === "online");
+      return online?.value || devicesRef.current[0]?.value || "";
+    },
     []
   );
+
+  const isDeviceOnline = useCallback((deviceId?: string) => {
+    const id = deviceId || devicesRef.current[0]?.value;
+    if (!id) return false;
+    return devicesRef.current.some((d) => d.value === id && d.status === "online");
+  }, []);
 
   const dispatch = useCallback(
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
       const target = resolveTarget(targetOverride);
       if (!target) return { ok: false as const, reason: "no-agent" as const };
+      if (!gatewayClient.isOpen()) {
+        gatewayClient.ensureConnected();
+        return { ok: false as const, reason: "offline" as const };
+      }
+      const deviceOnline = devicesRef.current.some(
+        (d) => d.value === target && d.status === "online"
+      );
+      if (!deviceOnline) {
+        return { ok: false as const, reason: "agent-offline" as const };
+      }
       if (!gatewayClient.dispatch(action, target, payload)) {
         return { ok: false as const, reason: "offline" as const };
       }
@@ -78,9 +95,11 @@ export function useGateway() {
     sendCommand,
     refreshDevices,
     resolveTarget,
+    isDeviceOnline,
     getSocket,
     socket,
     subscribe: gatewayClient.subscribe.bind(gatewayClient),
     getFullDevices: gatewayClient.getFullDevices.bind(gatewayClient),
+    ensureConnected: gatewayClient.ensureConnected.bind(gatewayClient),
   };
 }

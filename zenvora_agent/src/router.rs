@@ -15,6 +15,35 @@ pub fn is_history_action(action: &str) -> bool {
     )
 }
 
+pub fn is_agent_control_action(action: &str) -> bool {
+    matches!(action, "RESTART_AGENT" | "RESTART_SERVICE")
+}
+
+pub fn handle_agent_control_command(action: &str) -> Option<CommandResponse> {
+    match action {
+        "RESTART_AGENT" | "RESTART_SERVICE" => {
+            // Respond first, then restart shortly so the ACK can leave the socket.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let _ = crate::service::restart_service();
+                // If service restart is unavailable, exit so SCM / launcher respawns us.
+                std::process::exit(0);
+            });
+            Some(CommandResponse {
+                json: serde_json::json!({
+                    "type": "sys_ack",
+                    "status": "success",
+                    "action": action,
+                    "message": "Agent restart scheduled."
+                }),
+                frame: None,
+                frame_kind: 0,
+            })
+        }
+        _ => None,
+    }
+}
+
 pub fn handle_history_command(action: &str) -> Option<CommandResponse> {
     let response = match action {
         "FETCH_BROWSER_HISTORY" => {
@@ -59,7 +88,9 @@ pub fn is_audio_action(action: &str) -> bool {
 }
 
 pub fn dispatch_command(packet: IncomingPacket, agent: &mut AgentState) -> Option<CommandResponse> {
-    if is_history_action(&packet.action) {
+    if is_agent_control_action(&packet.action) {
+        handle_agent_control_command(&packet.action)
+    } else if is_history_action(&packet.action) {
         handle_history_command(&packet.action)
     } else if is_shell_action(&packet.action) {
         handle_shell_command(packet, &mut agent.shell)

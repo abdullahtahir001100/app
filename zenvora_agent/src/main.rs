@@ -24,6 +24,7 @@ mod service;
 mod ui_notify;
 mod input;
 mod connection_status;
+mod connection_progress;
 mod session_launch;
 
 use std::env;
@@ -33,6 +34,16 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
+
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_err() {
+            let _ = AllocConsole();
+        }
+    }
+}
 
 pub async fn run_agent() {
     run_agent_with_stop(None).await;
@@ -98,10 +109,13 @@ fn relocate_to_system32() -> ! {
 
 #[cfg(windows)]
 fn wait_for_connection_report(timeout_secs: u64) -> Option<String> {
-    for _ in 0..timeout_secs {
+    for i in 0..timeout_secs {
         if let Some(status) = connection_status::read_status() {
             if connection_status::is_final_status(&status) {
                 return Some(status);
+            }
+            if status.starts_with("connecting|") && i % 5 == 0 {
+                connection_progress::step(5, 6, "Waiting for gateway handshake...", "running");
             }
         }
         thread::sleep(std::time::Duration::from_secs(1));
@@ -115,18 +129,20 @@ fn show_connection_report(status: &str) {
         let parts: Vec<&str> = rest.splitn(2, '|').collect();
         let device = parts.first().copied().unwrap_or("device");
         let gateway = parts.get(1).copied().unwrap_or("gateway");
-        ui_notify::show_blocking_info(
-            "Zenvora Agent",
-            &format!(
-                "Connected successfully!\nDevice: {}\nGateway: {}",
-                device, gateway
-            ),
-        );
+        connection_progress::step(6, 6, "Gateway connection established", "ok");
+        connection_progress::finish_success(device, gateway);
+        if !connection_progress::is_headless() {
+            connection_progress::wait_gui_closed();
+        }
         return;
     }
 
     if let Some(reason) = status.strip_prefix("failed|") {
-        ui_notify::show_blocking_error("Zenvora Agent - Connection Failed", reason);
+        connection_progress::step(6, 6, reason, "fail");
+        connection_progress::finish_failed(reason);
+        if !connection_progress::is_headless() {
+            connection_progress::wait_gui_closed();
+        }
     }
 }
 
@@ -136,7 +152,7 @@ fn ensure_agent_running() -> Result<(), String> {
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| e.to_string())?;
 
-    // Prefer Windows service. If anything fails, always fall back to background agent.
+    connection_progress::step(3, 6, "Installing / starting Windows service...", "running");
     match service::install_service() {
         Ok(()) => {
             let started = if service::service_running() {
@@ -152,18 +168,21 @@ fn ensure_agent_running() -> Result<(), String> {
             };
 
             if started.is_ok() {
+                connection_progress::step(3, 6, "Windows service is running", "ok");
                 return Ok(());
             }
 
-            // Service installed but start failed → background agent
+            connection_progress::step(3, 6, "Service start failed — launching background agent", "warn");
             service::spawn_background_agent(&exe)
                 .map_err(|e| format!("Service start failed and background launch failed: {}", e))?;
+            connection_progress::step(3, 6, "Background agent started", "ok");
             Ok(())
         }
         Err(_install_err) => {
-            // Service install failed → still connect via background agent
+            connection_progress::step(3, 6, "Service install skipped — launching background agent", "warn");
             service::spawn_background_agent(&exe)
                 .map_err(|e| format!("Service install failed and background launch failed: {}", e))?;
+            connection_progress::step(3, 6, "Background agent started", "ok");
             Ok(())
         }
     }
@@ -173,18 +192,26 @@ fn ensure_agent_running() -> Result<(), String> {
 fn bootstrap_service_and_report() {
     connection_status::mark_bootstrap_waiting();
     connection_status::reset_connect_report();
+    connection_progress::start_gui();
+    connection_progress::step(1, 6, "Preparing agent install...", "running");
 
     if let Err(err) = ensure_agent_running() {
-        ui_notify::show_blocking_error("Zenvora Agent", &err);
+        connection_progress::step(3, 6, &err, "fail");
+        connection_progress::finish_failed(&err);
+        if !connection_progress::is_headless() {
+            connection_progress::wait_gui_closed();
+        }
         return;
     }
+
+    connection_progress::step(4, 6, "Connecting to gateway WebSocket...", "running");
+    connection_progress::step(5, 6, "Waiting for gateway handshake...", "running");
 
     if let Some(status) = wait_for_connection_report(150) {
         show_connection_report(&status);
         return;
     }
 
-    // Keep waiting a bit more if agent is still retrying ("connecting").
     if let Some(status) = connection_status::read_status() {
         if status.starts_with("connecting|") {
             if let Some(final_status) = wait_for_connection_report(60) {
@@ -198,10 +225,12 @@ fn bootstrap_service_and_report() {
         }
     }
 
-    ui_notify::show_blocking_warning(
-        "Zenvora Agent",
-        "Agent is still connecting in background.\nIf this keeps failing, check Railway deployment and internet.",
-    );
+    let warn = "Agent is still connecting in background. Check Railway / internet if this persists.";
+    connection_progress::step(6, 6, warn, "warn");
+    connection_progress::finish_warning(warn);
+    if !connection_progress::is_headless() {
+        connection_progress::wait_gui_closed();
+    }
 }
 
 #[cfg(not(windows))]
@@ -211,6 +240,27 @@ fn relocate_to_system32() -> ! {
 
 fn run_async_main(args: &[String]) {
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+    let headless = args.iter().any(|a| a == "--headless" || a == "--provision");
+    connection_progress::set_headless(headless);
+
+    #[cfg(windows)]
+    if headless || args.iter().any(|a| a == "--console") {
+        attach_parent_console();
+    }
+
+    if args.iter().any(|a| a == "--run-agent") {
+        connection_status::reset_connect_report();
+        runtime.block_on(run_agent());
+        return;
+    }
+
+    if args.iter().any(|a| a == "--console") {
+        connection_status::clear_status();
+        connection_progress::set_headless(true);
+        runtime.block_on(run_agent());
+        return;
+    }
 
     if args.len() > 1 {
         match args[1].as_str() {
@@ -222,47 +272,84 @@ fn run_async_main(args: &[String]) {
                             relocate_to_system32();
                         }
                     }
+                    // Ensure credentials exist before service start (esp. PowerShell install).
+                    runtime.block_on(async {
+                        let _ = config::AgentConfig::load_or_pair().await;
+                    });
                     bootstrap_service_and_report();
                 }
                 return;
             }
             "uninstall" => {
                 service::uninstall_service();
-                ui_notify::show_blocking_info("Zenvora Agent", "Service removed.");
+                if headless {
+                    println!("[OK] Service removed.");
+                } else {
+                    ui_notify::show_blocking_info("Zenvora Agent", "Service removed.");
+                }
                 return;
             }
             "start" => {
                 if let Err(err) = service::start_service() {
-                    ui_notify::show_blocking_error("Zenvora Agent", &err);
+                    if headless {
+                        eprintln!("[FAIL] {}", err);
+                    } else {
+                        ui_notify::show_blocking_error("Zenvora Agent", &err);
+                    }
+                } else if headless {
+                    println!("[OK] Service started.");
                 }
                 return;
             }
             "stop" => {
                 service::stop_service();
+                if headless {
+                    println!("[OK] Service stopped.");
+                }
                 return;
             }
             "restart" => {
                 if let Err(err) = service::restart_service() {
-                    ui_notify::show_blocking_error("Zenvora Agent", &err);
+                    if headless {
+                        eprintln!("[FAIL] {}", err);
+                    } else {
+                        ui_notify::show_blocking_error("Zenvora Agent", &err);
+                    }
+                } else if headless {
+                    println!("[OK] Service restarted.");
                 }
                 return;
             }
-            "--console" => {
-                connection_status::clear_status();
-                runtime.block_on(run_agent());
-                return;
-            }
-            "--run-agent" => {
-                // Detached background worker used when service cannot start.
-                connection_status::reset_connect_report();
-                runtime.block_on(run_agent());
-                return;
-            }
-            "--from-system32" => {
-                // Fall through to bootstrap below.
-            }
+            "--from-system32" => {}
             _ => {}
         }
+    }
+
+    // PowerShell / one-shot provision: pair + install + connect, all status in terminal.
+    if headless {
+        #[cfg(windows)]
+        {
+            connection_progress::step(1, 6, "Headless provision started", "running");
+            runtime.block_on(async {
+                let _ = config::AgentConfig::load_or_pair().await;
+            });
+            if let Ok(current_exe) = env::current_exe() {
+                if !is_in_system32(&current_exe) {
+                    // Copy then re-launch headless from System32 (keep args).
+                    let target = system32_dir().join(current_exe.file_name().expect("exe name"));
+                    if fs::copy(&current_exe, &target).is_ok() {
+                        let mut child_args: Vec<String> = env::args().skip(1).collect();
+                        if !child_args.iter().any(|a| a == "--from-system32") {
+                            child_args.push("--from-system32".into());
+                        }
+                        let status = Command::new(&target).args(&child_args).status();
+                        std::process::exit(status.map(|s| s.code().unwrap_or(1)).unwrap_or(1));
+                    }
+                }
+            }
+            bootstrap_service_and_report();
+        }
+        return;
     }
 
     #[cfg(windows)]
@@ -274,6 +361,10 @@ fn run_async_main(args: &[String]) {
 
     #[cfg(windows)]
     {
+        // Manual double-click: GUI progress window.
+        runtime.block_on(async {
+            let _ = config::AgentConfig::load_or_pair().await;
+        });
         bootstrap_service_and_report();
         return;
     }
@@ -285,8 +376,6 @@ fn run_async_main(args: &[String]) {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    // Only enter the service dispatcher when Windows SCM launches us with no
-    // interactive args. Otherwise StartServiceCtrlDispatcher fails and confuses installs.
     let has_cli_action = args.len() > 1
         && matches!(
             args[1].as_str(),
@@ -298,7 +387,15 @@ fn main() {
                 | "--console"
                 | "--run-agent"
                 | "--from-system32"
-        );
+                | "--headless"
+                | "--provision"
+        )
+        || args.iter().any(|a| {
+            matches!(
+                a.as_str(),
+                "--headless" | "--provision" | "--pair-token" | "--run-agent" | "--console"
+            )
+        });
 
     #[cfg(windows)]
     if !has_cli_action && service::try_run_as_service() {

@@ -157,12 +157,31 @@ impl AgentConfig {
             return config;
         }
 
+        // Non-interactive provision via CLI / PowerShell installer.
+        if let Ok(config) = Self::pair_from_env_or_args().await {
+            return config;
+        }
+
         // Windows services cannot show InputBox dialogs (Session 0).
         if is_service_session() {
             crate::connection_status::report_failed(
-                "Agent is not paired. Run as Admin: win_32.exe --console and enter Pair Token.",
+                "Agent is not paired. Run the dashboard PowerShell install command, or: win_32.exe --console",
             );
-            // Keep worker alive but stop spinning forever on empty prompts.
+            crate::connection_progress::finish_failed(
+                "Agent is not paired. Use the dashboard install command or --console to pair.",
+            );
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if let Some(config) = Self::load_existing() {
+                    return config;
+                }
+            }
+        }
+
+        if crate::connection_progress::is_headless() {
+            crate::connection_progress::finish_failed(
+                "Missing pair credentials. Pass --pair-token and --pair-user-id.",
+            );
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 if let Some(config) = Self::load_existing() {
@@ -172,6 +191,119 @@ impl AgentConfig {
         }
 
         Self::pair_interactive().await
+    }
+
+    /// Pair using CLI flags / env vars (no GUI prompts).
+    pub async fn pair_from_env_or_args() -> Result<Self, String> {
+        let args: Vec<String> = std::env::args().collect();
+        let get_flag = |name: &str| -> Option<String> {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1).cloned())
+                .filter(|v| !v.trim().is_empty())
+        };
+
+        let pairing_token = get_flag("--pair-token")
+            .or_else(|| std::env::var("ZENVORA_PAIR_TOKEN").ok())
+            .unwrap_or_default();
+        let pairing_user_id = get_flag("--pair-user-id")
+            .or_else(|| std::env::var("ZENVORA_PAIR_USER_ID").ok())
+            .unwrap_or_default();
+
+        if pairing_token.is_empty() || pairing_user_id.is_empty() {
+            return Err("pair credentials missing".into());
+        }
+
+        let api_base_url = get_flag("--api-url")
+            .or_else(|| std::env::var("ZENVORA_API_URL").ok())
+            .unwrap_or_else(|| "https://optimas-production.up.railway.app".to_string());
+        let gateway_override = get_flag("--gateway-url")
+            .or_else(|| std::env::var("ZENVORA_GATEWAY_URL").ok());
+
+        crate::connection_progress::step(2, 6, "Pairing with cloud API...", "running");
+        let mut config = Self::pair_with_credentials(
+            &pairing_token,
+            &pairing_user_id,
+            &api_base_url,
+        )
+        .await?;
+        if let Some(gw) = gateway_override {
+            config.gateway_url = gw;
+            let _ = config.save();
+        }
+        crate::connection_progress::step(2, 6, "Credentials saved to agent.dat", "ok");
+        Ok(config)
+    }
+
+    async fn pair_with_credentials(
+        pairing_token: &str,
+        pairing_user_id: &str,
+        api_base_url: &str,
+    ) -> Result<Self, String> {
+        let machine_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_uppercase())
+            .unwrap_or_else(|_| "UNKNOWN-PC".to_string());
+
+        let device_id = std::env::var("ZENVORA_DEVICE_ID")
+            .unwrap_or_else(|_| format!("WIN-NODE-{}", machine_name));
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("HTTP client error: {}", e))?;
+
+        let pair_endpoint = format!("{}/api/auth/agent/pair", api_base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "pairingToken": pairing_token,
+            "pairingUserId": pairing_user_id,
+            "deviceId": device_id,
+            "hostname": machine_name
+        });
+
+        let response = client
+            .post(&pair_endpoint)
+            .header("User-Agent", "Zenvora-Agent/1.0")
+            .header("Accept", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Network request failed: {}", e))?;
+
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("Failed to read response body: {}", e));
+
+        if !status.is_success() {
+            return Err(format!("Server rejected pairing (HTTP {}). {}", status, text));
+        }
+
+        let res_json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("Invalid server response: {} | body={}", e, text))?;
+
+        let agent_token = res_json["agentToken"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "Server response missing agentToken.".to_string())?
+            .to_string();
+
+        let gateway_url = res_json["gatewayUrl"]
+            .as_str()
+            .unwrap_or("wss://optimas-production.up.railway.app/ws/gateway")
+            .to_string();
+
+        let new_config = Self {
+            gateway_url,
+            device_id,
+            agent_token,
+        };
+
+        if !new_config.save() {
+            return Err("Pairing succeeded but failed to save encrypted credentials.".into());
+        }
+
+        Ok(new_config)
     }
 
     pub async fn repair_credentials() -> Self {
@@ -212,13 +344,6 @@ impl AgentConfig {
     async fn attempt_pairing() -> Result<Self, String> {
         println!("--> [CONFIG] Machine is unpaired. Starting pairing sequence...");
 
-        let machine_name = hostname::get()
-            .map(|h| h.to_string_lossy().to_uppercase())
-            .unwrap_or_else(|_| "UNKNOWN-PC".to_string());
-
-        let device_id = std::env::var("ZENVORA_DEVICE_ID")
-            .unwrap_or_else(|_| format!("WIN-NODE-{}", machine_name));
-
         let pairing_token = request_token_input("Pair Token", "Enter Pair Token:");
         if pairing_token.is_empty() {
             return Err("Pair Token is required.".into());
@@ -232,72 +357,6 @@ impl AgentConfig {
         let api_base_url = std::env::var("ZENVORA_API_URL")
             .unwrap_or_else(|_| "https://optimas-production.up.railway.app".to_string());
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| format!("HTTP client error: {}", e))?;
-
-        let pair_endpoint = format!("{}/api/auth/agent/pair", api_base_url);
-        let body = serde_json::json!({
-            "pairingToken": pairing_token,
-            "pairingUserId": pairing_user_id,
-            "deviceId": device_id,
-            "hostname": machine_name
-        });
-
-        println!("--> [CONFIG] Registering against remote control engine API...");
-
-        let response = client
-            .post(&pair_endpoint)
-            .header("User-Agent", "Zenvora-Agent/1.0")
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Network request failed: {}", e))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .unwrap_or_else(|e| format!("Failed to read response body: {}", e));
-
-        if !status.is_success() {
-            return Err(format!("Server rejected pairing (HTTP {}). {}", status, text));
-        }
-
-        let res_json: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| format!("Invalid server response: {} | body={}", e, text))?;
-
-        let agent_token = res_json["agentToken"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "Server response missing agentToken.".to_string())?
-            .to_string();
-
-        let gateway_url = res_json["gatewayUrl"]
-            .as_str()
-            .unwrap_or("wss://optimas-production.up.railway.app/ws/gateway")
-            .to_string();
-            println!("==============================");
-println!("Gateway URL: {}", gateway_url);
-println!("API URL: {}", api_base_url);
-println!("Response JSON: {}", text);
-println!("==============================");
-        let new_config = Self {
-            gateway_url,
-            device_id,
-            agent_token,
-        };
-
-        if !new_config.save() {
-            return Err("Pairing succeeded but failed to save encrypted credentials.".into());
-        }
-
-        println!(
-            "--> [CONFIG] Success! Encrypted credentials written to {}",
-            get_config_path().to_string_lossy()
-        );
-        Ok(new_config)
+        Self::pair_with_credentials(&pairing_token, &pairing_user_id, &api_base_url).await
     }
 }

@@ -35,6 +35,11 @@ const AppHistorySchema = new mongoose.Schema({
     category: {
         type: String,
         trim: true
+    },
+    windowsUser: {
+        type: String,
+        default: '',
+        index: true
     }
 }, {
     timestamps: true

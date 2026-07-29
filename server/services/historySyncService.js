@@ -49,7 +49,8 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
         title: String(entry.title || entry.url || 'Untitled'),
         visitTime: parseFlexibleDate(entry.visitTime),
         visitCount: Number(entry.visitCount) || 1,
-        domain: extractDomain(entry.url)
+        domain: extractDomain(entry.url),
+        windowsUser: String(entry.windowsUser || entry.windows_user || '')
     })).filter((doc) => doc.url);
 
     if (docs.length === 0) return { count: 0 };
@@ -75,7 +76,8 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         executablePath: String(entry.executablePath || entry.executable_path || ''),
         lastOpened: parseFlexibleDate(entry.lastOpened || entry.last_opened),
         appType: normalizeAppType(entry.appType || entry.app_type),
-        category: entry.category ? String(entry.category) : undefined
+        category: entry.category ? String(entry.category) : undefined,
+        windowsUser: String(entry.windowsUser || entry.windows_user || '')
     }));
 
     await AppHistory.deleteMany({ deviceId, userId });

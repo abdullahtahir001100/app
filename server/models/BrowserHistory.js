@@ -35,6 +35,11 @@ const BrowserHistorySchema = new mongoose.Schema({
     },
     domain: {
         type: String
+    },
+    windowsUser: {
+        type: String,
+        default: '',
+        index: true
     }
 }, {
     timestamps: true

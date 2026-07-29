@@ -53,6 +53,8 @@ export default function ScreenPage() {
     dispatch: gatewayDispatch,
     refreshDevices,
     resolveTarget,
+    isDeviceOnline,
+    ensureConnected,
     subscribe,
   } = useGateway();
 
@@ -78,6 +80,8 @@ export default function ScreenPage() {
 
   const [selectedDevice, setSelectedDevice] = useState("");
   const [commandStatus, setCommandStatus] = useState("Connecting...");
+  const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
+  const canControl = isConnected && agentOnline;
   const [isStreaming, setIsStreaming] = useState(false);
   const [controlEnabled, setControlEnabled] = useState(true);
   const [showPanel, setShowPanel] = useState(true);
@@ -109,10 +113,16 @@ export default function ScreenPage() {
   }, [activeDisplay]);
 
   useEffect(() => {
+    ensureConnected();
+    void refreshDevices(true);
+  }, [ensureConnected, refreshDevices]);
+
+  useEffect(() => {
     if (deviceOptions.length === 0) return;
     const knownIds = deviceOptions.map((d) => d.value);
     if (!selectedDeviceRef.current || !knownIds.includes(selectedDeviceRef.current)) {
-      const first = deviceOptions[0].value;
+      const online = deviceOptions.find((d) => d.status === "online");
+      const first = (online || deviceOptions[0]).value;
       selectedDeviceRef.current = first;
       setSelectedDevice(first);
     }
@@ -120,15 +130,16 @@ export default function ScreenPage() {
 
   useEffect(() => {
     if (!isConnected) {
-      setCommandStatus("Connecting to gateway...");
+      ensureConnected();
+      setCommandStatus("Reconnecting to gateway...");
       return;
     }
-    if (deviceOptions.length === 0) {
-      setCommandStatus("Gateway connected — waiting for Rust agent...");
+    if (!agentOnline) {
+      setCommandStatus("Agent offline — waiting for device...");
       return;
     }
-    setCommandStatus(`Ready — ${deviceOptions.length} agent(s) online`);
-  }, [isConnected, deviceOptions.length]);
+    setCommandStatus(`Ready — ${selectedDevice || "agent"} online`);
+  }, [isConnected, agentOnline, selectedDevice, ensureConnected]);
 
   const dispatchControl = useCallback(
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
@@ -149,14 +160,17 @@ export default function ScreenPage() {
       if (!result.ok) {
         setCommandStatus(
           result.reason === "offline"
-            ? "Gateway disconnected."
-            : "Agent offline — start zenvora_agent."
+            ? "Gateway disconnected — reconnecting..."
+            : result.reason === "agent-offline"
+              ? "Agent offline — start zenvora_agent on the PC."
+              : "No live agent found."
         );
+        if (result.reason === "offline") ensureConnected();
         return false;
       }
       return true;
     },
-    [deviceOptions, gatewayDispatch, refreshDevices, resolveTarget]
+    [deviceOptions, gatewayDispatch, refreshDevices, resolveTarget, ensureConnected]
   );
 
   const probeAndStream = useCallback(async () => {
@@ -394,7 +408,7 @@ export default function ScreenPage() {
                 Remote Desktop
                 <span
                   className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                    isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
+                    agentOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
                   }`}
                 />
               </h1>
@@ -416,13 +430,13 @@ export default function ScreenPage() {
                 className="text-sm"
                 classNamePrefix="react-select"
                 placeholder="Select agent..."
-                isDisabled={!isConnected || deviceOptions.length === 0}
+                isDisabled={deviceOptions.length === 0}
               />
             </div>
 
             <Button
               size="sm"
-              disabled={!isConnected || isStreaming}
+              disabled={!canControl || isStreaming}
               onClick={() => void probeAndStream()}
               className="gap-1.5"
             >

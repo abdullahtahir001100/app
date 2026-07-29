@@ -29,6 +29,7 @@ interface BrowserEntry {
   title: string;
   visitTime: string;
   visitCount: number;
+  windowsUser?: string;
 }
 
 interface AppEntry {
@@ -37,6 +38,7 @@ interface AppEntry {
   lastOpened: string;
   appType: string;
   executablePath?: string;
+  windowsUser?: string;
 }
 
 const iconMap: { [key: string]: any } = {
@@ -410,6 +412,9 @@ export default function LogsPage() {
                       <div className="mt-1 p-2 rounded-lg bg-muted"><Globe className="w-5 h-5" /></div>
                       <div className="flex-1 min-w-0">
                         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{entry.browser}</span>
+                        {entry.windowsUser ? (
+                          <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded ml-2">User: {entry.windowsUser}</span>
+                        ) : null}
                         <h4 className="font-semibold mt-2 truncate">{entry.title || "Untitled"}</h4>
                         <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline truncate block mt-1">{entry.url}</a>
                         <p className="text-xs text-muted-foreground mt-2">Visited {formatTime(entry.visitTime)} • {entry.visitCount} times</p>
@@ -427,9 +432,12 @@ export default function LogsPage() {
                     <div className="flex items-start gap-4">
                       <div className="mt-1 p-2 rounded-lg bg-muted"><Clock className="w-5 h-5" /></div>
                       <div className="flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-semibold">{entry.appName}</h4>
                           <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">{entry.appType}</span>
+                          {entry.windowsUser ? (
+                            <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">User: {entry.windowsUser}</span>
+                          ) : null}
                         </div>
                         {entry.executablePath && <p className="text-sm text-muted-foreground mt-1 truncate">{entry.executablePath}</p>}
                         <p className="text-xs text-muted-foreground mt-2">Last opened {formatTime(entry.lastOpened)}</p>

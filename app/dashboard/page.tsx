@@ -4,20 +4,23 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText } from "lucide-react";
+import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, Copy, Check } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGateway } from "@/hooks/use-gateway";
+import { toast } from "sonner";
 
 export default function DashboardPage() {
-  const { devices: gatewayDevices, devicesLoading, refreshDevices } = useGateway();
+  const { devices: gatewayDevices, devicesLoading, refreshDevices, dispatch, ensureConnected } = useGateway();
   const router = useRouter();
   const [showPairModal, setShowPairModal] = useState(false);
   const [pairingToken, setPairingToken] = useState<string | null>(null);
   const [pairingUserId, setPairingUserId] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [openControlMenu, setOpenControlMenu] = useState<string | null>(null);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [restartingId, setRestartingId] = useState<string | null>(null);
 
   const devices = useMemo(
     () =>
@@ -68,6 +71,54 @@ export default function DashboardPage() {
     devices.filter((device) => typeof device.battery === "number").reduce((sum, device) => sum + (device.battery || 0), 0) /
       Math.max(1, devices.filter((device) => typeof device.battery === "number").length)
   );
+
+  const apiBase =
+    process.env.NEXT_PUBLIC_API_URL || "https://optimas-production.up.railway.app";
+  const gatewayUrl =
+    process.env.NEXT_PUBLIC_GATEWAY_URL || "wss://optimas-production.up.railway.app/ws/gateway";
+  const agentDownloadUrl =
+    process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL ||
+    `${apiBase}/downloads/win_32.exe`;
+
+  const installCommand = useMemo(() => {
+    const token = pairingToken || "<PAIR_TOKEN>";
+    const userId = pairingUserId || "<PAIR_USER_ID>";
+    return `powershell -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $token='${token}'; $userId='${userId}'; $api='${apiBase}'; $gw='${gatewayUrl}'; $url='${agentDownloadUrl}'; $out=Join-Path $env:TEMP 'win_32.exe'; Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan; Invoke-WebRequest -Uri $url -OutFile $out; Write-Host '[2/4] Launching headless provision...' -ForegroundColor Cyan; & $out --headless --pair-token $token --pair-user-id $userId --api-url $api --gateway-url $gw; Write-Host '[3/4] Done. Check status above.' -ForegroundColor Green"`;
+  }, [pairingToken, pairingUserId, apiBase, gatewayUrl, agentDownloadUrl]);
+
+  const copyInstallCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      setCopiedCmd(true);
+      toast.success("Install command copied");
+      setTimeout(() => setCopiedCmd(false), 2000);
+    } catch {
+      toast.error("Could not copy command");
+    }
+  };
+
+  const restartAgent = (deviceId: string) => {
+    ensureConnected();
+    setRestartingId(deviceId);
+    setOpenMenu(null);
+    const result = dispatch("RESTART_AGENT", {}, deviceId);
+    if (!result.ok) {
+      toast.error(
+        result.reason === "offline"
+          ? "Gateway disconnected"
+          : result.reason === "agent-offline"
+            ? "Agent is offline"
+            : "Could not restart agent"
+      );
+      setRestartingId(null);
+      return;
+    }
+    toast.success("Restart command sent");
+    setTimeout(() => {
+      void refreshDevices(true);
+      setRestartingId(null);
+    }, 5000);
+  };
 
   return (
     <div className="flex h-screen bg-background">
@@ -372,6 +423,14 @@ export default function DashboardPage() {
                             >
                               Activity
                             </button>
+                            <button
+                              className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 disabled:opacity-50"
+                              disabled={device.status !== "online" || restartingId === device.id}
+                              onClick={() => restartAgent(device.id)}
+                            >
+                              <RotateCcw className={`w-3.5 h-3.5 ${restartingId === device.id ? "animate-spin" : ""}`} />
+                              Restart agent
+                            </button>
                           </div>
                         )}
                       </div>
@@ -463,14 +522,32 @@ export default function DashboardPage() {
                 <div className="pt-6 space-y-4">
                   <div className="">
                     <h3 className="text-xl font-semibold mb-4">User Tokens</h3>
-                    <div className="space-y-4  gap-8 flex">
+                    <div className="space-y-4 gap-8 flex flex-wrap">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">User Id</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair Token</p>
                         <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Token No</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair User ID</p>
                         <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <h3 className="text-xl font-semibold mb-2">One-line install (PowerShell)</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Run as Administrator on the PC. Status prints in that terminal (no GUI). Manual double-click of the EXE still shows the connection window.
+                    </p>
+                    <div className="rounded-xl border border-border bg-muted/40 p-3">
+                      <pre className="whitespace-pre-wrap break-all text-xs font-mono leading-5 max-h-40 overflow-auto">
+                        {installCommand}
+                      </pre>
+                      <div className="mt-3 flex justify-end">
+                        <Button variant="outline" size="sm" onClick={() => void copyInstallCommand()} className="gap-2">
+                          {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedCmd ? "Copied" : "Copy command"}
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -479,13 +556,13 @@ export default function DashboardPage() {
 
               <div className="border-t border-border px-8 py-5 bg-background">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-muted-foreground">Zenvora_agent_Patch_2.0.23.exe</p>
+                  <p className="text-sm text-muted-foreground">win_32.exe · headless provision + service install</p>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <Button variant="outline" onClick={() => setShowPairModal(false)}>
                       Close
                     </Button>
-                    <Button className="bg-foreground text-background hover:bg-foreground/90" onClick={() => setShowPairModal(false)}>
-                      Confirm Download
+                    <Button className="bg-foreground text-background hover:bg-foreground/90" onClick={() => void copyInstallCommand()}>
+                      Copy Install Command
                     </Button>
                   </div>
                 </div>

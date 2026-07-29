@@ -328,7 +328,7 @@ export function FileManager() {
             className="min-w-[200px] flex-1 max-w-xs"
             classNamePrefix="react-select"
             placeholder="Select agent…"
-            isDisabled={!agent.isConnected}
+            isDisabled={agent.devices.length === 0}
           />
 
           <div className="flex items-center gap-1">

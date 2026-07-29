@@ -40,7 +40,7 @@ type PendingRequest = {
 };
 
 export function useFileAgent() {
-  const { isConnected, devices, dispatch: gatewayDispatch, refreshDevices, resolveTarget, subscribe } = useGateway();
+  const { isConnected, devices, dispatch: gatewayDispatch, refreshDevices, resolveTarget, subscribe, isDeviceOnline, ensureConnected } = useGateway();
 
   const [selectedDevice, setSelectedDevice] = useState("");
   const [currentPath, setCurrentPath] = useState("");
@@ -97,9 +97,15 @@ export function useFileAgent() {
   }, [currentPath]);
 
   useEffect(() => {
+    ensureConnected();
+    void refreshDevices(true);
+  }, [ensureConnected, refreshDevices]);
+
+  useEffect(() => {
     if (devices.length === 0) return;
     if (!selectedDeviceRef.current) {
-      const next = devices[0].value;
+      const online = devices.find((d) => d.status === "online");
+      const next = (online || devices[0]).value;
       selectedDeviceRef.current = next;
       setSelectedDevice(next);
     }
@@ -399,6 +405,7 @@ export function useFileAgent() {
     async (name: string, parentPath = "/") => {
       const deviceId = resolveDeviceId();
       if (!deviceId) throw new Error("Select a live agent device first");
+      const trimmed = name.trim();
       if (!trimmed) throw new Error("Folder name is required.");
 
       const res = await fetch("/api/virtual-files/folders", {
@@ -1130,7 +1137,7 @@ export function useFileAgent() {
         : null;
 
   return {
-    isConnected,
+    isConnected: Boolean(selectedDevice) && isDeviceOnline(selectedDevice) && isConnected,
     devices,
     selectedDevice,
     setSelectedDevice,
@@ -1206,6 +1213,7 @@ export function useFileAgent() {
     deleteCloudSelected,
     restoreCloudSelected,
     purgeCloudSelected,
+    ensureConnected,
   };
 }
 
