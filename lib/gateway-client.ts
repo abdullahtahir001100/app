@@ -236,8 +236,14 @@ class GatewayClient {
     if (typeof window === "undefined") return;
 
     this.connecting = true;
+    const configured =
+      typeof process !== "undefined" && process.env.NEXT_PUBLIC_GATEWAY_URL
+        ? String(process.env.NEXT_PUBLIC_GATEWAY_URL).trim()
+        : "";
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/gateway`);
+    const gatewayUrl =
+      configured || `${protocol}//${window.location.host}/ws/gateway`;
+    const ws = new WebSocket(gatewayUrl);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     let lastPongAt = Date.now();
@@ -261,7 +267,7 @@ class GatewayClient {
         })
       );
       this.emit({ type: "connected" });
-      void this.refreshDevices();
+      void this.refreshDevices({ force: true });
 
       heartbeatTimer = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) {
@@ -305,7 +311,6 @@ class GatewayClient {
             const record = normalizeDeviceRecord(raw);
             return toDeviceOption(record);
           });
-          // Always apply multi-device list updates — status flips matter.
           this.devices = incoming;
           this.fullDevices = (packet.devices as Record<string, unknown>[])
             .map(normalizeDeviceRecord)
@@ -334,7 +339,7 @@ class GatewayClient {
     };
 
     ws.onerror = () => {
-      console.warn("[GATEWAY] WebSocket error");
+      console.warn("[GATEWAY] WebSocket error — will retry. Check Railway deploy + /ws/gateway.");
     };
 
     ws.onclose = () => {
@@ -344,7 +349,7 @@ class GatewayClient {
       this.emit({ type: "disconnected" });
       if (this.listeners.size > 0) {
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+        this.reconnectTimer = setTimeout(() => this.connect(), 2000);
       }
     };
   }

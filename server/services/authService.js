@@ -53,6 +53,21 @@ async function verifyUserToken(token) {
     }
 }
 
+/**
+ * Sync JWT-only check for WebSocket upgrade.
+ * Never touches Mongo/bcrypt — upgrade must stay under ~50ms or browsers fail the handshake.
+ */
+function verifyUserTokenFast(token) {
+    if (!token) return null;
+    try {
+        const payload = jwt.verify(token, getJwtSecret());
+        if (!payload?.sub) return null;
+        return payload;
+    } catch {
+        return null;
+    }
+}
+
 async function ensureAuthDatabase() {
     await ensureMongooseConnected();
 }
@@ -587,6 +602,7 @@ module.exports = {
     authCookieOptions,
     signUserToken,
     verifyUserToken,
+    verifyUserTokenFast,
     setUserAuthSession,
     clearUserAuthSession,
     ensureAuthDatabase,

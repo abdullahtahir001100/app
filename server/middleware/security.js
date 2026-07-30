@@ -20,7 +20,13 @@ const uploadLimiter = createApiLimiter(15 * 60 * 1000, 50);
 function parseAllowedOrigins() {
     const configured = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '';
     if (!configured || configured === '*') {
-        return ['http://localhost:3000','https://app.javehandmade.store', 'http://127.0.0.1:3000', 'https://localhost:3000'];
+        return [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'https://localhost:3000',
+            'https://zenvora.abdullahtahir.me',
+            'https://app.javehandmade.store',
+        ];
     }
 
     return String(configured)

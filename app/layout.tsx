@@ -1,7 +1,6 @@
 import React from "react"
 import type { Metadata } from 'next'
 import { Instrument_Sans, Instrument_Serif, JetBrains_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
 import { AuthGuard } from '@/components/auth-guard'
 import './globals.css'
 
@@ -47,7 +46,6 @@ export default function RootLayout({
     <html lang="en" className='custom-scrollbar'>
       <body className={`${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
         <AuthGuard>{children}</AuthGuard>
-        <Analytics />
       </body>
     </html>
   )
