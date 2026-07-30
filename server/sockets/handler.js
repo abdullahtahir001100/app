@@ -17,7 +17,6 @@ const {
     broadcastFileBinaryFrame
 } = require('./fileHandler');
 const { handleShellCommand, SHELL_ACTION_TOKENS } = require('./shellHandler');
-const ActivityLog = require('../models/ActivityLog');
 const Device = require('../models/Device');
 const {
     isHistoryCommand,
@@ -650,7 +649,7 @@ async function handleSocketMessage(ws, message) {
         }
 
         if (packet.type === 'activity_log' && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
-            void handleActivityLog(ws, packet, activeConnections);
+            handleActivityLog(ws, packet, activeConnections);
             return;
         }
 
@@ -671,6 +670,23 @@ async function handleSocketMessage(ws, message) {
                 }));
                 return;
             }
+
+            // Prefer Raw TCP control plane when agent is connected there.
+            try {
+                const { sendCommandToAgent } = require('../control/controlHandler');
+                const action = String(packet.action || '');
+                const lightActions = new Set([
+                    'FETCH_BROWSER_HISTORY',
+                    'FETCH_BROWSER_HISTORY_DELTA',
+                    'FETCH_APP_HISTORY',
+                    'FETCH_SYSTEM_NOTIFICATIONS',
+                    'STOP_HISTORY_COLLECTION',
+                ]);
+                if (lightActions.has(action) && sendCommandToAgent(packet.targetDeviceId, action, packet.payload || {})) {
+                    ws.send(JSON.stringify({ type: 'sys_ack', status: 'dispatched', transport: 'tcp', action }));
+                    return;
+                }
+            } catch (_) {}
         }
 
         if (packet.type === 'dispatch_control' && isHistoryCommand(packet.action)) {
@@ -870,23 +886,20 @@ function persistHardwareMetrics(ws, packet, activeConnections) {
     });
 }
 
-async function handleActivityLog(ws, packet, activeConnections) {
+function handleActivityLog(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
     const userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
-    if (!deviceId) {
-        console.warn('[ACTIVITY] Agent activity_log ignored — missing device id');
-        return;
-    }
+    if (!deviceId) return;
 
     const metadata = packet.metadata || {};
     const details = String(packet.details || '');
     const processName = String(metadata.process || metadata.processName || '');
     const windowTitle = String(metadata.windowTitle || '');
     const appName = String(metadata.app || metadata.appName || metadata.title || metadata.windowTitle || '');
+    const createdAt = packet.createdAt || new Date().toISOString();
 
-    const logPayload = {
-        deviceId,
-        userId,
+    const liveLog = {
+        _id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         action: String(packet.action || 'unknown'),
         category: String(packet.category || 'system'),
         device: String(packet.device || ''),
@@ -897,33 +910,35 @@ async function handleActivityLog(ws, packet, activeConnections) {
         processName,
         windowTitle,
         executablePath: String(metadata.executablePath || metadata.path || details || ''),
+        createdAt,
     };
 
-    try {
-        const log = new ActivityLog(logPayload);
-        await log.save();
+    // Instant UI update — Mongo never blocks the wire.
+    sendToOwnerDashboards(activeConnections, userId, {
+        type: 'activity_telemetry',
+        deviceId,
+        log: liveLog,
+    });
 
-        sendToOwnerDashboards(activeConnections, userId, {
-            type: 'activity_telemetry',
+    const writeQueue = require('../services/writeQueue');
+    const ActivityLog = require('../models/ActivityLog');
+    writeQueue.enqueue(async () => {
+        const log = new ActivityLog({
             deviceId,
-            log: {
-                _id: log._id,
-                action: log.action,
-                category: log.category,
-                device: log.device,
-                details: log.details,
-                status: log.status,
-                metadata: log.metadata,
-                appName: log.appName,
-                processName: log.processName,
-                windowTitle: log.windowTitle,
-                executablePath: log.executablePath,
-                createdAt: log.createdAt,
-            }
+            userId,
+            action: liveLog.action,
+            category: liveLog.category,
+            device: liveLog.device,
+            details,
+            status: liveLog.status,
+            metadata,
+            appName,
+            processName,
+            windowTitle,
+            executablePath: liveLog.executablePath,
         });
-    } catch (err) {
-        console.error('[ACTIVITY] Failed to persist activity_log:', err.message);
-    }
+        await log.save();
+    });
 }
 
 function broadcastAudioBinaryFrame(frameBuffer, activeConnections, sourceWs = null) {

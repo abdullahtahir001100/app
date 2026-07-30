@@ -24,12 +24,12 @@ pub struct ScreenState {
 }
 
 pub fn quality_preset(name: &str) -> (u32, u8, u32) {
-    // (max_width, jpeg_quality, target_fps)
+    // (max_width, jpeg_quality, target_fps) — favor latency over fidelity
     match name.to_lowercase().as_str() {
-        "low" => (854, 52, 24),
-        "high" => (1280, 70, 18),
-        "ultra" => (1600, 78, 15),
-        _ => (1024, 62, 20), // medium — balanced for remote control
+        "low" => (720, 45, 30),
+        "high" => (1280, 68, 20),
+        "ultra" => (1600, 75, 15),
+        _ => (960, 55, 28), // medium — snappy remote control default
     }
 }
 
@@ -43,10 +43,10 @@ impl ScreenState {
             volume: 100,
             streaming_active: false,
             detected_displays: Vec::new(),
-            target_fps: 15,
+            target_fps: 28,
             last_sent_text: String::new(),
-            stream_max_width: 1280,
-            stream_jpeg_quality: 72,
+            stream_max_width: 960,
+            stream_jpeg_quality: 55,
             stream_quality: "medium".to_string(),
         }
     }

@@ -15,6 +15,9 @@ mod router;
 mod network;
 mod windows_controls;
 mod com_runtime;
+mod protocol;
+mod sync_cursor;
+mod control_channel;
 mod notifications;
 mod browser_history;
 mod app_history;
@@ -64,6 +67,15 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
     ));
     let mut agent_state = agent::AgentState::new();
 
+    // Always-on Raw TCP control plane (events/heartbeats/incremental sync).
+    let control_config = config.clone();
+    let control_stop = stop_flag.clone();
+    tokio::spawn(async move {
+        control_channel::run_control_loop(control_config, control_stop).await;
+    });
+
+    // Media / command WebSocket (screen, camera, files, shell) — kept for now;
+    // heavy streams should only run while the matching dashboard page is open.
     network::run_network_loop(&mut agent_state, &mut config, stop_flag).await;
 }
 

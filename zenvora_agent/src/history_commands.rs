@@ -7,68 +7,29 @@ pub struct HistoryCommand;
 
 impl HistoryCommand {
     pub fn execute_fetch_browser_history() -> serde_json::Value {
-        println!("[RUST AGENT] Command received: FETCH_BROWSER_HISTORY");
-        println!("[RUST AGENT] Intercepted Action: FETCH_BROWSER_HISTORY");
-        println!("--> [BROWSER] Scanning system for browsing history...");
-        
+        // Manual refresh: newest slice only — never dump thousands of rows.
         let history = BrowserHistoryCollector::collect_all_history();
-        println!("--> [BROWSER] Collected {} entries from all browsers", history.len());
-        
-        for (idx, entry) in history.iter().take(5).enumerate() {
-            println!(
-                "    [{}/{}] {} - {} ({} visits)",
-                idx + 1,
-                std::cmp::min(5, history.len()),
-                entry.browser,
-                entry.url,
-                entry.visit_count
-            );
-        }
-        
-        if history.len() > 5 {
-            println!("    ... and {} more entries", history.len() - 5);
-        }
-        
-        println!("[RUST AGENT] Browser history collected successfully");
-        
+        let capped: Vec<_> = history.into_iter().take(150).collect();
+
         json!({
             "success": true,
             "command": "FETCH_BROWSER_HISTORY",
-            "entries": history.len(),
-            "data": BrowserHistoryCollector::to_json_array(&history)
+            "entries": capped.len(),
+            "incremental": false,
+            "data": BrowserHistoryCollector::to_json_array(&capped)
         })
     }
 
     pub fn execute_fetch_app_history() -> serde_json::Value {
-        println!("[RUST AGENT] Command received: FETCH_APP_HISTORY");
-        println!("[RUST AGENT] Intercepted Action: FETCH_APP_HISTORY");
-        println!("--> [APPS] Scanning system for recently opened applications...");
-        
         let history = AppHistoryCollector::collect_all_app_history();
-        println!("--> [APPS] Collected {} entries (apps, files, processes)", history.len());
-        
-        for (idx, entry) in history.iter().take(5).enumerate() {
-            println!(
-                "    [{}/{}] {} [{}] - {}",
-                idx + 1,
-                std::cmp::min(5, history.len()),
-                entry.app_name,
-                entry.app_type,
-                entry.last_opened
-            );
-        }
-        
-        if history.len() > 5 {
-            println!("    ... and {} more entries", history.len() - 5);
-        }
-        
-        println!("[RUST AGENT] App history collected successfully");
-        
+        let capped: Vec<_> = history.into_iter().take(150).collect();
+
         json!({
             "success": true,
             "command": "FETCH_APP_HISTORY",
-            "entries": history.len(),
-            "data": AppHistoryCollector::to_json_array(&history)
+            "entries": capped.len(),
+            "incremental": false,
+            "data": AppHistoryCollector::to_json_array(&capped)
         })
     }
 

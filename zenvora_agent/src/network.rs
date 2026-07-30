@@ -43,8 +43,8 @@ use crate::screen::invalidate_monitor_cache;
 use crate::screen_commands::{capture_display_jpeg, FRAME_SCREEN_STREAM, StreamCaptureSettings};
 use crate::ui_notify;
 
-const SCREEN_FRAME_INTERVAL_MS: u64 = 25;
-const CAMERA_FRAME_INTERVAL_MS: u64 = 200;
+const SCREEN_FRAME_INTERVAL_MS: u64 = 16;
+const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 15;
 const CONNECT_TIMEOUT_SECS: u64 = 45;
 const NETWORK_WAIT_SECS: u64 = 15;
@@ -513,21 +513,42 @@ pub async fn run_network_loop(
                 let status_write_tx = write_tx.clone();
                 let status_device_id = config.device_id.clone();
                 tokio::spawn(async move {
-                    let mut status_interval = interval(Duration::from_secs(15));
+                    let mut status_interval = interval(Duration::from_secs(60));
                     status_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
                     let mut local_ip_cache = get_local_ip();
                     let mut public_ip_cache: Option<(Instant, String)> = None;
                     let mut geo_cache: Option<(Instant, Value)> = None;
                     let mut cpu_cache = get_cpu();
                     let mut ram_cache = get_ram();
+                    let mut tick: u64 = 0;
 
                     loop {
                         status_interval.tick().await;
-                        let public_ip = get_public_ip_cached(&mut public_ip_cache).await;
-                        let geo = get_geo_cached(&mut geo_cache).await;
+                        tick = tick.wrapping_add(1);
+                        // Geo/public IP at most every ~5 minutes.
+                        let public_ip = if tick % 5 == 1 {
+                            get_public_ip_cached(&mut public_ip_cache).await
+                        } else {
+                            public_ip_cache
+                                .as_ref()
+                                .map(|(_, ip)| ip.clone())
+                                .unwrap_or_default()
+                        };
+                        let geo = if tick % 5 == 1 {
+                            get_geo_cached(&mut geo_cache).await
+                        } else {
+                            geo_cache
+                                .as_ref()
+                                .map(|(_, g)| g.clone())
+                                .unwrap_or_else(|| json!({}))
+                        };
 
                         if local_ip_cache.is_none() {
                             local_ip_cache = get_local_ip();
+                        }
+                        if tick % 3 == 1 {
+                            cpu_cache = get_cpu();
+                            ram_cache = get_ram();
                         }
 
                         let status_packet = json!({

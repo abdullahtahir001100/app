@@ -1,4 +1,6 @@
 const { persistHistoryPayload } = require('../services/historySyncService');
+const writeQueue = require('../services/writeQueue');
+const { sendToOwnerDashboards } = require('./fanout');
 
 const HISTORY_COMMANDS = new Set([
     'FETCH_BROWSER_HISTORY',
@@ -25,54 +27,32 @@ function extractDeviceIdFromAgentSocket(ws) {
     return '';
 }
 
-function broadcastHistoryTelemetry(deviceId, payload, activeConnections, ownerUserId = null) {
-    const message = JSON.stringify({
-        type: 'history_telemetry',
-        deviceId,
-        data: payload.entries,
-        ...payload
-    });
-
-    activeConnections.forEach((clientSocket, key) => {
-        if (!(key.startsWith('DASHBOARD_') && clientSocket.readyState === 1)) return;
-        if (ownerUserId) {
-            const dashUserId = clientSocket?.authContext?.user?.id || clientSocket?.authContext?.userId;
-            if (String(dashUserId || '') !== String(ownerUserId)) return;
-        }
-        clientSocket.send(message);
-    });
-}
-
-async function handleHistoryAgentResponse(ws, packet, activeConnections) {
+function handleHistoryAgentResponse(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
     const userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
-    if (!deviceId) {
-        console.warn('[HISTORY] Agent response ignored — missing device id');
-        return;
-    }
-    if (!userId) {
-        console.warn(`[HISTORY] Agent response ignored for ${deviceId} — missing userId (multi-user isolation)`);
-        return;
-    }
+    if (!deviceId || !userId) return;
 
-    try {
-        const result = await persistHistoryPayload(deviceId, { ...packet, userId });
-        console.log(`[HISTORY] Synced ${result.command} for ${deviceId}: ${result.count} entries`);
+    const entries = Array.isArray(packet.data)
+        ? packet.data
+        : Array.isArray(packet.entries)
+            ? packet.entries
+            : [];
 
-        broadcastHistoryTelemetry(deviceId, {
-            command: result.command,
-            count: result.count,
-            entries: Array.isArray(packet.data) ? packet.data : Array.isArray(packet.entries) ? packet.entries : [],
-            syncedAt: new Date().toISOString()
-        }, activeConnections, userId);
-    } catch (error) {
-        console.error('[HISTORY] Persist failed:', error.message);
-        broadcastHistoryTelemetry(deviceId, {
-            command: packet.command,
-            error: error.message,
-            success: false
-        }, activeConnections, userId);
-    }
+    // Dashboard first — never wait for Mongo.
+    sendToOwnerDashboards(activeConnections, userId, {
+        type: 'history_telemetry',
+        deviceId,
+        command: packet.command,
+        count: entries.length,
+        data: entries,
+        entries,
+        incremental: Boolean(packet.incremental),
+        syncedAt: new Date().toISOString(),
+    });
+
+    writeQueue.enqueue(async () => {
+        await persistHistoryPayload(deviceId, { ...packet, userId, data: entries });
+    });
 }
 
 module.exports = {

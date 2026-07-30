@@ -5,7 +5,8 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::process::Command;
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 use serde_json::json;
 use tokio::time::{sleep, Duration};
@@ -26,34 +27,54 @@ use windows::Win32::Storage::FileSystem::GetDriveTypeW;
 use crate::activity::ActivityLogger;
 use crate::browser_history::BrowserHistoryCollector;
 use crate::notifications;
+use crate::sync_cursor::SyncCursors;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-pub fn start_activity_monitor(logger: Arc<ActivityLogger>) {
-    let weak_logger = Arc::downgrade(&logger);
+static MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
+static ACTIVE_LOGGER: RwLock<Option<Arc<ActivityLogger>>> = RwLock::new(None);
 
-    tokio::spawn(foreground_window_monitor(weak_logger.clone()));
-    tokio::spawn(usb_monitor(weak_logger.clone()));
-    tokio::spawn(browser_monitor(weak_logger.clone()));
-    tokio::spawn(notification_monitor(weak_logger.clone()));
-    tokio::spawn(session_monitor(weak_logger.clone()));
-    tokio::spawn(idle_monitor(weak_logger.clone()));
-    tokio::spawn(clipboard_monitor(weak_logger.clone()));
-    tokio::spawn(power_monitor(weak_logger.clone()));
-    tokio::spawn(network_monitor(weak_logger.clone()));
-    tokio::spawn(bluetooth_monitor(weak_logger.clone()));
-    tokio::spawn(camera_monitor(weak_logger.clone()));
-    tokio::spawn(microphone_monitor(weak_logger.clone()));
-    tokio::spawn(printer_monitor(weak_logger.clone()));
-    tokio::spawn(screenshot_monitor(weak_logger));
+fn current_logger() -> Option<Arc<ActivityLogger>> {
+    ACTIVE_LOGGER.read().ok()?.clone()
 }
 
-async fn foreground_window_monitor(logger: Weak<ActivityLogger>) {
+pub fn start_activity_monitor(logger: Arc<ActivityLogger>) {
+    // Always refresh the live sink so reconnects keep working.
+    if let Ok(mut slot) = ACTIVE_LOGGER.write() {
+        *slot = Some(logger);
+    }
+
+    // Spawn OS watchers only once — never duplicate on WS reconnect.
+    if MONITOR_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    tokio::spawn(foreground_window_monitor());
+    tokio::spawn(usb_monitor());
+    tokio::spawn(browser_monitor());
+    tokio::spawn(notification_monitor());
+    tokio::spawn(session_monitor());
+    tokio::spawn(idle_monitor());
+    tokio::spawn(clipboard_monitor());
+    tokio::spawn(power_monitor());
+    tokio::spawn(network_monitor());
+    tokio::spawn(bluetooth_monitor());
+    tokio::spawn(camera_monitor());
+    tokio::spawn(microphone_monitor());
+    tokio::spawn(printer_monitor());
+    tokio::spawn(screenshot_monitor());
+}
+
+async fn foreground_window_monitor() {
     let mut last_window = String::new();
     let mut last_process = String::new();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         if let Some((window_title, process_path)) = get_active_window_info() {
             if window_title != last_window {
                 logger.log_window_changed(
@@ -74,14 +95,18 @@ async fn foreground_window_monitor(logger: Weak<ActivityLogger>) {
             }
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(2500)).await;
     }
 }
 
-async fn usb_monitor(logger: Weak<ActivityLogger>) {
+async fn usb_monitor() {
     let mut connected = current_removable_drives();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current = current_removable_drives();
 
         for drive in current.difference(&connected) {
@@ -105,16 +130,29 @@ async fn usb_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn browser_monitor(logger: Weak<ActivityLogger>) {
-    let mut seen_urls: HashSet<String> = HashSet::new();
+async fn browser_monitor() {
+    let mut cursors = SyncCursors::load();
 
-    while let Some(logger) = logger.upgrade() {
-        let history = BrowserHistoryCollector::collect_all_history();
-        for entry in history.iter() {
-            if seen_urls.contains(&entry.url) {
-                continue;
-            }
-            seen_urls.insert(entry.url.clone());
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
+        let (entries, new_chrome, new_ff) = BrowserHistoryCollector::collect_since(
+            cursors.browser_chromium_time,
+            cursors.browser_firefox_time,
+        );
+
+        if new_chrome > cursors.browser_chromium_time {
+            cursors.browser_chromium_time = new_chrome;
+        }
+        if new_ff > cursors.browser_firefox_time {
+            cursors.browser_firefox_time = new_ff;
+        }
+        cursors.save();
+
+        // Only emit truly new visits — never re-scan/full-dump.
+        for entry in entries.iter().take(40) {
             logger.log_website(
                 &entry.browser,
                 &entry.url,
@@ -122,26 +160,35 @@ async fn browser_monitor(logger: Weak<ActivityLogger>) {
                     "title": entry.title,
                     "visitTime": entry.visit_time,
                     "visitCount": entry.visit_count,
+                    "windowsUser": entry.windows_user,
+                    "browserProfile": entry.browser_profile,
                 }),
             );
         }
 
-        sleep(Duration::from_secs(7)).await;
+        sleep(Duration::from_secs(12)).await;
     }
 }
 
-async fn notification_monitor(logger: Weak<ActivityLogger>) {
+async fn notification_monitor() {
     let notifier = notifications::global_notifier();
     let mut seen = HashSet::new();
 
-    while let Some(logger) = logger.upgrade() {
-        let recent = notifier.get_recent(50);
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
+        let recent = notifier.get_recent(30);
         for notification in recent {
             let unique = format!("{}|{}|{}", notification.app, notification.title, notification.timestamp);
             if seen.contains(&unique) {
                 continue;
             }
             seen.insert(unique.clone());
+            if seen.len() > 2000 {
+                seen.clear();
+            }
             logger.log_notification_received(
                 "Windows",
                 &notification.title,
@@ -154,14 +201,18 @@ async fn notification_monitor(logger: Weak<ActivityLogger>) {
             );
         }
 
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(8)).await;
     }
 }
 
-async fn session_monitor(logger: Weak<ActivityLogger>) {
+async fn session_monitor() {
     let mut last_logged_in = get_current_session_active();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current = get_current_session_active();
         if current && !last_logged_in {
             logger.log_login("Windows", "User session active", json!({}));
@@ -173,10 +224,14 @@ async fn session_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn idle_monitor(logger: Weak<ActivityLogger>) {
+async fn idle_monitor() {
     let mut idle_reported = false;
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let idle_secs = get_idle_seconds();
         if idle_secs >= 60 && !idle_reported {
             logger.log_system_idle(
@@ -197,10 +252,14 @@ async fn idle_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn clipboard_monitor(logger: Weak<ActivityLogger>) {
+async fn clipboard_monitor() {
     let mut last_sequence = get_clipboard_sequence_number();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_sequence = get_clipboard_sequence_number();
         if current_sequence != 0 && current_sequence != last_sequence {
             if let Some((format, size)) = get_clipboard_content_summary() {
@@ -218,10 +277,14 @@ async fn clipboard_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn power_monitor(logger: Weak<ActivityLogger>) {
+async fn power_monitor() {
     let mut last_ac = get_ac_power_status();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_ac = get_ac_power_status();
         if current_ac && !last_ac {
             logger.log_power_connected("Windows", "AC power connected", json!({}));
@@ -233,11 +296,15 @@ async fn power_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn network_monitor(logger: Weak<ActivityLogger>) {
+async fn network_monitor() {
     let mut last_wifi = is_wifi_connected();
     let mut last_vpn = is_vpn_connected();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_wifi = is_wifi_connected();
         if current_wifi && !last_wifi {
             logger.log_wifi_connected("Windows", "Wi-Fi connected", json!({}));
@@ -258,10 +325,14 @@ async fn network_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn bluetooth_monitor(logger: Weak<ActivityLogger>) {
+async fn bluetooth_monitor() {
     let mut last_devices = get_bluetooth_devices();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_devices = get_bluetooth_devices();
         for device in current_devices.difference(&last_devices) {
             logger.log_bluetooth_connected("Windows", device, json!({"device": device}));
@@ -274,10 +345,14 @@ async fn bluetooth_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn camera_monitor(logger: Weak<ActivityLogger>) {
+async fn camera_monitor() {
     let mut seen_camera = get_camera_processes();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_camera = get_camera_processes();
         for proc in current_camera.difference(&seen_camera) {
             logger.log_camera_started("Windows", proc, json!({"source": "process-scan"}));
@@ -290,10 +365,14 @@ async fn camera_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn microphone_monitor(logger: Weak<ActivityLogger>) {
+async fn microphone_monitor() {
     let mut seen_microphone = get_microphone_processes();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_mic = get_microphone_processes();
         for proc in current_mic.difference(&seen_microphone) {
             logger.log_microphone_started("Windows", proc, json!({"source": "process-scan"}));
@@ -306,10 +385,14 @@ async fn microphone_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn printer_monitor(logger: Weak<ActivityLogger>) {
+async fn printer_monitor() {
     let mut seen_jobs = get_print_jobs();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current_jobs = get_print_jobs();
         for job in current_jobs.difference(&seen_jobs) {
             logger.log_printer_used("Windows", job, json!({"job": job}));
@@ -319,10 +402,14 @@ async fn printer_monitor(logger: Weak<ActivityLogger>) {
     }
 }
 
-async fn screenshot_monitor(logger: Weak<ActivityLogger>) {
+async fn screenshot_monitor() {
     let mut seen = get_screenshot_files();
 
-    while let Some(logger) = logger.upgrade() {
+    loop {
+        let Some(logger) = current_logger() else {
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         let current = get_screenshot_files();
         for path in current.difference(&seen) {
             logger.log_screenshot_taken(

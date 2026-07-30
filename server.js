@@ -16,6 +16,7 @@ const logsRoutes = require('./server/routes/logs');
 const installLogsRoutes = require('./server/routes/installLogs');
 const securityAuditRoutes = require('./server/routes/security-audit');
 const { initWebSocketGateway } = require('./server/sockets/gateway');
+const { initTcpControlGateway } = require('./server/control/tcpGateway');
 const { lookupShareToken, serviceErrorResponse } = require('./server/services/virtualFileService');
 const { attachUser, requireAuthUnlessPublic } = require('./server/middleware/auth');
 
@@ -37,6 +38,9 @@ nextApp.prepare().then(async () => {
     const jsonBodyParser = express.json();
 
     initWebSocketGateway(server, nextUpgradeHandler);
+    initTcpControlGateway();
+    const { initWsControlGateway } = require('./server/control/wsControlGateway');
+    initWsControlGateway(server);
 
     const { broadcastDeviceList } = require('./server/sockets/handler');
     setInterval(() => broadcastDeviceList(), 30000);

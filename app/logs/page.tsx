@@ -75,7 +75,7 @@ const dateOptions = [
 export default function LogsPage() {
   const searchParams = useSearchParams();
   const requestedDevice = searchParams.get("device") || "";
-  const { devices: deviceOptions, sendCommand, socket } = useGateway() as any; 
+  const { devices: deviceOptions, sendCommand, subscribe } = useGateway() as any; 
   
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [activeTab, setActiveTab] = useState("activity");
@@ -106,55 +106,91 @@ export default function LogsPage() {
     }
   }, [deviceOptions, requestedDevice, selectedDevice]);
 
-  // 1. WEBSOCKET LISTENER: Directly updates state when Rust agent replies
+  // Live gateway events — merge deltas, never replace whole lists on incremental.
   useEffect(() => {
-    if (!socket) return;
+    return subscribe((event: { type: string; packet?: Record<string, unknown> }) => {
+      if (event.type !== "json" || !event.packet) return;
+      const msg = event.packet;
+      if (String(msg.deviceId || "") !== selectedDevice) return;
 
-    const handleLiveMessage = (event: MessageEvent) => {
-      try {
-        const msg = JSON.parse(event.data);
+      if (msg.type === "history_telemetry") {
+        const entries = Array.isArray(msg.data)
+          ? msg.data
+          : Array.isArray(msg.entries)
+            ? msg.entries
+            : [];
+        const incremental = Boolean(msg.incremental);
 
-        if (msg.deviceId !== selectedDevice) return;
-
-        if (msg.type === 'history_telemetry') {
-          const entries = Array.isArray(msg.data) ? msg.data : Array.isArray(msg.entries) ? msg.entries : [];
-
-          if (msg.command === 'FETCH_BROWSER_HISTORY' && entries.length > 0) {
-            setBrowserHistory(entries);
-            setLoading(false);
-          } else if (msg.command === 'FETCH_APP_HISTORY' && entries.length > 0) {
-            setAppHistory(entries);
-            setLoading(false);
-          } else if (msg.command === 'FETCH_SYSTEM_NOTIFICATIONS') {
-            setLoading(false);
-          }
+        if (msg.command === "FETCH_BROWSER_HISTORY" && entries.length > 0) {
+          setBrowserHistory((prev) => {
+            if (!incremental) return entries as BrowserEntry[];
+            const keyOf = (e: any) =>
+              `${e.url}|${e.visitTime || e.visit_time}|${e.browser}|${e.windowsUser || e.windows_user || ""}|${e.browserProfile || e.browser_profile || ""}`;
+            const seen = new Set(prev.map(keyOf));
+            const merged = [...prev];
+            for (const entry of entries as BrowserEntry[]) {
+              const k = keyOf(entry);
+              if (!seen.has(k)) {
+                seen.add(k);
+                merged.unshift(entry);
+              }
+            }
+            return merged.slice(0, 500);
+          });
+          setLoading(false);
+        } else if (msg.command === "FETCH_APP_HISTORY" && entries.length > 0) {
+          setAppHistory((prev) => {
+            if (!incremental) return entries as AppEntry[];
+            const keyOf = (e: any) => `${e.appName || e.app_name}|${e.lastOpened || e.last_opened}|${e.windowsUser || ""}`;
+            const seen = new Set(prev.map(keyOf));
+            const merged = [...prev];
+            for (const entry of entries as AppEntry[]) {
+              const k = keyOf(entry);
+              if (!seen.has(k)) {
+                seen.add(k);
+                merged.unshift(entry);
+              }
+            }
+            return merged.slice(0, 500);
+          });
+          setLoading(false);
+        } else if (msg.command === "FETCH_SYSTEM_NOTIFICATIONS") {
+          setLoading(false);
         }
-
-        if (msg.type === 'activity_telemetry' && msg.log) {
-          setLiveActivityLogs((prev) => [msg.log, ...prev]);
-        }
-      } catch (error) {
-        console.error("Live WebSockets parsing failed:", error);
       }
-    };
 
-    socket.addEventListener('message', handleLiveMessage);
-    return () => socket.removeEventListener('message', handleLiveMessage);
-  }, [socket, selectedDevice]);
+      if (msg.type === "activity_telemetry" && msg.log) {
+        setLiveActivityLogs((prev) => [msg.log as ActivityLog, ...prev].slice(0, 200));
+      }
+    });
+  }, [subscribe, selectedDevice]);
 
-  // 2. AUTO FETCH & DATABASE FETCH LOGIC
+  // Load DB once per tab/device — no 30s poll spam; live WS covers updates.
   useEffect(() => {
     if (!selectedDevice) return;
-    
-    // Step A: Fetch existing data from Database immediately
-    fetchDataFromDB();
-    
-    // Step B: Auto-trigger the Rust agent to send fresh data via WebSockets
-    handleLiveFetch();
-
-    // Step C: Fallback polling every 30 seconds for DB syncs
-    const interval = setInterval(fetchDataFromDB, 30000); 
-    return () => clearInterval(interval);
+    let cancelled = false;
+    (async () => {
+      try {
+        if (activeTab === "activity") {
+          const res = await fetch(`/api/logs/activity?limit=100&deviceId=${selectedDevice}`);
+          const data = await res.json();
+          if (!cancelled && data.success) setActivityLogs(data.logs || []);
+        } else if (activeTab === "browser") {
+          const res = await fetch(`/api/logs/browser-history?limit=100&deviceId=${selectedDevice}`);
+          const data = await res.json();
+          if (!cancelled && data.success) setBrowserHistory(data.history || []);
+        } else if (activeTab === "apps") {
+          const res = await fetch(`/api/logs/app-history?limit=100&deviceId=${selectedDevice}`);
+          const data = await res.json();
+          if (!cancelled && data.success) setAppHistory(data.history || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch logs from DB:", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [activeTab, selectedDevice]);
 
   const fetchDataFromDB = async () => {
@@ -178,7 +214,7 @@ export default function LogsPage() {
     }
   };
 
-  // The main manual fetch function
+  // Manual refresh only — deltas arrive via control/WS automatically.
   const handleLiveFetch = () => {
     if (!selectedDevice || !sendCommand) return;
     setLoading(true);
@@ -188,7 +224,6 @@ export default function LogsPage() {
     } else if (activeTab === "apps") {
       sendCommand(selectedDevice, "FETCH_APP_HISTORY");
     } else {
-      // Activity tab just fetches from DB
       fetchDataFromDB().then(() => setLoading(false));
     }
   };
