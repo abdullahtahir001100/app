@@ -39,7 +39,7 @@ nextApp.prepare().then(async () => {
     initWebSocketGateway(server, nextUpgradeHandler);
 
     const { broadcastDeviceList } = require('./server/sockets/handler');
-    setInterval(() => broadcastDeviceList(), 15000);
+    setInterval(() => broadcastDeviceList(), 30000);
 
     app.get('/api/health', (_req, res) => {
         const { getConnectionRegistry } = require('./server/sockets/registry');

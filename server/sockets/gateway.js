@@ -141,22 +141,15 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         try {
             wss.handleUpgrade(req, socket, head, (ws) => {
                 ws.authContext = auth;
-                auditLogger.log({ event: 'gateway_connected', clientKey, kind: auth.kind });
                 wss.emit('connection', ws, req);
             });
         } catch (error) {
-            auditLogger.log({
-                event: 'gateway_upgrade_failed',
-                clientKey,
-                message: error?.message || String(error),
-            });
             rejectUpgrade(socket, 500, 'Internal Server Error');
         }
     });
 
     wss.on('connection', (ws, req) => {
         ws.upgradeReq = req;
-        console.log(`[GATEWAY] WebSocket client connected: ${String(req.url || '/ws/gateway').split('?')[0]} kind=${ws.authContext?.kind || 'unknown'}`);
 
         // Pending peers must register quickly or get dropped.
         if (ws.authContext?.kind === 'pending') {
@@ -171,20 +164,11 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                     } catch (_) {}
                     ws.close();
                 }
-            }, 15000);
+            }, 10000);
         }
 
         ws.on('message', (message) => {
-            const clientKey = ws.authContext?.kind === 'user'
-                ? `user:${ws.authContext.user.id}`
-                : ws.authContext?.kind === 'agent'
-                    ? `device:${ws.authContext.deviceId}`
-                    : `pending:${ws.authContext?.ip || 'unknown'}`;
-            auditLogger.log({
-                event: 'gateway_message',
-                clientKey,
-                size: Buffer.byteLength(message || '', 'utf8'),
-            });
+            // No per-frame audit logging — that alone can starve the event loop.
             void handleSocketMessage(ws, message);
         });
 
@@ -193,14 +177,6 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                 clearTimeout(ws.registrationTimer);
                 ws.registrationTimer = null;
             }
-            auditLogger.log({
-                event: 'gateway_disconnected',
-                clientKey: ws.authContext?.kind === 'user'
-                    ? `user:${ws.authContext.user.id}`
-                    : ws.authContext?.kind === 'agent'
-                        ? `device:${ws.authContext.deviceId}`
-                        : `pending:${ws.authContext?.ip || 'unknown'}`,
-            });
             handleSocketClose(ws);
         });
     });

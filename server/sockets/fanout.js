@@ -76,7 +76,6 @@ function broadcastOwnerBinary(ws, frameBuffer, activeConnections) {
     const ownerUserId = extractOwnerUserId(ws);
     const deviceId = extractDeviceIdFromAgentSocket(ws);
     if (!ownerUserId || !deviceId) {
-        console.warn('[FANOUT] Dropped binary — missing owner or device id');
         return 0;
     }
     const wrapped = wrapBinaryForDevice(deviceId, frameBuffer);

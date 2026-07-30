@@ -156,6 +156,10 @@ class GatewayClient {
   private lifecycleBound = false;
   private reconnectAttempt = 0;
   private connectGeneration = 0;
+  /** Cached short-lived WS ticket — avoid blocking first open on HTTP. */
+  private cachedWsTicket: string | null = null;
+  private cachedWsTicketAt = 0;
+  private preferTicket = false;
 
   constructor() {
     const cached = readDeviceCache();
@@ -242,10 +246,25 @@ class GatewayClient {
       });
       if (!res.ok) return null;
       const data = await res.json().catch(() => null);
-      return typeof data?.ticket === "string" ? data.ticket : null;
+      const ticket = typeof data?.ticket === "string" ? data.ticket : null;
+      if (ticket) {
+        this.cachedWsTicket = ticket;
+        this.cachedWsTicketAt = Date.now();
+      }
+      return ticket;
     } catch {
       return null;
     }
+  }
+
+  private getFreshCachedTicket(): string | null {
+    if (!this.cachedWsTicket) return null;
+    // Tickets are short-lived; reuse for ~45s to skip HTTP on reconnect storms.
+    if (Date.now() - this.cachedWsTicketAt > 45_000) {
+      this.cachedWsTicket = null;
+      return null;
+    }
+    return this.cachedWsTicket;
   }
 
   private async connect() {
@@ -261,9 +280,14 @@ class GatewayClient {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const baseUrl = configured || `${protocol}//${window.location.host}/ws/gateway`;
 
-    // HTTP cookie auth works; Upgrade often drops Cookie on some proxies — use ticket.
-    const ticket = await this.fetchWsTicket();
-    if (generation !== this.connectGeneration) return;
+    // Prefer ticket auth (proxies often strip Cookie on Upgrade).
+    // Cached ticket = open immediately; otherwise one fast HTTP then open.
+    let ticket: string | null = this.getFreshCachedTicket();
+    if (!ticket) {
+      ticket = await this.fetchWsTicket();
+      if (generation !== this.connectGeneration) return;
+    }
+    this.preferTicket = Boolean(ticket);
 
     const gatewayUrl = ticket
       ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(ticket)}`
@@ -292,7 +316,7 @@ class GatewayClient {
       }
     };
 
-    // Abort slow handshakes — Railway edge can stall under load.
+    // Abort slow handshakes fast — stalled upgrades must not sit for seconds.
     const handshakeTimer = setTimeout(() => {
       if (!opened && ws.readyState !== WebSocket.OPEN) {
         try {
@@ -301,7 +325,7 @@ class GatewayClient {
           // ignore
         }
       }
-    }, 8000);
+    }, 4000);
 
     ws.onopen = () => {
       opened = true;
@@ -317,7 +341,10 @@ class GatewayClient {
         })
       );
       this.emit({ type: "connected" });
-      void this.refreshDevices({ force: true });
+      // Live device list comes via sys_ack; HTTP refresh only if cache empty.
+      if (this.devices.length === 0) {
+        void this.refreshDevices({ force: true });
+      }
 
       heartbeatTimer = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) {
@@ -352,12 +379,15 @@ class GatewayClient {
           lastPongAt = Date.now();
         }
 
-        // Auth failed after open — stop hammering as pending.
+        // Auth failed after open — next connect must use a fresh ticket.
         if (
           packet.type === "sys_ack" &&
           (packet.status === "auth_failed" || packet.status === "auth_timeout")
         ) {
           console.warn("[GATEWAY]", packet.message || packet.status);
+          this.preferTicket = true;
+          this.cachedWsTicket = null;
+          this.cachedWsTicketAt = 0;
           stopHeartbeat();
           try {
             ws.close();
@@ -423,8 +453,8 @@ class GatewayClient {
   private scheduleReconnect() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectAttempt += 1;
-    // 1s, 2s, 4s ... cap 20s — stop death-spiral against rate limits.
-    const delay = Math.min(20000, 1000 * 2 ** Math.min(this.reconnectAttempt - 1, 4));
+    // 250ms, 500ms, 1s, 2s ... cap 8s — recover fast without hammering.
+    const delay = Math.min(8000, 250 * 2 ** Math.min(this.reconnectAttempt - 1, 5));
     this.reconnectTimer = setTimeout(() => {
       void this.connect();
     }, delay);

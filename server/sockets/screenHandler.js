@@ -156,7 +156,6 @@ function broadcastScreenBinaryFrame(frameBuffer, activeConnections, sourceWs = n
     if (sourceWs) {
         return broadcastOwnerBinary(sourceWs, frameBuffer, activeConnections);
     }
-    console.warn('[SCREEN] Binary frame dropped — missing source agent socket');
     return 0;
 }
 

@@ -74,6 +74,28 @@ const FRAME_SNAPSHOT = 0x02;
 const FRAME_RAW_RGB = 0x03;
 const FRAME_AUDIO_STREAM = 0x0A;
 
+/** userId -> { devices: Set<string>, at: number } */
+const ownershipCache = new Map();
+/** deviceId -> last dashboard metrics push ts */
+const lastMetricsPushAt = new Map();
+/** deviceId -> pending mongo update */
+const pendingMetricsDb = new Map();
+let metricsDbFlushTimer = null;
+/** userId -> { devices, at } */
+const deviceOptionsCache = new Map();
+
+function rememberOwnership(userId, deviceId) {
+    if (!userId || !deviceId) return;
+    const key = String(userId);
+    let entry = ownershipCache.get(key);
+    if (!entry) {
+        entry = { devices: new Set(), at: Date.now() };
+        ownershipCache.set(key, entry);
+    }
+    entry.devices.add(String(deviceId));
+    entry.at = Date.now();
+}
+
 function getLiveDeviceOptions(userId = null) {
     return Array.from(activeConnections.entries())
         .filter(([key, socket]) => {
@@ -84,26 +106,45 @@ function getLiveDeviceOptions(userId = null) {
             if (!userId) return true;
             return String(auth.userId || '') === String(userId);
         })
-        .map(([key]) => {
+        .map(([key, socket]) => {
             const deviceId = String(key.replace(/^AGENT_/, '').replace(/^DEVICE_/, ''));
+            if (userId) rememberOwnership(userId, deviceId);
+            const hostname = socket?.authContext?.hostname || deviceId;
             return {
                 value: deviceId,
-                label: deviceId,
-                role: key.startsWith('AGENT_') ? 'AGENT' : 'DEVICE',
+                label: hostname,
+                role: 'AGENT',
                 status: 'online',
             };
         });
 }
 
 async function getDeviceOptions(userId = null) {
+    const cacheKey = String(userId || '__all__');
+    const cached = deviceOptionsCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < 8000) {
+        // Always refresh live status onto cached rows.
+        const liveIds = new Set(getLiveDeviceOptions(userId).map((d) => d.value));
+        return cached.devices.map((d) => ({
+            ...d,
+            status: liveIds.has(d.value) ? 'online' : 'offline',
+            role: liveIds.has(d.value) ? 'AGENT' : 'DEVICE',
+        }));
+    }
+
     const liveDevices = getLiveDeviceOptions(userId);
     const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
     const query = userId ? { userId } : {};
-    const allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
+    const allDevices = await Device.find(query)
+        .select('deviceId hostname platform localIp publicIp battery storage lastSeen network username')
+        .sort({ lastSeen: -1 })
+        .lean()
+        .maxTimeMS(2500);
 
-    return allDevices.map((device) => {
+    const devices = allDevices.map((device) => {
         const deviceId = String(device.deviceId || '');
         const isLive = liveDeviceIds.has(deviceId);
+        if (userId && isLive) rememberOwnership(userId, deviceId);
         return {
             value: deviceId,
             label: device.hostname || deviceId,
@@ -120,44 +161,88 @@ async function getDeviceOptions(userId = null) {
             username: device.username || '',
         };
     });
+
+    deviceOptionsCache.set(cacheKey, { devices, at: Date.now() });
+    return devices;
 }
 
 let lastBroadcastAt = 0;
 let lastBroadcastPayload = null;
+let broadcastInFlight = false;
 
 /**
  * @param {{ force?: boolean }} [options]
- * force=true bypasses the 15s throttle (must use on connect/disconnect).
  */
 async function broadcastDeviceList(options = {}) {
     const force = options.force === true;
     const now = Date.now();
-    if (!force && now - lastBroadcastAt < 15000) {
+    if (!force && now - lastBroadcastAt < 30000) {
         return lastBroadcastPayload;
     }
-
+    if (broadcastInFlight) return lastBroadcastPayload;
+    broadcastInFlight = true;
     lastBroadcastAt = now;
 
-    const dashboardSockets = Array.from(activeConnections.entries()).filter(([key, clientSocket]) => {
-        return key.startsWith('DASHBOARD_') && clientSocket.readyState === 1;
-    });
-
-    for (const [, clientSocket] of dashboardSockets) {
-        const userId = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user?.id : null;
-        const devices = await getDeviceOptions(userId);
-        const payload = JSON.stringify({
-            type: 'device_list_update',
-            devices
+    try {
+        const dashboardSockets = Array.from(activeConnections.entries()).filter(([key, clientSocket]) => {
+            return key.startsWith('DASHBOARD_') && clientSocket.readyState === 1;
         });
-        lastBroadcastPayload = payload;
-        try {
-            clientSocket.send(payload);
-        } catch (_) {
-            // ignore broken dashboard sockets
+
+        for (const [, clientSocket] of dashboardSockets) {
+            const userId = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user?.id : null;
+            const devices = await getDeviceOptions(userId);
+            const payload = JSON.stringify({
+                type: 'device_list_update',
+                devices
+            });
+            lastBroadcastPayload = payload;
+            try {
+                clientSocket.send(payload);
+            } catch (_) {
+                // ignore
+            }
         }
+    } finally {
+        broadcastInFlight = false;
     }
 
     return lastBroadcastPayload;
+}
+
+/** Instant register ack — live agents only, no Mongo wait. */
+function sendReadyWithLiveDevices(ws, userId) {
+    const live = getLiveDeviceOptions(userId);
+    try {
+        ws.send(JSON.stringify({
+            type: 'sys_ack',
+            status: 'ready',
+            devices: live
+        }));
+    } catch (_) {}
+
+    // Enrich from Mongo in background (non-blocking).
+    void getDeviceOptions(userId).then((devices) => {
+        if (ws.readyState !== 1) return;
+        try {
+            ws.send(JSON.stringify({ type: 'device_list_update', devices }));
+        } catch (_) {}
+    }).catch(() => {});
+}
+
+/** Push live online set to owner dashboards without waiting on Mongo. */
+function pushLiveDeviceSnapshot(userId) {
+    if (!userId) return;
+    const live = getLiveDeviceOptions(userId);
+    sendToOwnerDashboards(activeConnections, userId, {
+        type: 'device_list_update',
+        devices: live,
+    });
+    void getDeviceOptions(userId).then((devices) => {
+        sendToOwnerDashboards(activeConnections, userId, {
+            type: 'device_list_update',
+            devices,
+        });
+    }).catch(() => {});
 }
 
 function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
@@ -286,13 +371,35 @@ function isKnownBinaryFrame(buffer) {
     );
 }
 
-async function authorizeSocketAction(ws, targetDeviceId) {
+/**
+ * Sync ownership check — never await Mongo on the control hot path.
+ * Live agent socket already carries userId from register_channel.
+ */
+function authorizeSocketAction(ws, targetDeviceId) {
     if (!targetDeviceId) return false;
     if (ws.authContext?.kind === 'agent') {
         return String(ws.authContext.deviceId || '') === String(targetDeviceId);
     }
     if (ws.authContext?.kind === 'user') {
-        return userOwnsDevice(ws.authContext.user?.id, String(targetDeviceId));
+        const userId = String(ws.authContext.user?.id || '');
+        if (!userId) return false;
+
+        const agentSock =
+            activeConnections.get(`AGENT_${targetDeviceId}`) ||
+            activeConnections.get(`DEVICE_${targetDeviceId}`);
+
+        if (agentSock?.readyState === 1 && agentSock.authContext?.kind === 'agent') {
+            const owns = String(agentSock.authContext.userId || '') === userId;
+            if (owns) rememberOwnership(userId, targetDeviceId);
+            return owns;
+        }
+
+        const cached = ownershipCache.get(userId);
+        if (cached && Date.now() - cached.at < 300000 && cached.devices.has(String(targetDeviceId))) {
+            // Device known but not live — allow auth, command will fail offline later.
+            return true;
+        }
+        return false;
     }
     return false;
 }
@@ -384,7 +491,7 @@ async function handleSocketMessage(ws, message) {
                         credential = await Promise.race([
                             verifyAgentToken(deviceOrPanelId, token),
                             new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error('auth timeout')), 8000)
+                                setTimeout(() => reject(new Error('auth timeout')), 2000)
                             )
                         ]);
                     } catch (_) {
@@ -467,21 +574,23 @@ async function handleSocketMessage(ws, message) {
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
-            const userId = ws.authContext?.kind === 'user'
+            const userIdForList = ws.authContext?.kind === 'user'
                 ? ws.authContext.user?.id
                 : ws.authContext?.kind === 'agent' || ws.authContext?.kind === 'install'
                     ? ws.authContext.userId
                     : null;
 
-            console.log(`[GATEWAY] Stream connection assigned registry key: ${connectionKey}`);
-            const devices = role === 'INSTALL' ? [] : await getDeviceOptions(userId);
-            ws.send(JSON.stringify({
-                type: 'sys_ack',
-                status: 'ready',
-                devices
-            }));
-            if (role !== 'INSTALL') {
-                void broadcastDeviceList({ force: true });
+            if (role === 'AGENT' || role === 'DEVICE') {
+                rememberOwnership(userIdForList, deviceOrPanelId);
+            }
+
+            if (role === 'INSTALL') {
+                ws.send(JSON.stringify({ type: 'sys_ack', status: 'ready', devices: [] }));
+            } else {
+                sendReadyWithLiveDevices(ws, userIdForList);
+            }
+            if ((role === 'AGENT' || role === 'DEVICE') && userIdForList) {
+                pushLiveDeviceSnapshot(userIdForList);
             }
             return;
         }
@@ -501,19 +610,12 @@ async function handleSocketMessage(ws, message) {
             ws.connectionKey = connectionKey;
 
             const userId = ws.authContext.user?.id || null;
-            console.log(`[GATEWAY] Dashboard registered: ${connectionKey}`);
-            const devices = await getDeviceOptions(userId);
-            ws.send(JSON.stringify({
-                type: 'sys_ack',
-                status: 'ready',
-                devices
-            }));
-            void broadcastDeviceList({ force: true });
+            sendReadyWithLiveDevices(ws, userId);
             return;
         }
 
         if (packet.type === 'device_status_update' && ws.connectionKey?.startsWith('AGENT_')) {
-            void handleDeviceStatusUpdate(ws, packet, activeConnections);
+            handleDeviceStatusUpdate(ws, packet, activeConnections);
             return;
         }
 
@@ -536,7 +638,7 @@ async function handleSocketMessage(ws, message) {
             ws.connectionKey?.startsWith('AGENT_') &&
             !isFileAck(packet)
         ) {
-            void persistHardwareMetrics(ws, packet, activeConnections);
+            persistHardwareMetrics(ws, packet, activeConnections);
 
             if (isScreenAck(packet)) {
                 handleScreenTelemetry(ws, packet, activeConnections);
@@ -560,9 +662,8 @@ async function handleSocketMessage(ws, message) {
         if (packet.type === 'dispatch_control') {
             packet.targetDeviceId =
                 packet.targetDeviceId || packet.target_device_id || packet.targetDevice;
-            console.log(`[GATEWAY] dispatch_control ${packet.action} -> ${packet.targetDeviceId || 'MISSING'}`);
 
-            if (!await authorizeSocketAction(ws, packet.targetDeviceId)) {
+            if (!authorizeSocketAction(ws, packet.targetDeviceId)) {
                 ws.send(JSON.stringify({
                     type: 'sys_ack',
                     status: 'error',
@@ -640,249 +741,84 @@ async function handleSocketMessage(ws, message) {
     }
 }
 
-// async function handleDeviceStatusUpdate(ws, packet, activeConnections) {
-//     const deviceId = extractDeviceIdFromAgentSocket(ws);
-//     if (!deviceId) {
-//         console.warn('[DEVICE] Agent device_status_update ignored — missing device id');
-//         return;
-//     }
-
-//     const status = String(packet.status || 'online');
-//     const platform = String(packet.platform || 'unknown');
-//     const localIp = String(packet.localIp || packet.local_ip || '');
-//     const publicIp = String(packet.publicIp || packet.public_ip || '');
-//     const lastSeen = packet.timestamp ? new Date(Number(packet.timestamp) * 1000) : new Date();
-
-//     try {
-//         await Device.findOneAndUpdate(
-//             { deviceId },
-//             {
-//                 status,
-//                 platform,
-//                 localIp,
-//                 publicIp,
-//                 lastSeen,
-//             },
-//             { new: true, upsert: true }
-//         );
-
-//         broadcastDeviceList();
-
-//         const message = JSON.stringify({
-//             type: 'device_status_update',
-//             deviceId,
-//             status,
-//             platform,
-//             localIp,
-//             publicIp,
-//             lastSeen: lastSeen.toISOString(),
-//         });
-
-//         activeConnections.forEach((clientSocket, key) => {
-//             if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-//                 clientSocket.send(message);
-//             }
-//         });
-//     } catch (err) {
-//         console.error('[DEVICE] Failed to persist device_status_update:', err.message);
-//     }
-// }
-async function handleDeviceStatusUpdate(ws, packet, activeConnections) {
+function handleDeviceStatusUpdate(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
-
-    if (!deviceId) {
-        console.warn("[DEVICE] Agent device_status_update ignored — missing device id");
-        return;
-    }
+    if (!deviceId) return;
 
     const ownerUserId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     const metrics = packet.hardware_metrics || {};
     const geo = packet.geolocation || metrics.geolocation || {};
 
-    const status = packet.status || "online";
-    const platform = packet.platform || metrics.platform || "unknown";
+    const status = packet.status || 'online';
+    const platform = packet.platform || metrics.platform || 'unknown';
+    const localIp = packet.localIp || packet.local_ip || metrics.localIp || metrics.local_ip || '';
+    const publicIp = packet.publicIp || packet.public_ip || metrics.publicIp || metrics.public_ip || '';
+    const battery = packet.battery ?? metrics.battery ?? metrics.battery_level ?? null;
+    const storage = packet.storage ?? metrics.storage ?? metrics.storage_percent ?? null;
+    const network = packet.network || metrics.network || '';
+    const latitude = geo.latitude ?? metrics.latitude ?? null;
+    const longitude = geo.longitude ?? metrics.longitude ?? null;
+    const country = geo.country || metrics.country || '';
+    const region = geo.region || metrics.region || '';
+    const city = geo.city || metrics.city || '';
+    const isp = geo.isp || metrics.isp || '';
+    const timezone = geo.timezone || metrics.timezone || '';
+    const hostname = packet.hostname || metrics.hostname || '';
+    const username = packet.username || metrics.username || '';
+    const osVersion = packet.osVersion || packet.os_version || metrics.osVersion || metrics.os_version || '';
+    const architecture = packet.architecture || metrics.architecture || '';
+    const cpu = packet.cpu || metrics.cpu || '';
+    const ram = packet.ram ?? metrics.ram ?? null;
+    const lastSeen = packet.timestamp ? new Date(Number(packet.timestamp) * 1000) : new Date();
 
-    const localIp =
-        packet.localIp ||
-        packet.local_ip ||
-        metrics.localIp ||
-        metrics.local_ip ||
-        "";
+    const update = {
+        status, platform, localIp, publicIp, battery, storage, network,
+        latitude, longitude, country, region, city, isp, timezone,
+        hostname, username, osVersion, architecture, cpu, ram, lastSeen,
+    };
+    if (ownerUserId) update.userId = ownerUserId;
 
-    const publicIp =
-        packet.publicIp ||
-        packet.public_ip ||
-        metrics.publicIp ||
-        metrics.public_ip ||
-        "";
+    // Debounce Mongo — never block WS for status floods.
+    pendingMetricsDb.set(deviceId, { update, ownerUserId });
+    if (!metricsDbFlushTimer) {
+        metricsDbFlushTimer = setTimeout(() => { void flushPendingMetricsDb(); }, 30000);
+    }
 
-    const battery =
-        packet.battery ??
-        metrics.battery ??
-        metrics.battery_level ??
-        null;
+    if (hostname && ws.authContext) ws.authContext.hostname = hostname;
+    if (ownerUserId) rememberOwnership(ownerUserId, deviceId);
 
-    const storage =
-        packet.storage ??
-        metrics.storage ??
-        metrics.storage_percent ??
-        null;
+    const now = Date.now();
+    const lastPush = lastMetricsPushAt.get(deviceId) || 0;
+    if (!ownerUserId || now - lastPush < 5000) return;
+    lastMetricsPushAt.set(deviceId, now);
 
-    const network =
-        packet.network ||
-        metrics.network ||
-        "";
+    sendToOwnerDashboards(activeConnections, ownerUserId, {
+        type: 'device_status_update',
+        deviceId, status, platform, localIp, publicIp, battery, storage, network,
+        latitude, longitude, country, region, city, isp, timezone,
+        hostname, username, osVersion, architecture, cpu, ram,
+        lastSeen: lastSeen.toISOString(),
+    });
+}
 
-    const latitude =
-        geo.latitude ??
-        metrics.latitude ??
-        null;
-
-    const longitude =
-        geo.longitude ??
-        metrics.longitude ??
-        null;
-
-    const country =
-        geo.country ||
-        metrics.country ||
-        "";
-
-    const region =
-        geo.region ||
-        metrics.region ||
-        "";
-
-    const city =
-        geo.city ||
-        metrics.city ||
-        "";
-
-    const isp =
-        geo.isp ||
-        metrics.isp ||
-        "";
-
-    const timezone =
-        geo.timezone ||
-        metrics.timezone ||
-        "";
-
-    const hostname =
-        packet.hostname ||
-        metrics.hostname ||
-        "";
-
-    const username =
-        packet.username ||
-        metrics.username ||
-        "";
-
-    const osVersion =
-        packet.osVersion ||
-        packet.os_version ||
-        metrics.osVersion ||
-        metrics.os_version ||
-        "";
-
-    const architecture =
-        packet.architecture ||
-        metrics.architecture ||
-        "";
-
-    const cpu =
-        packet.cpu ||
-        metrics.cpu ||
-        "";
-
-    const ram =
-        packet.ram ??
-        metrics.ram ??
-        null;
-
-    const lastSeen = packet.timestamp
-        ? new Date(Number(packet.timestamp) * 1000)
-        : new Date();
-
-    try {
-        const update = {
-            status,
-            platform,
-            localIp,
-            publicIp,
-            battery,
-            storage,
-            network,
-            latitude,
-            longitude,
-            country,
-            region,
-            city,
-            isp,
-            timezone,
-            hostname,
-            username,
-            osVersion,
-            architecture,
-            cpu,
-            ram,
-            lastSeen,
-        };
-        if (ownerUserId) {
-            update.userId = ownerUserId;
+async function flushPendingMetricsDb() {
+    metricsDbFlushTimer = null;
+    const entries = Array.from(pendingMetricsDb.entries());
+    pendingMetricsDb.clear();
+    for (const [deviceId, item] of entries) {
+        try {
+            await Device.updateOne(
+                item.ownerUserId ? { deviceId, userId: item.ownerUserId } : { deviceId },
+                { $set: item.update },
+                { upsert: true }
+            );
+        } catch (_) {
+            // ignore — next flush will retry newer data
         }
-
-        await Device.findOneAndUpdate(
-            ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId },
-            update,
-            {
-                new: true,
-                upsert: true,
-            }
-        );
-
-        broadcastDeviceList();
-
-        const message = JSON.stringify({
-            type: "device_status_update",
-            deviceId,
-            status,
-            platform,
-            localIp,
-            publicIp,
-            battery,
-            storage,
-            network,
-            latitude,
-            longitude,
-            country,
-            region,
-            city,
-            isp,
-            timezone,
-            hostname,
-            username,
-            osVersion,
-            architecture,
-            cpu,
-            ram,
-            lastSeen: lastSeen.toISOString(),
-        });
-
-        activeConnections.forEach((clientSocket, key) => {
-            if (!(key.startsWith("DASHBOARD_") && clientSocket.readyState === 1)) return;
-            if (ownerUserId) {
-                const dashUserId = clientSocket?.authContext?.user?.id || clientSocket?.authContext?.userId;
-                if (String(dashUserId || '') !== String(ownerUserId)) return;
-            }
-            clientSocket.send(message);
-        });
-
-    } catch (err) {
-        console.error("[DEVICE] Failed to persist device_status_update:", err.message);
     }
 }
-async function persistHardwareMetrics(ws, packet, activeConnections) {
+
+function persistHardwareMetrics(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
     if (!deviceId) return;
 
@@ -896,45 +832,42 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
     const status = String(packet.status || 'online');
     const lastSeen = packet.timestamp ? new Date(Number(packet.timestamp) * 1000) : new Date();
 
-    try {
-        const update = {
-            battery,
-            storage,
-            localIp,
-            publicIp,
-            platform,
-            status,
-            lastSeen,
-        };
-        if (ownerUserId) {
-            update.userId = ownerUserId;
-        }
+    const update = {
+        battery,
+        storage,
+        localIp,
+        publicIp,
+        platform,
+        status,
+        lastSeen,
+    };
+    if (ownerUserId) update.userId = ownerUserId;
 
-        await Device.findOneAndUpdate(
-            ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId },
-            update,
-            { new: true, upsert: true }
-        );
-
-        // Do NOT force broadcastDeviceList here — metrics arrive often and starve WS upgrades.
-        // Periodic interval + connect/disconnect force keep the list fresh.
-
-        const message = JSON.stringify({
-            type: 'device_status_update',
-            deviceId,
-            status,
-            platform,
-            localIp,
-            publicIp,
-            battery,
-            storage,
-            lastSeen: lastSeen.toISOString(),
-        });
-
-        sendToOwnerDashboards(activeConnections, ownerUserId, message);
-    } catch (err) {
-        console.error('[DEVICE] Failed to persist hardware metrics:', err.message);
+    // Queue Mongo write — never await on the WS hot path.
+    pendingMetricsDb.set(deviceId, { update, ownerUserId });
+    if (!metricsDbFlushTimer) {
+        metricsDbFlushTimer = setTimeout(() => {
+            void flushPendingMetricsDb();
+        }, 30000);
     }
+
+    // Throttle dashboard status push (max 1 per device / 5s).
+    const now = Date.now();
+    const lastPush = lastMetricsPushAt.get(deviceId) || 0;
+    if (!ownerUserId || now - lastPush < 5000) return;
+    lastMetricsPushAt.set(deviceId, now);
+
+    sendToOwnerDashboards(activeConnections, ownerUserId, {
+        type: 'device_status_update',
+        deviceId,
+        status,
+        platform,
+        localIp,
+        publicIp,
+        battery,
+        storage,
+        lastSeen: lastSeen.toISOString(),
+    });
 }
 
 async function handleActivityLog(ws, packet, activeConnections) {
@@ -969,9 +902,8 @@ async function handleActivityLog(ws, packet, activeConnections) {
     try {
         const log = new ActivityLog(logPayload);
         await log.save();
-        console.log(`[ACTIVITY] Persisted activity_log for ${deviceId}: ${logPayload.action}`);
 
-        const message = JSON.stringify({
+        sendToOwnerDashboards(activeConnections, userId, {
             type: 'activity_telemetry',
             deviceId,
             log: {
@@ -989,8 +921,6 @@ async function handleActivityLog(ws, packet, activeConnections) {
                 createdAt: log.createdAt,
             }
         });
-
-        sendToOwnerDashboards(activeConnections, userId, message);
     } catch (err) {
         console.error('[ACTIVITY] Failed to persist activity_log:', err.message);
     }
@@ -1040,7 +970,6 @@ function handleSocketClose(ws) {
 
     const current = activeConnections.get(ws.connectionKey);
     if (current !== ws) {
-        console.log(`[GATEWAY] Ignoring stale close for ${ws.connectionKey} (replaced by newer socket).`);
         return;
     }
 
@@ -1051,7 +980,6 @@ function handleSocketClose(ws) {
         : '';
 
     activeConnections.delete(key);
-    console.log(`Connection dropped and connection memory freed: ${key}`);
 
     if (wasAgent && deviceId) {
         const ownerUserId = extractOwnerUserId(ws);
@@ -1059,9 +987,9 @@ function handleSocketClose(ws) {
         void Device.updateOne(
             filter,
             { $set: { status: 'offline', lastSeen: new Date() } }
-        ).catch((err) => {
-            console.warn('[GATEWAY] Failed to mark device offline:', err?.message || err);
-        });
+        ).catch(() => {});
+        if (ownerUserId) pushLiveDeviceSnapshot(ownerUserId);
+        return;
     }
 
     void broadcastDeviceList({ force: true });
