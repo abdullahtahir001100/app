@@ -31,6 +31,32 @@ function signUserToken(user) {
     );
 }
 
+/** Short-lived ticket for browser WebSocket auth (cookie may not ride Upgrade). */
+function signWsTicket(user) {
+    return jwt.sign(
+        {
+            sub: String(user.id || user._id || user.sub),
+            email: user.email,
+            role: user.role,
+            name: user.name,
+            purpose: 'ws'
+        },
+        getJwtSecret(),
+        { expiresIn: '2m' }
+    );
+}
+
+function verifyWsTicket(token) {
+    if (!token) return null;
+    try {
+        const payload = jwt.verify(token, getJwtSecret());
+        if (!payload?.sub || payload.purpose !== 'ws') return null;
+        return payload;
+    } catch {
+        return null;
+    }
+}
+
 async function verifyUserToken(token) {
     if (!token) return null;
     try {
@@ -490,6 +516,8 @@ module.exports = {
     AUTH_COOKIE,
     authCookieOptions,
     signUserToken,
+    signWsTicket,
+    verifyWsTicket,
     verifyUserToken,
     verifyUserTokenFast,
     setUserAuthSession,

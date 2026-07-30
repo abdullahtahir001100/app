@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 const { handleSocketMessage, handleSocketClose } = require('./handler');
-const { verifyUserTokenFast, AUTH_COOKIE } = require('../services/authService');
+const { verifyUserTokenFast, verifyWsTicket, AUTH_COOKIE } = require('../services/authService');
 const { createConnectionRateLimiter, createAuditLogger } = require('./abuseControl');
 
 function parseCookies(header) {
@@ -24,9 +24,21 @@ function clientIp(req) {
     return req.socket?.remoteAddress || 'unknown';
 }
 
+function tokenFromUrl(req) {
+    try {
+        const raw = String(req.url || '');
+        const qIndex = raw.indexOf('?');
+        if (qIndex < 0) return null;
+        const params = new URLSearchParams(raw.slice(qIndex + 1));
+        return params.get('token') || params.get('ticket') || null;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * WebSocket upgrade auth MUST be sync + fast.
- * Never await Mongo/bcrypt here — browsers abort slow handshakes.
+ * Prefer ?token= ticket (browser) or Cookie; never await Mongo here.
  */
 function authenticateGatewayRequest(req) {
     const authHeader = req.headers?.authorization || req.headers?.get?.('authorization');
@@ -35,10 +47,13 @@ function authenticateGatewayRequest(req) {
 
     const tokenFromHeader = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
     const tokenFromCookie = cookies[AUTH_COOKIE] || null;
-    const token = tokenFromHeader || tokenFromCookie;
+    const tokenFromQuery = tokenFromUrl(req);
+    const token = tokenFromQuery || tokenFromHeader || tokenFromCookie;
 
     if (token) {
-        const user = verifyUserTokenFast(token);
+        // Prefer short-lived WS ticket, then full session JWT.
+        const ticketUser = verifyWsTicket(token);
+        const user = ticketUser || verifyUserTokenFast(token);
         if (user?.sub) {
             return {
                 ok: true,
@@ -74,8 +89,8 @@ function rejectUpgrade(socket, statusCode, message) {
 
 function initWebSocketGateway(server, nextUpgradeHandler) {
     const wss = new WebSocket.Server({ noServer: true });
-    // Higher limit — dashboards reconnect often; agents also reconnect.
-    const gatewayRateLimiter = createConnectionRateLimiter(120, 60 * 1000);
+    // Higher limits — reconnect storms + multi-agent must not 429 the dashboard.
+    const gatewayRateLimiter = createConnectionRateLimiter(300, 60 * 1000);
     const auditLogger = createAuditLogger();
 
     server.on('upgrade', (req, socket, head) => {

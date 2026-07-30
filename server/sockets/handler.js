@@ -916,7 +916,8 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
             { new: true, upsert: true }
         );
 
-        broadcastDeviceList({ force: true });
+        // Do NOT force broadcastDeviceList here — metrics arrive often and starve WS upgrades.
+        // Periodic interval + connect/disconnect force keep the list fresh.
 
         const message = JSON.stringify({
             type: 'device_status_update',

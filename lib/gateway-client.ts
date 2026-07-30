@@ -154,6 +154,8 @@ class GatewayClient {
       ? `panel-${crypto.randomUUID()}`
       : `panel-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   private lifecycleBound = false;
+  private reconnectAttempt = 0;
+  private connectGeneration = 0;
 
   constructor() {
     const cached = readDeviceCache();
@@ -229,25 +231,59 @@ class GatewayClient {
       return;
     }
     if (this.connecting) return;
-    this.connect();
+    void this.connect();
   }
 
-  private connect() {
+  private async fetchWsTicket(): Promise<string | null> {
+    try {
+      const res = await fetch("/api/auth/ws-ticket", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      return typeof data?.ticket === "string" ? data.ticket : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async connect() {
     if (typeof window === "undefined") return;
 
     this.connecting = true;
+    const generation = ++this.connectGeneration;
+
     const configured =
       typeof process !== "undefined" && process.env.NEXT_PUBLIC_GATEWAY_URL
         ? String(process.env.NEXT_PUBLIC_GATEWAY_URL).trim()
         : "";
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const gatewayUrl =
-      configured || `${protocol}//${window.location.host}/ws/gateway`;
-    const ws = new WebSocket(gatewayUrl);
+    const baseUrl = configured || `${protocol}//${window.location.host}/ws/gateway`;
+
+    // HTTP cookie auth works; Upgrade often drops Cookie on some proxies — use ticket.
+    const ticket = await this.fetchWsTicket();
+    if (generation !== this.connectGeneration) return;
+
+    const gatewayUrl = ticket
+      ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(ticket)}`
+      : baseUrl;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(gatewayUrl);
+    } catch (err) {
+      console.warn("[GATEWAY] WebSocket construct failed:", err);
+      this.connecting = false;
+      this.scheduleReconnect();
+      return;
+    }
+
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     let lastPongAt = Date.now();
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let opened = false;
 
     const stopHeartbeat = () => {
       if (heartbeatTimer) {
@@ -256,8 +292,22 @@ class GatewayClient {
       }
     };
 
+    // Abort slow handshakes — Railway edge can stall under load.
+    const handshakeTimer = setTimeout(() => {
+      if (!opened && ws.readyState !== WebSocket.OPEN) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+    }, 8000);
+
     ws.onopen = () => {
+      opened = true;
+      clearTimeout(handshakeTimer);
       this.connecting = false;
+      this.reconnectAttempt = 0;
       lastPongAt = Date.now();
       ws.send(
         JSON.stringify({
@@ -301,6 +351,22 @@ class GatewayClient {
         if (packet.type === "dashboard_pong" || packet.type === "sys_ack") {
           lastPongAt = Date.now();
         }
+
+        // Auth failed after open — stop hammering as pending.
+        if (
+          packet.type === "sys_ack" &&
+          (packet.status === "auth_failed" || packet.status === "auth_timeout")
+        ) {
+          console.warn("[GATEWAY]", packet.message || packet.status);
+          stopHeartbeat();
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
         this.trackStreamingState(packet);
 
         if (
@@ -339,19 +405,29 @@ class GatewayClient {
     };
 
     ws.onerror = () => {
-      console.warn("[GATEWAY] WebSocket error — will retry. Check Railway deploy + /ws/gateway.");
+      // onclose will schedule reconnect
     };
 
     ws.onclose = () => {
+      clearTimeout(handshakeTimer);
       stopHeartbeat();
       this.connecting = false;
-      this.ws = null;
+      if (this.ws === ws) this.ws = null;
       this.emit({ type: "disconnected" });
       if (this.listeners.size > 0) {
-        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = setTimeout(() => this.connect(), 2000);
+        this.scheduleReconnect();
       }
     };
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectAttempt += 1;
+    // 1s, 2s, 4s ... cap 20s — stop death-spiral against rate limits.
+    const delay = Math.min(20000, 1000 * 2 ** Math.min(this.reconnectAttempt - 1, 4));
+    this.reconnectTimer = setTimeout(() => {
+      void this.connect();
+    }, delay);
   }
 
   private sameDevices(a: DeviceOption[], b: DeviceOption[]) {
