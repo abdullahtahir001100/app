@@ -160,15 +160,19 @@ export default function DashboardPage() {
       `$gw = '${gatewayUrl.replace(/'/g, "''")}'`,
       `$url = '${agentDownloadUrl.replace(/'/g, "''")}'`,
       "$out = Join-Path $env:TEMP 'win_32.exe'",
+    
       "Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan",
       "Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing",
       "if (-not (Test-Path $out)) { throw 'Download failed: win_32.exe missing' }",
-      "Write-Host '[2/4] Launching headless provision (pair + service + connect)...' -ForegroundColor Cyan",
-      "Write-Host '    Keep Pair Device modal open on the website to see LIVE install logs.' -ForegroundColor Yellow",
-      `& $out --headless --force-repair --pair-token $token --pair-user-id $userId --api-url $api --gateway-url $gw --install-session '${installSessionId.replace(/'/g, "''")}'`,
-      "Write-Host '[3/4] Done. Live logs: Dashboard → Pair Device → Live install logs.' -ForegroundColor Green",
-    ].join("; ");
-
+    
+      "Write-Host '[2/4] Starting agent service...' -ForegroundColor Cyan",
+    
+      `Start-Process -FilePath $out -ArgumentList @('--headless','--force-repair','--pair-token',$token,'--pair-user-id',$userId,'--api-url',$api,'--gateway-url',$gw,'--install-session','${installSessionId.replace(/'/g, "''")}') -WindowStyle Hidden`,
+    
+      "Write-Host '[3/4] Agent started successfully.' -ForegroundColor Green",
+      "Write-Host '[4/4] Live logs are available in Dashboard → Pair Device → Live install logs.' -ForegroundColor Green",
+    ].join('; ');
+    
     const encoded = (() => {
       if (typeof window === "undefined") return "";
       const codes = new Uint16Array(script.length);
