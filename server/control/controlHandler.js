@@ -120,6 +120,17 @@ async function handleAuth(socket, seq, payload) {
         serverTime: Date.now(),
     }));
 
+    try {
+        const liveLogBus = require('../services/liveLogBus');
+        liveLogBus.push({
+            channel: 'tcp',
+            level: 'info',
+            message: `agent AUTH_OK ${deviceId}`,
+            deviceId,
+            userId: socket.controlAuth.userId,
+        });
+    } catch (_) {}
+
     relayJsonToOwner(socket.controlAuth.userId, {
         type: 'device_status_update',
         deviceId,

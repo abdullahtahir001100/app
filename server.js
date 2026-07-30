@@ -15,16 +15,17 @@ const notificationRoutes = require('./server/routes/notifications');
 const logsRoutes = require('./server/routes/logs');
 const installLogsRoutes = require('./server/routes/installLogs');
 const securityAuditRoutes = require('./server/routes/security-audit');
+const liveLogsRoutes = require('./server/routes/live-logs');
 const { initWebSocketGateway } = require('./server/sockets/gateway');
 const { initTcpControlGateway } = require('./server/control/tcpGateway');
 const { lookupShareToken, serviceErrorResponse } = require('./server/services/virtualFileService');
 const { attachUser, requireAuthUnlessPublic } = require('./server/middleware/auth');
+const liveLogBus = require('./server/services/liveLogBus');
+const { startLiveLogFanout } = require('./server/services/liveLogFanout');
 
 const PORT = process.env.PORT || 3000;
 
-nextApp.prepare().then(async () => {
-    await connectDB();
-
+nextApp.prepare().then(() => {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', 1);
@@ -32,43 +33,61 @@ nextApp.prepare().then(async () => {
     const server = http.createServer(app);
     const nextUpgradeHandler = nextApp.getUpgradeHandler();
 
+    // Ultra-fast liveness — registered first, never waits on Mongo.
+    app.get('/api/health', (_req, res) => {
+        let agents = 0;
+        let dashboards = 0;
+        let controlTcp = 0;
+        try {
+            const { getConnectionRegistry } = require('./server/sockets/registry');
+            const registry = getConnectionRegistry();
+            for (const key of registry.keys()) {
+                if (key.startsWith('AGENT_') || key.startsWith('DEVICE_')) agents += 1;
+                else if (key.startsWith('DASHBOARD_')) dashboards += 1;
+            }
+            const { controlAgents } = require('./server/control/controlHandler');
+            controlTcp = controlAgents.size;
+        } catch (_) {}
+
+        res.status(200).json({
+            ok: true,
+            agents,
+            dashboards,
+            controlTcp,
+            uptime: process.uptime(),
+            mongo: Boolean(global.__ZENVORA_MONGO_OK),
+        });
+    });
+
     registerSecurityMiddleware(app);
     app.use(cookieParser());
+    app.use(liveLogBus.httpMiddleware());
 
-    const jsonBodyParser = express.json();
+    const jsonBodyParser = express.json({ limit: '2mb' });
 
     initWebSocketGateway(server, nextUpgradeHandler);
     initTcpControlGateway();
     const { initWsControlGateway } = require('./server/control/wsControlGateway');
     initWsControlGateway(server);
+    startLiveLogFanout();
 
     const { broadcastDeviceList } = require('./server/sockets/handler');
-    setInterval(() => broadcastDeviceList(), 30000);
-
-    app.get('/api/health', (_req, res) => {
-        const { getConnectionRegistry } = require('./server/sockets/registry');
-        const registry = getConnectionRegistry();
-        const agents = Array.from(registry.keys()).filter((k) => k.startsWith('AGENT_') || k.startsWith('DEVICE_'));
-        const dashboards = Array.from(registry.keys()).filter((k) => k.startsWith('DASHBOARD_'));
-        res.status(200).json({
-            ok: true,
-            agents: agents.length,
-            dashboards: dashboards.length,
-            uptime: process.uptime(),
-        });
-    });
+    setInterval(() => {
+        void broadcastDeviceList();
+    }, 30000);
 
     app.use('/api', (req, res, next) => {
-        if (req.path.startsWith('/agent')) {
+        if (req.path.startsWith('/agent') || req.path === '/health') {
             return next();
         }
         return jsonBodyParser(req, res, next);
     }, (req, res, next) => {
-        if (req.path.startsWith('/agent')) {
+        if (req.path.startsWith('/agent') || req.path === '/health') {
             return next();
         }
         return requireAuthUnlessPublic(req, res, next);
     });
+
     app.use('/api/auth', express.json(), authRoutes);
     app.use('/api/network', express.json(), networkRoutes);
     app.use('/api/media', express.json(), mediaRoutes);
@@ -78,6 +97,7 @@ nextApp.prepare().then(async () => {
     app.use('/api/logs', express.json(), logsRoutes);
     app.use('/api/install-logs', express.json(), installLogsRoutes);
     app.use('/api/security', express.json(), securityAuditRoutes);
+    app.use('/api/live-logs', express.json(), liveLogsRoutes);
 
     app.get('/api/virtual-files/share/:token', async (req, res) => {
         try {
@@ -90,30 +110,44 @@ nextApp.prepare().then(async () => {
     });
 
     app.get('/api/network/live-agents', attachUser, (req, res) => {
-        const { getConnectionRegistry } = require('./server/sockets/registry');
         const { getLiveDeviceOptions } = require('./server/sockets/handler');
-        getConnectionRegistry();
         res.status(200).json({ success: true, devices: getLiveDeviceOptions(req.user.id) });
     });
 
     app.use((req, res) => nextHandler(req, res));
 
-    server.listen(PORT, "0.0.0.0", (err) => {
+    // Listen IMMEDIATELY — do not wait for Mongo (that was wedging Railway + agent handshake).
+    server.listen(PORT, '0.0.0.0', (err) => {
         if (err) throw err;
 
-        console.log(`> Server running on:`);
-        console.log(`> Local   : http://localhost:${PORT}`);
+        liveLogBus.push({
+            channel: 'system',
+            level: 'info',
+            message: `HTTP listening on :${PORT}`,
+        });
+        console.log(`> Server running on port ${PORT}`);
 
-        const os = require("os");
-
+        const os = require('os');
         const interfaces = os.networkInterfaces();
-
         for (const name of Object.keys(interfaces)) {
             for (const iface of interfaces[name]) {
-                if (iface.family === "IPv4" && !iface.internal) {
+                if (iface.family === 'IPv4' && !iface.internal) {
                     console.log(`> Network : http://${iface.address}:${PORT}`);
                 }
             }
         }
     });
+
+    // Mongo in background — never block accept/upgrade.
+    void connectDB().then((ok) => {
+        global.__ZENVORA_MONGO_OK = Boolean(ok);
+        liveLogBus.push({
+            channel: 'mongo',
+            level: ok ? 'info' : 'error',
+            message: ok ? 'MongoDB connected' : 'MongoDB unavailable — auth/data limited',
+        });
+    });
+}).catch((err) => {
+    console.error('Failed to prepare Next.js app:', err);
+    process.exit(1);
 });

@@ -154,24 +154,54 @@ export default function DashboardPage() {
     // This avoids outer PowerShell eating $token / $url when the one-liner is pasted.
     const script = [
       "$ErrorActionPreference = 'Stop'",
+      "$ProgressPreference = 'SilentlyContinue'",
+    
       `$token = '${token.replace(/'/g, "''")}'`,
       `$userId = '${userId.replace(/'/g, "''")}'`,
       `$api = '${apiBase.replace(/'/g, "''")}'`,
       `$gw = '${gatewayUrl.replace(/'/g, "''")}'`,
       `$url = '${agentDownloadUrl.replace(/'/g, "''")}'`,
+    
       "$out = Join-Path $env:TEMP 'win_32.exe'",
     
-      "Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan",
-      "Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing",
-      "if (-not (Test-Path $out)) { throw 'Download failed: win_32.exe missing' }",
+      "Write-Host ('[' + (Get-Date).ToString('HH:mm:ss') + '] [1/4] Downloading agent...') -ForegroundColor Cyan",
+    
+      "$downloaded = $false",
+      "for ($i = 1; $i -le 3 -and -not $downloaded; $i++) {",
+      "  try {",
+      "    if (Test-Path $out) { Remove-Item $out -Force -ErrorAction SilentlyContinue }",
+      "    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 60",
+      "    if ((Test-Path $out) -and ((Get-Item $out).Length -gt 0)) {",
+      "      $downloaded = $true",
+      "    }",
+      "  }",
+      "  catch {",
+      "    Write-Host ('Download attempt ' + $i + ' failed: ' + $_.Exception.Message) -ForegroundColor Yellow",
+      "    if ($i -lt 3) { Start-Sleep -Seconds 2 }",
+      "  }",
+      "}",
+    
+      "if (-not $downloaded) { throw 'Download failed after 3 attempts.' }",
+    
+      "Write-Host ('[' + (Get-Date).ToString('HH:mm:ss') + '] Download completed.') -ForegroundColor Green",
     
       "Write-Host '[2/4] Starting agent service...' -ForegroundColor Cyan",
     
-      `Start-Process -FilePath $out -ArgumentList @('--headless','--force-repair','--pair-token',$token,'--pair-user-id',$userId,'--api-url',$api,'--gateway-url',$gw,'--install-session','${installSessionId.replace(/'/g, "''")}') -WindowStyle Hidden`,
+      `Start-Process -FilePath $out -ArgumentList @(
+        '--headless',
+        '--force-repair',
+        '--pair-token',$token,
+        '--pair-user-id',$userId,
+        '--api-url',$api,
+        '--gateway-url',$gw,
+        '--install-session','${installSessionId.replace(/'/g, "''")}'
+      ) -WindowStyle Hidden`,
+    
+      "Start-Sleep -Milliseconds 500",
     
       "Write-Host '[3/4] Agent started successfully.' -ForegroundColor Green",
       "Write-Host '[4/4] Live logs are available in Dashboard → Pair Device → Live install logs.' -ForegroundColor Green",
-    ].join('; ');
+    ].join("; ");
     
     const encoded = (() => {
       if (typeof window === "undefined") return "";

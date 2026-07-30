@@ -2,6 +2,7 @@ const WebSocket = require('ws');
 const { handleSocketMessage, handleSocketClose } = require('./handler');
 const { verifyUserTokenFast, verifyWsTicket, AUTH_COOKIE } = require('../services/authService');
 const { createConnectionRateLimiter, createAuditLogger } = require('./abuseControl');
+const liveLogBus = require('../services/liveLogBus');
 
 function parseCookies(header) {
     const out = {};
@@ -141,9 +142,23 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         try {
             wss.handleUpgrade(req, socket, head, (ws) => {
                 ws.authContext = auth;
+                liveLogBus.push({
+                    channel: 'ws',
+                    level: 'info',
+                    message: `upgrade /ws/gateway kind=${auth.kind}`,
+                    route: '/ws/gateway',
+                    userId: auth.kind === 'user' ? auth.user?.id : null,
+                    meta: { kind: auth.kind },
+                });
                 wss.emit('connection', ws, req);
             });
         } catch (error) {
+            liveLogBus.push({
+                channel: 'ws',
+                level: 'error',
+                message: `upgrade failed: ${error?.message || error}`,
+                route: '/ws/gateway',
+            });
             rejectUpgrade(socket, 500, 'Internal Server Error');
         }
     });

@@ -168,33 +168,49 @@ impl AgentConfig {
                 .or_else(|| std::env::var("ZENVORA_PAIR_USER_ID").ok())
                 .is_some();
 
-        // Headless install command always re-applies gateway / re-pairs when tokens are present.
-        // Old agent.dat often pointed at Railway while dashboard is on zenvora.abdullahtahir.me.
+        // Headless install: re-pair only when forced OR no agent.dat yet.
+        // Re-launch from System32 must NOT hammer /pair again (that wedged Railway).
+        let from_system32 = std::env::args().any(|a| a == "--from-system32");
         if has_cli_pair && (force_repair || crate::connection_progress::is_headless()) {
-            println!("--> [CONFIG] Headless/CLI pair flags detected — refreshing credentials + gateway");
-            crate::connection_progress::step(
-                2,
-                8,
-                "Refreshing pair + gateway from install command...",
-                "running",
-            );
-            match Self::pair_from_env_or_args().await {
-                Ok(config) => {
-                    println!(
-                        "--> [CONFIG] Using gateway {}",
-                        config.gateway_url
-                    );
-                    return config;
+            let existing = Self::load_existing();
+            let should_http_pair = force_repair || existing.is_none() || !from_system32;
+
+            if should_http_pair {
+                println!("--> [CONFIG] Headless/CLI pair flags detected — refreshing credentials + gateway");
+                crate::connection_progress::step(
+                    2,
+                    8,
+                    "Refreshing pair + gateway from install command...",
+                    "running",
+                );
+                match Self::pair_from_env_or_args().await {
+                    Ok(config) => {
+                        println!("--> [CONFIG] Using gateway {}", config.gateway_url);
+                        return config;
+                    }
+                    Err(err) => {
+                        println!("--> [CONFIG] Re-pair failed ({}), falling back to agent.dat", err);
+                        crate::connection_progress::step(
+                            2,
+                            8,
+                            &format!("Re-pair failed: {} — trying saved agent.dat", err),
+                            "warn",
+                        );
+                    }
                 }
-                Err(err) => {
-                    println!("--> [CONFIG] Re-pair failed ({}), falling back to agent.dat", err);
-                    crate::connection_progress::step(
-                        2,
-                        8,
-                        &format!("Re-pair failed: {} — trying saved agent.dat", err),
-                        "warn",
-                    );
+            } else if let Some(mut config) = existing {
+                if let Some(gw) = cli_gateway.clone() {
+                    if config.gateway_url != gw {
+                        config.gateway_url = gw;
+                        let _ = config.save();
+                    }
                 }
+                println!(
+                    "--> [CONFIG] Skipping re-pair (already provisioned) — using {}",
+                    get_config_path().to_string_lossy()
+                );
+                crate::connection_progress::step(2, 8, "Credentials ready (agent.dat)", "ok");
+                return config;
             }
         }
 

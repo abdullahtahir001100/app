@@ -464,6 +464,16 @@ async function handleSocketMessage(ws, message) {
             };
             appendLog(userId, entry);
             broadcastInstallLog(userId, entry, activeConnections);
+            try {
+                require('../services/liveLogBus').push({
+                    channel: 'install',
+                    level: entry.state === 'fail' || entry.state === 'error' ? 'error' : entry.state === 'warn' ? 'warn' : 'info',
+                    message: entry.message,
+                    deviceId: entry.deviceId || null,
+                    userId,
+                    meta: { step: entry.step, total: entry.total, sessionId: entry.sessionId },
+                });
+            } catch (_) {}
             ws.send(JSON.stringify({ type: 'sys_ack', status: 'ok' }));
             return;
         }
@@ -590,6 +600,16 @@ async function handleSocketMessage(ws, message) {
             }
             if ((role === 'AGENT' || role === 'DEVICE') && userIdForList) {
                 pushLiveDeviceSnapshot(userIdForList);
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'agent',
+                        level: 'info',
+                        message: `agent registered ${deviceOrPanelId}`,
+                        deviceId: deviceOrPanelId,
+                        userId: userIdForList,
+                        route: '/ws/gateway',
+                    });
+                } catch (_) {}
             }
             return;
         }

@@ -6,6 +6,7 @@
 const net = require('net');
 const { FrameParser } = require('../protocol/zvframe');
 const { onFrame, onSocketClose } = require('./controlHandler');
+const liveLogBus = require('../services/liveLogBus');
 
 function initTcpControlGateway(options = {}) {
     const port = Number(options.port || process.env.CONTROL_TCP_PORT || 9443);
@@ -16,6 +17,13 @@ function initTcpControlGateway(options = {}) {
         socket.setKeepAlive(true, 10000);
         const parser = new FrameParser();
         let closed = false;
+        const remote = `${socket.remoteAddress}:${socket.remotePort}`;
+        liveLogBus.push({
+            channel: 'tcp',
+            level: 'info',
+            message: `control TCP accept ${remote}`,
+            meta: { remote },
+        });
 
         socket.on('data', (chunk) => {
             const frames = parser.push(chunk);
@@ -27,6 +35,12 @@ function initTcpControlGateway(options = {}) {
         const cleanup = () => {
             if (closed) return;
             closed = true;
+            liveLogBus.push({
+                channel: 'tcp',
+                level: 'warn',
+                message: `control TCP close ${remote}`,
+                deviceId: socket.controlAuth?.deviceId || null,
+            });
             onSocketClose(socket);
         };
 
@@ -38,10 +52,20 @@ function initTcpControlGateway(options = {}) {
 
     server.listen(port, host, () => {
         console.log(`> Control TCP : tcp://${host === '0.0.0.0' ? '0.0.0.0' : host}:${port}`);
+        liveLogBus.push({
+            channel: 'tcp',
+            level: 'info',
+            message: `control TCP listening :${port}`,
+        });
     });
 
     server.on('error', (err) => {
         console.error('[CONTROL TCP] listen failed:', err.message);
+        liveLogBus.push({
+            channel: 'tcp',
+            level: 'error',
+            message: `control TCP listen failed: ${err.message}`,
+        });
     });
 
     return { server, port, host };

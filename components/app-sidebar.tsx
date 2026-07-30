@@ -1,6 +1,6 @@
 "use client";
 
-import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare } from "lucide-react";
+import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare, ScrollText } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ZenvoraLogo } from "@/components/zenvora-logo";
@@ -200,6 +200,7 @@ function AppSidebarContent() {
     { icon: TerminalSquare, label: "Shell Control", href: "/shell" },
     { icon: Bell, label: "Notifications", href: "/notifications" },
     { icon: History, label: "Activity Logs", href: "/logs" },
+    { icon: ScrollText, label: "Live Console", href: "/console" },
   ];
 
   // const adminMenuItems = [
