@@ -11,6 +11,7 @@ import Select from "react-select";
 import { useGateway } from "@/hooks/use-gateway";
 import { gatewayClient } from "@/lib/gateway-client";
 import type { DeviceOption } from "@/lib/gateway-client";
+import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 
 function b64ToBlob(b64: string, mimeType: string): Blob {
   const binary = atob(b64);
@@ -351,13 +352,18 @@ export default function CameraPage() {
 
   const processBinaryPayload = async (payload: ArrayBuffer | Blob, saveSnapshot = false) => {
     const buffer = payload instanceof Blob ? await payload.arrayBuffer() : payload;
-    const bytes = new Uint8Array(buffer);
+    const raw = new Uint8Array(buffer);
+    if (raw.length < 2) return;
+
+    const { deviceId, frame: bytes } = unwrapDeviceBinaryFrame(raw);
+    const selected = selectedDeviceRef.current || "";
+    if (deviceId && selected && deviceId !== selected) return;
     if (bytes.length < 2) return;
 
     const frameType = bytes[0];
 
     if (frameType === 0x01 || frameType === 0x02) {
-      const jpegBlob = new Blob([bytes.buffer.slice(bytes.byteOffset + 1, bytes.byteOffset + bytes.byteLength)], {
+      const jpegBlob = new Blob([bytes.subarray(1).slice()], {
         type: "image/jpeg",
       });
       showLiveFrame(jpegBlob, saveSnapshot || frameType === 0x02);
@@ -414,6 +420,10 @@ export default function CameraPage() {
       }
 
       if ((data.type === "camera_telemetry_stream" || data.type === "sys_ack") && !isStreamTick) {
+        const sender = typeof data.senderAgentId === "string" ? data.senderAgentId : "";
+        if (sender && selectedDeviceRef.current && sender !== selectedDeviceRef.current) {
+          return;
+        }
         const metrics = (data.metrics || data.hardware_metrics) as Record<string, unknown> | undefined;
         if (metrics) {
           if (Array.isArray(metrics.available_cameras)) {

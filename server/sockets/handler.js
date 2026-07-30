@@ -26,6 +26,11 @@ const {
     extractDeviceIdFromAgentSocket
 } = require('./historyHandler');
 const { userOwnsDevice, verifyAgentToken } = require('../services/authService');
+const {
+    extractOwnerUserId,
+    sendToOwnerDashboards,
+    broadcastOwnerBinary,
+} = require('./fanout');
 
 const CAMERA_ACTION_TOKENS = [
     'SWITCH_CAMERA',
@@ -155,12 +160,10 @@ async function broadcastDeviceList(options = {}) {
     return lastBroadcastPayload;
 }
 
-function forwardPacketToDashboards(packet, activeConnections) {
-    const payload = typeof packet === 'string' ? packet : JSON.stringify(packet);
-    activeConnections.forEach((clientSocket, key) => {
-        if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
-        clientSocket.send(payload);
-    });
+function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
+    const owner = String(ownerUserId || '');
+    if (!owner) return;
+    sendToOwnerDashboards(activeConnections, owner, packet);
 }
 
 function getShellResponsePayload(packet) {
@@ -284,7 +287,7 @@ function isKnownBinaryFrame(buffer) {
 }
 
 async function authorizeSocketAction(ws, targetDeviceId) {
-    if (!targetDeviceId) return true;
+    if (!targetDeviceId) return false;
     if (ws.authContext?.kind === 'agent') {
         return String(ws.authContext.deviceId || '') === String(targetDeviceId);
     }
@@ -484,11 +487,20 @@ async function handleSocketMessage(ws, message) {
         }
 
         if (packet.type === 'register_dashboard') {
+            if (ws.authContext?.kind !== 'user') {
+                ws.send(JSON.stringify({
+                    type: 'sys_ack',
+                    status: 'auth_failed',
+                    message: 'dashboard authentication required'
+                }));
+                ws.close();
+                return;
+            }
             const connectionKey = `DASHBOARD_${packet.id || `web-${Date.now()}`}`;
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
-            const userId = ws.authContext?.kind === 'user' ? ws.authContext.user?.id : null;
+            const userId = ws.authContext.user?.id || null;
             console.log(`[GATEWAY] Dashboard registered: ${connectionKey}`);
             const devices = await getDeviceOptions(userId);
             ws.send(JSON.stringify({
@@ -510,7 +522,7 @@ async function handleSocketMessage(ws, message) {
             if (shellPayload) {
                 packet.shell = shellPayload;
             }
-            forwardPacketToDashboards(packet, activeConnections);
+            forwardPacketToDashboards(packet, activeConnections, extractOwnerUserId(ws));
             return;
         }
 
@@ -904,7 +916,7 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
             { new: true, upsert: true }
         );
 
-        broadcastDeviceList();
+        broadcastDeviceList({ force: true });
 
         const message = JSON.stringify({
             type: 'device_status_update',
@@ -918,11 +930,7 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
             lastSeen: lastSeen.toISOString(),
         });
 
-        activeConnections.forEach((clientSocket, key) => {
-            if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-                clientSocket.send(message);
-            }
-        });
+        sendToOwnerDashboards(activeConnections, ownerUserId, message);
     } catch (err) {
         console.error('[DEVICE] Failed to persist hardware metrics:', err.message);
     }
@@ -981,46 +989,41 @@ async function handleActivityLog(ws, packet, activeConnections) {
             }
         });
 
-        activeConnections.forEach((clientSocket, key) => {
-            if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-                clientSocket.send(message);
-            }
-        });
+        sendToOwnerDashboards(activeConnections, userId, message);
     } catch (err) {
         console.error('[ACTIVITY] Failed to persist activity_log:', err.message);
     }
 }
 
-function broadcastAudioBinaryFrame(frameBuffer, activeConnections) {
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(frameBuffer, { binary: true });
-        }
-    });
+function broadcastAudioBinaryFrame(frameBuffer, activeConnections, sourceWs = null) {
+    if (sourceWs) {
+        return broadcastOwnerBinary(sourceWs, frameBuffer, activeConnections);
+    }
+    return 0;
 }
 
 function handleSocketBinary(ws, message) {
     if (message.length < 2) return;
 
     const frameType = message[0];
-    const fromAgent = !ws.connectionKey || ws.connectionKey.startsWith('AGENT_');
+    const fromAgent = !ws.connectionKey || ws.connectionKey.startsWith('AGENT_') || ws.connectionKey.startsWith('DEVICE_');
 
     if (!fromAgent && !isBinaryMediaFrame(message)) {
         return;
     }
 
     if (frameType === FRAME_AUDIO_STREAM) {
-        broadcastAudioBinaryFrame(message, activeConnections);
+        broadcastAudioBinaryFrame(message, activeConnections, ws);
         return;
     }
 
     if (isFileBinaryFrame(frameType)) {
-        broadcastFileBinaryFrame(message, activeConnections);
+        broadcastFileBinaryFrame(message, activeConnections, ws);
         return;
     }
 
     if (isScreenBinaryFrame(frameType)) {
-        broadcastScreenBinaryFrame(message, activeConnections);
+        broadcastScreenBinaryFrame(message, activeConnections, ws);
         return;
     }
 
@@ -1028,7 +1031,7 @@ function handleSocketBinary(ws, message) {
         return;
     }
 
-    broadcastBinaryFrame(message, activeConnections, frameType);
+    broadcastBinaryFrame(message, activeConnections, frameType, ws);
 }
 
 function handleSocketClose(ws) {
@@ -1050,8 +1053,10 @@ function handleSocketClose(ws) {
     console.log(`Connection dropped and connection memory freed: ${key}`);
 
     if (wasAgent && deviceId) {
+        const ownerUserId = extractOwnerUserId(ws);
+        const filter = ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId };
         void Device.updateOne(
-            { deviceId },
+            filter,
             { $set: { status: 'offline', lastSeen: new Date() } }
         ).catch((err) => {
             console.warn('[GATEWAY] Failed to mark device offline:', err?.message || err);

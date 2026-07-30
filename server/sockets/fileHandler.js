@@ -3,6 +3,12 @@
  */
 const { randomUUID } = require('crypto');
 const { getConnectionRegistry } = require('./registry');
+const {
+    extractDeviceIdFromAgentSocket,
+    extractOwnerUserId,
+    sendToOwnerDashboards,
+    broadcastOwnerBinary,
+} = require('./fanout');
 
 const FRAME_FILE_BINARY = 0x06;
 
@@ -75,8 +81,6 @@ function forwardFileCommandToAgent(action, targetDeviceId, payload, activeConnec
         action,
         payload: payload || {}
     }));
-
-    console.log(`[FILE ENGINE] Forwarded [${action}] to agent ${targetDeviceId}`);
 }
 
 function execFileCommand(action, targetDeviceId, payload = {}) {
@@ -84,7 +88,6 @@ function execFileCommand(action, targetDeviceId, payload = {}) {
     const requestId = payload._requestId || randomUUID();
     const outboundPayload = { ...payload, _requestId: requestId };
 
-    console.log(`[FILE ENGINE] Exec [${action}] for ${targetDeviceId} (${requestId})`);
     const waitPromise = waitForFileOp(requestId);
     forwardFileCommandToAgent(action, targetDeviceId, outboundPayload, activeConnections);
     return waitPromise;
@@ -92,8 +95,6 @@ function execFileCommand(action, targetDeviceId, payload = {}) {
 
 function handleFileCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
-
-    console.log(`[FILE ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
 
     try {
         forwardFileCommandToAgent(action, targetDeviceId, payload, activeConnections);
@@ -111,27 +112,22 @@ function handleFileCommand(ws, packet, activeConnections) {
 
 function handleFileTelemetry(ws, packet, activeConnections) {
     const fileResult = packet.file_result || {};
-    const senderId = ws.connectionKey
-        ? ws.connectionKey.replace(/^AGENT_/, '').replace(/^DEVICE_/, '')
-        : 'UNKNOWN';
+    const senderId = extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN';
+    const ownerUserId = extractOwnerUserId(ws);
     const action = packet.last_action || packet.action || null;
-
-    console.log(`[FILE ENGINE] Telemetry [${action}] from ${senderId}`);
 
     resolveFileOpWaiters(packet);
 
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(JSON.stringify({
-                type: 'file_telemetry_stream',
-                senderAgentId: senderId,
-                action,
-                status: packet.status || 'OK',
-                message: packet.message || null,
-                request_id: fileResult.request_id || packet.request_id || null,
-                file_result: fileResult
-            }));
-        }
+    if (!ownerUserId) return;
+
+    sendToOwnerDashboards(activeConnections, ownerUserId, {
+        type: 'file_telemetry_stream',
+        senderAgentId: senderId,
+        action,
+        status: packet.status || 'OK',
+        message: packet.message || null,
+        request_id: fileResult.request_id || packet.request_id || null,
+        file_result: fileResult
     });
 }
 
@@ -139,12 +135,12 @@ function isFileBinaryFrame(frameType) {
     return frameType === FRAME_FILE_BINARY;
 }
 
-function broadcastFileBinaryFrame(frameBuffer, activeConnections) {
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(frameBuffer, { binary: true });
-        }
-    });
+function broadcastFileBinaryFrame(frameBuffer, activeConnections, sourceWs = null) {
+    if (sourceWs) {
+        return broadcastOwnerBinary(sourceWs, frameBuffer, activeConnections);
+    }
+    console.warn('[FILE] Binary frame dropped — missing source agent socket');
+    return 0;
 }
 
 module.exports = {

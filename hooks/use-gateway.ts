@@ -53,7 +53,9 @@ export function useGateway() {
 
   const dispatch = useCallback(
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
-      const target = resolveTarget(targetOverride);
+      // Prefer explicit target; never coerce to devices[0] when override is empty string.
+      const target =
+        (targetOverride && String(targetOverride).trim()) || resolveTarget();
       if (!target) return { ok: false as const, reason: "no-agent" as const };
       if (!gatewayClient.isOpen()) {
         gatewayClient.ensureConnected();
@@ -63,7 +65,8 @@ export function useGateway() {
         (d) => d.value === target && d.status === "online"
       );
       if (!deviceOnline) {
-        return { ok: false as const, reason: "agent-offline" as const };
+        // Soft-fail: still try dispatch if WS is up (HTTP status can lag).
+        // Security ownership is enforced server-side.
       }
       if (!gatewayClient.dispatch(action, target, payload)) {
         return { ok: false as const, reason: "offline" as const };

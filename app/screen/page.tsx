@@ -61,6 +61,9 @@ export default function ScreenPage() {
     subscribe,
   } = useGateway();
 
+  const selectedDeviceRef = useRef("");
+  const [selectedDevice, setSelectedDevice] = useState("");
+
   const {
     canvasRef,
     containerRef,
@@ -74,6 +77,7 @@ export default function ScreenPage() {
     resetPreview,
     mapPointerToRemote,
   } = useScreenRemote({
+    selectedDeviceRef,
     subscribe: (listener) =>
       subscribe((event) => {
         if (event.type === "binary") listener({ type: "binary", data: event.data });
@@ -81,7 +85,6 @@ export default function ScreenPage() {
       }),
   });
 
-  const [selectedDevice, setSelectedDevice] = useState("");
   const [commandStatus, setCommandStatus] = useState("Connecting...");
   const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
   const canControl = isConnected && agentOnline;
@@ -95,7 +98,6 @@ export default function ScreenPage() {
 
   const streamQualityRef = useRef<StreamQuality>(streamQuality);
 
-  const selectedDeviceRef = useRef("");
   const activeDisplayRef = useRef("");
   const moveThrottleRef = useRef(0);
   const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

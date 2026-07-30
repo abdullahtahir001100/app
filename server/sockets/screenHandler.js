@@ -1,6 +1,13 @@
 /**
  * Dedicated Screen Operations Engine (screenHandler.js)
  */
+const {
+    extractDeviceIdFromAgentSocket,
+    extractOwnerUserId,
+    sendToOwnerDashboards,
+    broadcastOwnerBinary,
+} = require('./fanout');
+
 const FRAME_SCREEN_STREAM = 0x04;
 const FRAME_SCREEN_SNAPSHOT = 0x05;
 
@@ -30,10 +37,6 @@ function parseDisplayIndex(payload = {}) {
 function handleScreenCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
     const isRemoteInput = typeof action === 'string' && action.startsWith('REMOTE_');
-
-    if (!isRemoteInput) {
-        console.log(`[SCREEN ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
-    }
 
     if (!targetDeviceId) {
         ws.send(JSON.stringify({
@@ -110,7 +113,6 @@ function handleScreenCommand(ws, packet, activeConnections) {
 
         targetAgentSocket.send(JSON.stringify(outboundPacket));
 
-        // Remote input is fire-and-forget — no sys_ack spam (keeps UI smooth).
         if (!isRemoteInput) {
             ws.send(JSON.stringify({
                 type: 'sys_ack',
@@ -118,10 +120,6 @@ function handleScreenCommand(ws, packet, activeConnections) {
             }));
         }
     } else {
-        const liveAgents = Array.from(activeConnections.keys()).filter((k) => k.startsWith('AGENT_'));
-        console.warn(
-            `[SCREEN ENGINE] Target offline: ${targetDeviceId} | live agents: ${liveAgents.join(', ') || 'none'}`
-        );
         ws.send(JSON.stringify({
             type: 'sys_error',
             message: `Native Screen Node [${targetDeviceId}] is offline or unreachable.`
@@ -130,45 +128,36 @@ function handleScreenCommand(ws, packet, activeConnections) {
 }
 
 function handleScreenTelemetry(ws, packet, activeConnections) {
-    // Drop remote-input / silent acks — they only slow the dashboard.
     if (packet.silent === true) return;
     if (typeof packet.last_action === 'string' && packet.last_action.startsWith('REMOTE_')) {
         return;
     }
 
+    const ownerUserId = extractOwnerUserId(ws);
+    if (!ownerUserId) return;
+
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
     delete metrics.live_frame_b64;
 
-    const payload = {
+    sendToOwnerDashboards(activeConnections, ownerUserId, {
         type: 'screen_telemetry_stream',
-        senderAgentId: ws.connectionKey ? ws.connectionKey.replace(/^AGENT_/, '').replace(/^DEVICE_/, '') : 'UNKNOWN',
+        senderAgentId: extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN',
         metrics,
         message: packet.message || null,
         action: packet.last_action,
         status: packet.status || 'RUNNING',
         has_binary_frame: !!packet.has_binary_frame,
         frame_bytes: packet.frame_bytes || 0,
-    };
-
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(JSON.stringify(payload));
-        }
     });
 }
 
-function broadcastScreenBinaryFrame(frameBuffer, activeConnections) {
-    let sent = 0;
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(frameBuffer, { binary: true });
-            sent += 1;
-        }
-    });
-    if (sent === 0 && frameBuffer.length > 10) {
-        console.warn('[SCREEN] Binary frame received but no dashboard client connected.');
+function broadcastScreenBinaryFrame(frameBuffer, activeConnections, sourceWs = null) {
+    if (sourceWs) {
+        return broadcastOwnerBinary(sourceWs, frameBuffer, activeConnections);
     }
+    console.warn('[SCREEN] Binary frame dropped — missing source agent socket');
+    return 0;
 }
 
 function isScreenBinaryFrame(frameType) {

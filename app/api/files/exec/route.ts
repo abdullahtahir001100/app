@@ -4,6 +4,7 @@ export const runtime = "nodejs";
 
 const { execFileCommand, FILE_ACTION_TOKENS } = require("../../../../server/sockets/fileHandler");
 const { getConnectionRegistry } = require("../../../../server/sockets/registry");
+const { verifyRequestDeviceAccess } = require("../../../../server/middleware/auth");
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,6 +18,14 @@ export async function POST(request: NextRequest) {
     }
     if (!targetDeviceId) {
       return NextResponse.json({ success: false, message: "targetDeviceId is required." }, { status: 400 });
+    }
+
+    const access = await verifyRequestDeviceAccess(request, targetDeviceId);
+    if (!access?.ok) {
+      return NextResponse.json(
+        { success: false, message: access?.message || "Unauthorized." },
+        { status: access?.status || 401 }
+      );
     }
 
     getConnectionRegistry();

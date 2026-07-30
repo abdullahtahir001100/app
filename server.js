@@ -41,6 +41,19 @@ nextApp.prepare().then(async () => {
     const { broadcastDeviceList } = require('./server/sockets/handler');
     setInterval(() => broadcastDeviceList(), 15000);
 
+    app.get('/api/health', (_req, res) => {
+        const { getConnectionRegistry } = require('./server/sockets/registry');
+        const registry = getConnectionRegistry();
+        const agents = Array.from(registry.keys()).filter((k) => k.startsWith('AGENT_') || k.startsWith('DEVICE_'));
+        const dashboards = Array.from(registry.keys()).filter((k) => k.startsWith('DASHBOARD_'));
+        res.status(200).json({
+            ok: true,
+            agents: agents.length,
+            dashboards: dashboards.length,
+            uptime: process.uptime(),
+        });
+    });
+
     app.use('/api', (req, res, next) => {
         if (req.path.startsWith('/agent')) {
             return next();

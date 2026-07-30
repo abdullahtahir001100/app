@@ -1,6 +1,13 @@
 /**
  * Dedicated Camera Operations Engine (cameraHandler.js)
  */
+const {
+    extractDeviceIdFromAgentSocket,
+    extractOwnerUserId,
+    sendToOwnerDashboards,
+    broadcastOwnerBinary,
+} = require('./fanout');
+
 const FRAME_STREAM = 0x01;
 const FRAME_SNAPSHOT = 0x02;
 
@@ -32,9 +39,6 @@ function parseCameraIndex(payload = {}) {
 
 function handleCameraCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
-    console.log('[cameraHandler] Received camera command:', packet);
-
-    console.log(`[CAMERA ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
 
     if (!targetDeviceId) {
         ws.send(JSON.stringify({
@@ -90,17 +94,12 @@ function handleCameraCommand(ws, packet, activeConnections) {
         }
 
         targetAgentSocket.send(JSON.stringify(outboundPacket));
-        console.log(`[CAMERA ENGINE] Forwarded [${action}] to ${targetKey}`);
 
         ws.send(JSON.stringify({
             type: 'sys_ack',
             status: `Camera operation [${action}] piped downstream safely.`
         }));
     } else {
-        const liveAgents = Array.from(activeConnections.keys()).filter((k) => k.startsWith('AGENT_'));
-        console.warn(
-            `[CAMERA ENGINE] Target offline: ${targetDeviceId} | live agents: ${liveAgents.join(', ') || 'none'}`
-        );
         ws.send(JSON.stringify({
             type: 'sys_error',
             message: `Native Camera Node [${targetDeviceId}] is offline or unreachable.`
@@ -113,38 +112,35 @@ function handleCameraTelemetry(ws, packet, activeConnections) {
         return;
     }
 
+    const ownerUserId = extractOwnerUserId(ws);
+    const senderAgentId = extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN';
+    if (!ownerUserId) return;
+
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
+    delete metrics.live_frame_b64;
 
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(JSON.stringify({
-            type: 'camera_telemetry_stream',
-            senderAgentId: ws.connectionKey ? ws.connectionKey.replace('AGENT_', '') : 'UNKNOWN',
-            metrics,
-            message: packet.message || metrics.camera_status_message || null,
-            action: packet.last_action,
-            last_action: packet.last_action,
-            status: packet.status || 'RUNNING',
-            camera_blocked: !!metrics.camera_blocked || packet.status === 'CAMERA_BLOCKED',
-            has_binary_frame: !!packet.has_binary_frame,
-            frame_bytes: packet.frame_bytes || 0
-        }));
-        }
+    sendToOwnerDashboards(activeConnections, ownerUserId, {
+        type: 'camera_telemetry_stream',
+        senderAgentId,
+        metrics,
+        message: packet.message || metrics.camera_status_message || null,
+        action: packet.last_action,
+        last_action: packet.last_action,
+        status: packet.status || 'RUNNING',
+        camera_blocked: !!metrics.camera_blocked || packet.status === 'CAMERA_BLOCKED',
+        has_binary_frame: !!packet.has_binary_frame,
+        frame_bytes: packet.frame_bytes || 0
     });
 }
 
-function broadcastBinaryFrame(frameBuffer, activeConnections, frameType) {
-    let sent = 0;
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(frameBuffer, { binary: true });
-            sent += 1;
-        }
-    });
-    if (sent === 0 && frameBuffer.length > 10) {
-        console.warn('[CAMERA] Binary frame received but no dashboard client connected.');
+function broadcastBinaryFrame(frameBuffer, activeConnections, _frameType, sourceWs = null) {
+    if (sourceWs) {
+        return broadcastOwnerBinary(sourceWs, frameBuffer, activeConnections);
     }
+    // Fail closed — never blast to all users without an owner context.
+    console.warn('[CAMERA] Binary frame dropped — missing source agent socket');
+    return 0;
 }
 
 module.exports = {

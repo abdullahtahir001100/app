@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 
 const FRAME_SCREEN_STREAM = 0x04;
 const FRAME_SCREEN_SNAPSHOT = 0x05;
@@ -25,6 +26,8 @@ export type DetectedDisplay = {
 
 type UseScreenRemoteOptions = {
   subscribe: (listener: (event: { type: string; data?: ArrayBuffer | Blob; packet?: Record<string, unknown> }) => void) => () => void;
+  /** Only paint frames from this agent (multi-device isolation). */
+  selectedDeviceRef?: React.MutableRefObject<string>;
 };
 
 function parseResolution(resolution: string) {
@@ -33,7 +36,7 @@ function parseResolution(resolution: string) {
   return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
+export function useScreenRemote({ subscribe, selectedDeviceRef }: UseScreenRemoteOptions) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bitmapRef = useRef<ImageBitmap | null>(null);
@@ -114,10 +117,14 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
   const processBinaryPayload = useCallback((payload: ArrayBuffer | Blob) => {
     const decodeAndPaint = (buffer: Uint8Array) => {
       if (buffer.length < 4) return;
-      const frameType = buffer[0];
+      const { deviceId, frame } = unwrapDeviceBinaryFrame(buffer);
+      const selected = selectedDeviceRef?.current || "";
+      if (deviceId && selected && deviceId !== selected) return;
+
+      if (frame.length < 4) return;
+      const frameType = frame[0];
       if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
-      // Copy JPEG bytes only — avoid shared ArrayBuffer slice pitfalls.
-      const jpegBytes = buffer.subarray(1);
+      const jpegBytes = frame.subarray(1);
       const jpegBlob = new Blob([jpegBytes.slice()], { type: "image/jpeg" });
       void paintFrameRef.current(jpegBlob);
     };
@@ -127,7 +134,7 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
       return;
     }
     decodeAndPaint(new Uint8Array(payload));
-  }, []);
+  }, [selectedDeviceRef]);
 
   const processBinaryRef = useRef(processBinaryPayload);
   processBinaryRef.current = processBinaryPayload;
@@ -165,6 +172,10 @@ export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
       if (typeof packet.action === "string" && String(packet.action).startsWith("REMOTE_")) {
         return;
       }
+
+      const sender = typeof packet.senderAgentId === "string" ? packet.senderAgentId : "";
+      const selected = selectedDeviceRef?.current || "";
+      if (sender && selected && sender !== selected) return;
 
       const metrics = (packet.metrics || {}) as Record<string, unknown>;
 

@@ -40,12 +40,17 @@ export default function ShellPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
 
-  // Keep device refs synced
+  // Keep device refs synced — never force devices[0] over an existing selection.
   useEffect(() => {
-    if (devices[0]?.value) {
-      setSelectedDevice((prev) => prev || devices[0].value);
-      selectedDeviceRef.current = devices[0].value;
+    if (devices.length === 0) return;
+    const knownIds = devices.map((d) => d.value);
+    if (selectedDeviceRef.current && knownIds.includes(selectedDeviceRef.current)) {
+      return;
     }
+    const online = devices.find((d) => d.status === "online");
+    const next = (online || devices[0]).value;
+    selectedDeviceRef.current = next;
+    setSelectedDevice(next);
   }, [devices]);
 
   useEffect(() => {

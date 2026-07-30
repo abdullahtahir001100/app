@@ -47,6 +47,7 @@ function isPublicApiRoute(pathname = "") {
         '/api/agent/chat',
         '/api/install-logs',
         '/api/agent/download',
+        '/api/health',
         '/downloads/'
     ];
 

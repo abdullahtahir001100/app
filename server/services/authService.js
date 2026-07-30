@@ -365,148 +365,54 @@ async function verifyAgentToken(deviceId, agentToken) {
     return cred;
 }
 async function pairAgent(body) {
-    console.log("\n==================================================");
-    console.log("PAIR REQUEST START");
-    console.log("==================================================");
-
-    console.log("\n[1] Raw Request Body:");
-    console.dir(body, { depth: null });
-
     const pairingToken = String(body.pairingToken || '').trim();
     const pairingUserId = String(body.pairingUserId || '').trim();
     const deviceId = String(body.deviceId || body.hostname || '').trim();
     const hostname = String(body.hostname || 'Rust Agent').trim();
 
-    console.log("\n[2] Parsed Values:");
-    console.log({
-        pairingToken,
-        pairingUserId,
-        deviceId,
-        hostname,
-        pairingTokenType: typeof pairingToken,
-        pairingUserIdType: typeof pairingUserId
-    });
-
     if (!pairingToken || !pairingUserId || !deviceId) {
-        console.log("\n[ERROR] Missing Required Fields");
-        console.log({
-            pairingToken,
-            pairingUserId,
-            deviceId
-        });
-
         const error = new Error('Missing pairing token, user ID, or device configuration.');
         error.status = 400;
         throw error;
     }
 
-    console.log("\n[3] Fetching users from database...");
-
-    const allUsers = await User.find(
-        {},
-        {
-            email: 1,
-            pairingToken: 1,
-            pairingUserId: 1
+    let user = await User.findOne({ pairingToken, pairingUserId }).lean();
+    if (!user) {
+        // Legacy numeric pairing fields
+        const asNumToken = Number(pairingToken);
+        const asNumUser = Number(pairingUserId);
+        if (Number.isFinite(asNumToken) && Number.isFinite(asNumUser)) {
+            user = await User.findOne({
+                pairingToken: asNumToken,
+                pairingUserId: asNumUser
+            }).lean();
         }
-    ).lean();
-
-    console.log("\n========== USERS IN DATABASE ==========");
-
-    if (allUsers.length === 0) {
-        console.log("NO USERS FOUND");
-    }
-
-    allUsers.forEach((u, index) => {
-        console.log(`\nUser ${index + 1}`);
-        console.log("----------------------");
-        console.log("_id:", u._id);
-        console.log("email:", u.email);
-
-        console.log(
-            "pairingToken:",
-            u.pairingToken,
-            "| type:",
-            typeof u.pairingToken
-        );
-
-        console.log(
-            "pairingUserId:",
-            u.pairingUserId,
-            "| type:",
-            typeof u.pairingUserId
-        );
-    });
-
-    console.log("\n========================================");
-
-    console.log("\n[4] Query (String)");
-
-    const stringQuery = {
-        pairingToken,
-        pairingUserId
-    };
-
-    console.log(stringQuery);
-
-    let user = await User.findOne(stringQuery);
-
-    console.log("\nResult (String Query):");
-    console.dir(user);
-
-    console.log("\n[5] Query (Number)");
-
-    const numberQuery = {
-        pairingToken: Number(pairingToken),
-        pairingUserId: Number(pairingUserId)
-    };
-
-    console.log(numberQuery);
-
-    const numericUser = await User.findOne(numberQuery);
-
-    console.log("\nResult (Number Query):");
-    console.dir(numericUser);
-
-    if (!user && numericUser) {
-        console.log("\n========================================");
-        console.log("FOUND USING NUMBER QUERY");
-        console.log("Database stores numeric values.");
-        console.log("========================================");
-
-        user = numericUser;
     }
 
     if (!user) {
-        console.log("\n========================================");
-        console.log("NO MATCH FOUND");
-        console.log("========================================");
-
-        console.log("Incoming:");
-        console.log({
-            pairingToken,
-            pairingUserId
-        });
-
-        console.log("\nDatabase:");
-        console.dir(allUsers, { depth: null });
-
-        const error = new Error("Invalid pairing token or user ID.");
+        const error = new Error('Invalid pairing token or user ID.');
         error.status = 404;
         throw error;
     }
 
-    console.log("\n========================================");
-    console.log("MATCHED USER");
-    console.dir(user, { depth: null });
-    console.log("========================================");
+    const existingCred = await AgentCredential.findOne({ deviceId }).lean();
+    if (existingCred && String(existingCred.userId) !== String(user._id)) {
+        const error = new Error('This device is already paired to another account.');
+        error.status = 409;
+        throw error;
+    }
 
-    const agentToken = crypto.randomBytes(32).toString("hex");
+    const existingDevice = await Device.findOne({ deviceId }).lean();
+    if (existingDevice && String(existingDevice.userId) !== String(user._id)) {
+        const error = new Error('This device is already paired to another account.');
+        error.status = 409;
+        throw error;
+    }
+
+    const agentToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = await bcrypt.hash(agentToken, 12);
 
-    console.log("\n[6] Saving AgentCredential...");
-
-    const credential = await AgentCredential.findOneAndUpdate(
+    await AgentCredential.findOneAndUpdate(
         { deviceId },
         {
             userId: user._id,
@@ -515,44 +421,27 @@ async function pairAgent(body) {
             tokenHash,
             lastConnectedAt: new Date()
         },
-        {
-            upsert: true,
-            new: true
-        }
+        { upsert: true, new: true }
     );
 
-    console.dir(credential, { depth: null });
-
-    console.log("\n[7] Saving Device...");
-
-    const device = await Device.findOneAndUpdate(
+    await Device.findOneAndUpdate(
         { deviceId },
         {
             userId: user._id,
             deviceId,
-            status: "offline",
+            hostname,
+            status: 'offline',
             lastSeen: new Date()
         },
-        {
-            upsert: true,
-            new: true
-        }
+        { upsert: true, new: true }
     );
-
-    console.dir(device, { depth: null });
-
-    console.log("\n========================================");
-    console.log("PAIR SUCCESS");
-    console.log("Device:", deviceId);
-    console.log("Hostname:", hostname);
-    console.log("========================================\n");
 
     return {
         agentToken,
         gatewayUrl:
             process.env.ZENVORA_GATEWAY_URL ||
             process.env.NEXT_PUBLIC_GATEWAY_URL ||
-            "wss://zenvora.abdullahtahir.me/ws/gateway"
+            'wss://zenvora.abdullahtahir.me/ws/gateway'
     };
 }
 async function userOwnsDevice(userId, deviceId) {

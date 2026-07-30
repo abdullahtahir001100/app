@@ -13,6 +13,7 @@ import {
   normalizePath,
   pathsEqual,
 } from "@/lib/file-manager/utils";
+import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 import type {
   CloudBackupEntry,
   FileEntry,
@@ -625,7 +626,10 @@ export function useFileAgent() {
         if (!pending) return;
         void (async () => {
           const buffer = event.data instanceof Blob ? await event.data.arrayBuffer() : event.data;
-          const bytes = new Uint8Array(buffer);
+          const raw = new Uint8Array(buffer);
+          const { deviceId, frame: bytes } = unwrapDeviceBinaryFrame(raw);
+          const selected = selectedDeviceRef.current || "";
+          if (deviceId && selected && deviceId !== selected) return;
           if (bytes[0] !== FRAME_FILE_BINARY || bytes.length < 2) return;
           const blob = new Blob([bytes.slice(1)], { type: mimeForName(pending.name) });
           const url = URL.createObjectURL(blob);
@@ -651,6 +655,13 @@ export function useFileAgent() {
         setLoading(false);
         toast.error(String(packet.message || "Operation failed"));
         return;
+      }
+
+      if (packet.type === "file_telemetry_stream") {
+        const sender = typeof packet.senderAgentId === "string" ? packet.senderAgentId : "";
+        if (sender && selectedDeviceRef.current && sender !== selectedDeviceRef.current) {
+          return;
+        }
       }
 
       const isFileStream = packet.type === "file_telemetry_stream";
