@@ -35,21 +35,22 @@ export async function GET(request: Request) {
     getConnectionRegistry();
 
     const liveDevices = getLiveDeviceOptions(user.id) as DeviceOption[];
-    const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+    const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
     const deviceRecords = (await Device.find({ userId: user.id }).sort({ lastSeen: -1 }).lean()) as DeviceRecord[];
 
     const devices = deviceRecords.map((record) => {
-      const isLive = liveDeviceIds.has(record.deviceId);
+      const deviceId = String(record.deviceId || "");
+      const isLive = liveDeviceIds.has(deviceId);
       return {
-        value: record.deviceId,
-        label: record.hostname || record.deviceId,
+        value: deviceId,
+        label: record.hostname || deviceId,
         role: "AGENT",
         platform: record.platform || null,
         localIp: record.localIp || null,
         publicIp: record.publicIp || null,
         status: isLive ? "online" : "offline",
-        battery: typeof record.battery === 'number' ? record.battery : null,
-        storage: typeof record.storage === 'number' ? record.storage : null,
+        battery: typeof record.battery === "number" ? record.battery : null,
+        storage: typeof record.storage === "number" ? record.storage : null,
         lastSeen: record.lastSeen ? record.lastSeen.toISOString() : null,
       };
     });

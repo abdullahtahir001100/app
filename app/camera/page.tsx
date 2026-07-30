@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { CustomSlider } from "@/components/custom-slider";
 import { Camera, Video, Download, RefreshCw, Square, Cpu, Trash2, Image as ImageIcon, Film, Power, Radar } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import Select from "react-select";
 import { useGateway } from "@/hooks/use-gateway";
 import { gatewayClient } from "@/lib/gateway-client";
@@ -38,6 +39,8 @@ type DetectedCamera = {
 };
 
 export default function CameraPage() {
+  const searchParams = useSearchParams();
+  const requestedDevice = searchParams.get("device") || "";
   const {
     isConnected,
     devices: deviceOptions,
@@ -144,6 +147,14 @@ export default function CameraPage() {
     deviceOptionsRef.current = deviceOptions;
     if (deviceOptions.length === 0) return;
     const knownIds = deviceOptions.map((d) => d.value);
+    const fromQuery =
+      requestedDevice && knownIds.includes(requestedDevice) ? requestedDevice : "";
+    if (fromQuery && selectedDeviceRef.current !== fromQuery) {
+      selectedDeviceRef.current = fromQuery;
+      setSelectedDevice(fromQuery);
+      setCommandStatus(`Selected agent: ${fromQuery}`);
+      return;
+    }
     if (!selectedDeviceRef.current || !knownIds.includes(selectedDeviceRef.current)) {
       const online = deviceOptions.find((d) => d.status === "online");
       const pick = online || deviceOptions[0];
@@ -151,7 +162,7 @@ export default function CameraPage() {
       setSelectedDevice(pick.value);
       setCommandStatus(`Live agent found: ${pick.value}`);
     }
-  }, [deviceOptions]);
+  }, [deviceOptions, requestedDevice]);
 
   const applyGpuFilters = () => {
     const wrap = filterWrapRef.current;

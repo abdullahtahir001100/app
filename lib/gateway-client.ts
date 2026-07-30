@@ -148,6 +148,11 @@ class GatewayClient {
   private lastRefreshAt = 0;
   private refreshPromise: Promise<DeviceOption[]> | null = null;
   private devicesFetchInFlight = false;
+  /** Unique per tab so multiple dashboards don't overwrite DASHBOARD_UNIFIED_PANEL. */
+  private panelId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? `panel-${crypto.randomUUID()}`
+      : `panel-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   private lifecycleBound = false;
 
   constructor() {
@@ -252,7 +257,7 @@ class GatewayClient {
         JSON.stringify({
           type: "register_channel",
           role: "DASHBOARD",
-          id: "UNIFIED_PANEL",
+          id: this.panelId,
         })
       );
       this.emit({ type: "connected" });
@@ -296,11 +301,30 @@ class GatewayClient {
           (packet.type === "device_list_update" || packet.type === "sys_ack") &&
           Array.isArray(packet.devices)
         ) {
-          const incoming = packet.devices as DeviceOption[];
-          if (!this.sameDevices(this.devices, incoming)) {
-            this.devices = incoming;
-            this.emit({ type: "devices", devices: this.devices });
-          }
+          const incoming = (packet.devices as Record<string, unknown>[]).map((raw) => {
+            const record = normalizeDeviceRecord(raw);
+            return toDeviceOption(record);
+          });
+          // Always apply multi-device list updates — status flips matter.
+          this.devices = incoming;
+          this.fullDevices = (packet.devices as Record<string, unknown>[])
+            .map(normalizeDeviceRecord)
+            .filter((d) => d.deviceId);
+          this.lastRefreshAt = Date.now();
+          writeDeviceCache(this.devices, this.fullDevices);
+          this.emit({ type: "devices", devices: this.devices });
+        }
+
+        if (packet.type === "device_status_update" && typeof packet.deviceId === "string") {
+          const deviceId = String(packet.deviceId);
+          const status = packet.status === "online" ? "online" : "offline";
+          this.devices = this.devices.map((d) =>
+            d.value === deviceId ? { ...d, status } : d
+          );
+          this.fullDevices = this.fullDevices.map((d) =>
+            d.deviceId === deviceId ? { ...d, status } : d
+          );
+          this.emit({ type: "devices", devices: this.devices });
         }
 
         this.emit({ type: "json", packet });

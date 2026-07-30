@@ -71,25 +71,28 @@ const FRAME_AUDIO_STREAM = 0x0A;
 
 function getLiveDeviceOptions(userId = null) {
     return Array.from(activeConnections.entries())
-        .filter(([, socket]) => {
+        .filter(([key, socket]) => {
+            if (!key.startsWith('AGENT_') && !key.startsWith('DEVICE_')) return false;
+            if (socket?.readyState !== 1) return false;
             const auth = socket?.authContext;
             if (!auth || auth.kind !== 'agent') return false;
             if (!userId) return true;
             return String(auth.userId || '') === String(userId);
         })
         .map(([key]) => {
-            const deviceId = key.replace(/^AGENT_/, '').replace(/^DEVICE_/, '');
+            const deviceId = String(key.replace(/^AGENT_/, '').replace(/^DEVICE_/, ''));
             return {
                 value: deviceId,
                 label: deviceId,
-                role: key.startsWith('AGENT_') ? 'AGENT' : 'DEVICE'
+                role: key.startsWith('AGENT_') ? 'AGENT' : 'DEVICE',
+                status: 'online',
             };
         });
 }
 
 async function getDeviceOptions(userId = null) {
     const liveDevices = getLiveDeviceOptions(userId);
-    const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+    const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
     const query = userId ? { userId } : {};
     const allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
 
@@ -117,9 +120,14 @@ async function getDeviceOptions(userId = null) {
 let lastBroadcastAt = 0;
 let lastBroadcastPayload = null;
 
-async function broadcastDeviceList() {
+/**
+ * @param {{ force?: boolean }} [options]
+ * force=true bypasses the 15s throttle (must use on connect/disconnect).
+ */
+async function broadcastDeviceList(options = {}) {
+    const force = options.force === true;
     const now = Date.now();
-    if (now - lastBroadcastAt < 15000) {
+    if (!force && now - lastBroadcastAt < 15000) {
         return lastBroadcastPayload;
     }
 
@@ -129,7 +137,7 @@ async function broadcastDeviceList() {
         return key.startsWith('DASHBOARD_') && clientSocket.readyState === 1;
     });
 
-    for (const [key, clientSocket] of dashboardSockets) {
+    for (const [, clientSocket] of dashboardSockets) {
         const userId = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user?.id : null;
         const devices = await getDeviceOptions(userId);
         const payload = JSON.stringify({
@@ -137,7 +145,11 @@ async function broadcastDeviceList() {
             devices
         });
         lastBroadcastPayload = payload;
-        clientSocket.send(payload);
+        try {
+            clientSocket.send(payload);
+        } catch (_) {
+            // ignore broken dashboard sockets
+        }
     }
 
     return lastBroadcastPayload;
@@ -389,7 +401,7 @@ async function handleSocketMessage(ws, message) {
                     ws.authContext = {
                         kind: 'agent',
                         deviceId: deviceOrPanelId,
-                        userId: credential.userId
+                        userId: String(credential.userId || '')
                     };
                 }
 
@@ -434,11 +446,20 @@ async function handleSocketMessage(ws, message) {
                 }
             }
 
+            // Dashboards must use unique panel ids so tabs/reconnects don't clobber each other.
             const connectionKey = role === 'DASHBOARD'
-                ? `DASHBOARD_${deviceOrPanelId || 'web-ui'}`
+                ? `DASHBOARD_${deviceOrPanelId || `web-${Date.now()}`}`
                 : role === 'INSTALL'
                     ? `INSTALL_${ws.authContext?.userId || deviceOrPanelId || Date.now()}`
                     : `${role}_${deviceOrPanelId}`;
+
+            // If an agent reconnects, drop the stale socket for the same device key.
+            if ((role === 'AGENT' || role === 'DEVICE') && activeConnections.has(connectionKey)) {
+                const prev = activeConnections.get(connectionKey);
+                if (prev && prev !== ws) {
+                    try { prev.close(); } catch (_) {}
+                }
+            }
 
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
@@ -457,13 +478,13 @@ async function handleSocketMessage(ws, message) {
                 devices
             }));
             if (role !== 'INSTALL') {
-                void broadcastDeviceList();
+                void broadcastDeviceList({ force: true });
             }
             return;
         }
 
         if (packet.type === 'register_dashboard') {
-            const connectionKey = `DASHBOARD_${packet.id || 'web-ui'}`;
+            const connectionKey = `DASHBOARD_${packet.id || `web-${Date.now()}`}`;
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
@@ -475,7 +496,7 @@ async function handleSocketMessage(ws, message) {
                 status: 'ready',
                 devices
             }));
-            void broadcastDeviceList();
+            void broadcastDeviceList({ force: true });
             return;
         }
 
@@ -1019,9 +1040,25 @@ function handleSocketClose(ws) {
         return;
     }
 
-    activeConnections.delete(ws.connectionKey);
-    console.log(`Connection dropped and connection memory freed: ${ws.connectionKey}`);
-    broadcastDeviceList();
+    const key = ws.connectionKey;
+    const wasAgent = key.startsWith('AGENT_') || key.startsWith('DEVICE_');
+    const deviceId = wasAgent
+        ? String(key.replace(/^AGENT_/, '').replace(/^DEVICE_/, ''))
+        : '';
+
+    activeConnections.delete(key);
+    console.log(`Connection dropped and connection memory freed: ${key}`);
+
+    if (wasAgent && deviceId) {
+        void Device.updateOne(
+            { deviceId },
+            { $set: { status: 'offline', lastSeen: new Date() } }
+        ).catch((err) => {
+            console.warn('[GATEWAY] Failed to mark device offline:', err?.message || err);
+        });
+    }
+
+    void broadcastDeviceList({ force: true });
 }
 
 module.exports = {

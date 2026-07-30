@@ -481,7 +481,7 @@ export default function DashboardPage() {
                             variant="outline"
                             size="sm"
                             className="border-border hover:bg-accent/10"
-                            onClick={() => router.push(`/screenshot?device=${device.id}`)}
+                            onClick={() => router.push(`/screen?device=${device.id}`)}
                           >
                             Screenshot
                           </Button>

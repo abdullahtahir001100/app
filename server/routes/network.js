@@ -8,15 +8,17 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const allDevices = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
         const liveDevices = getLiveDeviceOptions(req.user.id);
-        const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+        const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
 
         const devices = allDevices.map((device) => {
-            const isLive = liveDeviceIds.has(device.deviceId);
+            const deviceId = String(device.deviceId || '');
+            const isLive = liveDeviceIds.has(deviceId);
             return {
                 ...device,
+                deviceId,
                 status: isLive ? 'online' : 'offline',
-                label: device.hostname || device.deviceId,
-                value: device.deviceId
+                label: device.hostname || deviceId,
+                value: deviceId
             };
         });
 
@@ -34,7 +36,7 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
         }
 
         const liveDevices = getLiveDeviceOptions(req.user.id);
-        const isLive = liveDevices.some((d) => d.value === device.deviceId);
+        const isLive = liveDevices.some((d) => String(d.value) === String(device.deviceId));
 
         res.status(200).json({
             success: true,
@@ -51,14 +53,15 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
 router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const liveDevices = getLiveDeviceOptions(req.user.id);
-        const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+        const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
         const deviceRecords = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
 
         const devices = deviceRecords.map((record) => {
-            const isLive = liveDeviceIds.has(record.deviceId);
+            const deviceId = String(record.deviceId || '');
+            const isLive = liveDeviceIds.has(deviceId);
             return {
-                value: record.deviceId,
-                label: record.hostname || record.deviceId,
+                value: deviceId,
+                label: record.hostname || deviceId,
                 role: 'AGENT',
                 platform: record.platform || 'unknown',
                 status: isLive ? 'online' : 'offline',

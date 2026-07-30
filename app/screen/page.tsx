@@ -23,6 +23,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Select from "react-select";
 
 type StreamQuality = "low" | "medium" | "high" | "ultra";
@@ -47,6 +48,8 @@ function loadSavedQuality(): StreamQuality {
 }
 
 export default function ScreenPage() {
+  const searchParams = useSearchParams();
+  const requestedDevice = searchParams.get("device") || "";
   const {
     isConnected,
     devices: deviceOptions,
@@ -120,13 +123,20 @@ export default function ScreenPage() {
   useEffect(() => {
     if (deviceOptions.length === 0) return;
     const knownIds = deviceOptions.map((d) => d.value);
+    const fromQuery =
+      requestedDevice && knownIds.includes(requestedDevice) ? requestedDevice : "";
+    if (fromQuery && selectedDeviceRef.current !== fromQuery) {
+      selectedDeviceRef.current = fromQuery;
+      setSelectedDevice(fromQuery);
+      return;
+    }
     if (!selectedDeviceRef.current || !knownIds.includes(selectedDeviceRef.current)) {
       const online = deviceOptions.find((d) => d.status === "online");
       const first = (online || deviceOptions[0]).value;
       selectedDeviceRef.current = first;
       setSelectedDevice(first);
     }
-  }, [deviceOptions]);
+  }, [deviceOptions, requestedDevice]);
 
   useEffect(() => {
     if (!isConnected) {

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Search, Eye, Download as DownloadIcon, Lock, Smartphone, FileText, Camera, Settings, Globe, Clock, RefreshCw, Monitor, ExternalLink, FolderOpen, Activity } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 import Select from "react-select";
 
@@ -72,6 +73,8 @@ const dateOptions = [
 ];
 
 export default function LogsPage() {
+  const searchParams = useSearchParams();
+  const requestedDevice = searchParams.get("device") || "";
   const { devices: deviceOptions, sendCommand, socket } = useGateway() as any; 
   
   const [selectedDevice, setSelectedDevice] = useState<string>("");
@@ -89,12 +92,19 @@ export default function LogsPage() {
   const [browserFilter, setBrowserFilter] = useState("all");
   const [appFilter, setAppFilter] = useState("all");
 
-  // Set initial device
+  // Prefer ?device= from dashboard deep-link, then first online, then first known.
   useEffect(() => {
-    if (deviceOptions && deviceOptions.length > 0 && !selectedDevice) {
-      setSelectedDevice(deviceOptions[0].value);
+    if (!deviceOptions || deviceOptions.length === 0) return;
+    const knownIds = deviceOptions.map((d: { value: string }) => d.value);
+    if (requestedDevice && knownIds.includes(requestedDevice)) {
+      if (selectedDevice !== requestedDevice) setSelectedDevice(requestedDevice);
+      return;
     }
-  }, [deviceOptions]);
+    if (!selectedDevice || !knownIds.includes(selectedDevice)) {
+      const online = deviceOptions.find((d: { status?: string }) => d.status === "online");
+      setSelectedDevice((online || deviceOptions[0]).value);
+    }
+  }, [deviceOptions, requestedDevice, selectedDevice]);
 
   // 1. WEBSOCKET LISTENER: Directly updates state when Rust agent replies
   useEffect(() => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useGateway } from "@/hooks/use-gateway";
 import {
@@ -40,6 +41,8 @@ type PendingRequest = {
 };
 
 export function useFileAgent() {
+  const searchParams = useSearchParams();
+  const requestedDevice = searchParams.get("device") || "";
   const { isConnected, devices, dispatch: gatewayDispatch, refreshDevices, resolveTarget, subscribe, isDeviceOnline, ensureConnected } = useGateway();
 
   const [selectedDevice, setSelectedDevice] = useState("");
@@ -103,13 +106,21 @@ export function useFileAgent() {
 
   useEffect(() => {
     if (devices.length === 0) return;
-    if (!selectedDeviceRef.current) {
+    const knownIds = devices.map((d) => d.value);
+    const fromQuery =
+      requestedDevice && knownIds.includes(requestedDevice) ? requestedDevice : "";
+    if (fromQuery && selectedDeviceRef.current !== fromQuery) {
+      selectedDeviceRef.current = fromQuery;
+      setSelectedDevice(fromQuery);
+      return;
+    }
+    if (!selectedDeviceRef.current || !knownIds.includes(selectedDeviceRef.current)) {
       const online = devices.find((d) => d.status === "online");
       const next = (online || devices[0]).value;
       selectedDeviceRef.current = next;
       setSelectedDevice(next);
     }
-  }, [devices]);
+  }, [devices, requestedDevice]);
 
   useEffect(() => {
     if (!selectedDevice) return;
