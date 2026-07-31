@@ -233,4 +233,4 @@ export const FileDataTable = React.memo(function FileDataTable({ rows, selectedP
       </Table>
     </div>
   );
-}
+});
