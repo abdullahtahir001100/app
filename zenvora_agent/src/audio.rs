@@ -1,4 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -17,15 +18,46 @@ impl AudioState {
         }
     }
 
-    pub fn start_streaming(&mut self, write_tx: mpsc::UnboundedSender<Message>) -> Result<(), String> {
+    pub fn list_audio_devices() -> Result<Vec<Value>, String> {
+        let host = cpal::default_host();
+        let devices = host.input_devices().map_err(|e| e.to_string())?;
+        
+        let mut list = Vec::new();
+        for (index, device) in devices.enumerate() {
+            if let Ok(name) = device.name() {
+                list.push(json!({
+                    "id": name.clone(),
+                    "label": name,
+                    "index": index,
+                }));
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn start_streaming(&mut self, write_tx: mpsc::UnboundedSender<Message>, device_id: Option<String>) -> Result<(), String> {
         if self.streaming_active.load(Ordering::SeqCst) {
             return Ok(());
         }
 
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| "No default input audio device found".to_string())?;
+        let device = if let Some(id) = device_id {
+            let mut found = None;
+            if let Ok(devices) = host.input_devices() {
+                for dev in devices {
+                    if let Ok(name) = dev.name() {
+                        if name == id {
+                            found = Some(dev);
+                            break;
+                        }
+                    }
+                }
+            }
+            found.ok_or_else(|| format!("Audio device '{}' not found", id))?
+        } else {
+            host.default_input_device()
+                .ok_or_else(|| "No default input audio device found".to_string())?
+        };
 
         let config = device
             .default_input_config()

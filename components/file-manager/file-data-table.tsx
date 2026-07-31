@@ -10,7 +10,7 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Shield } from "lucide-react";
 import {
   ContextMenu,
@@ -41,7 +41,7 @@ type Props = {
   onContextAction: (entry: FileEntry, action: string) => void;
 };
 
-export function FileDataTable({ rows, selectedPaths, onSelect, onOpen, onContextAction }: Props) {
+export const FileDataTable = React.memo(function FileDataTable({ rows, selectedPaths, onSelect, onOpen, onContextAction }: Props) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "name", desc: false }]);
   const parentRef = useRef<HTMLDivElement>(null);
 

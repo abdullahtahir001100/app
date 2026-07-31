@@ -646,6 +646,27 @@ async function handleSocketMessage(ws, message) {
             return;
         }
 
+        if (packet.type === 'event' && packet.action === 'SYSTEM_NOTIFICATION' && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
+            const Notification = require('../models/Notification');
+            const ownerUserId = extractOwnerUserId(ws);
+            const deviceId = extractDeviceIdFromAgentSocket(ws);
+            if (ownerUserId && deviceId && packet.payload) {
+                const notif = packet.payload;
+                Notification.create({
+                    deviceId,
+                    userId: ownerUserId,
+                    app: notif.app || 'System',
+                    title: notif.title || 'Notification',
+                    message: notif.message || '',
+                    icon: notif.icon || '',
+                    category: notif.category || 'toast',
+                }).catch(() => {}); // Ignore duplicate key errors
+
+                forwardPacketToDashboards(packet, activeConnections, ownerUserId);
+            }
+            return;
+        }
+
         if (isShellResponsePacket(packet) && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
             const shellPayload = getShellResponsePayload(packet);
             if (shellPayload) {

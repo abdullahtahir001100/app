@@ -1,6 +1,6 @@
 "use client";
 
-import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare, ScrollText } from "lucide-react";
+import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare, ScrollText, ChevronDown } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ZenvoraLogo } from "@/components/zenvora-logo";
@@ -38,6 +38,8 @@ function AppSidebarContent() {
   const deviceId = searchParams ? (searchParams.get("deviceId") || devices[0]?.value || "") : (devices[0]?.value || "");
 
   const [isAudioStreaming, setIsAudioStreaming] = useState(false);
+  const [micDropdownOpen, setMicDropdownOpen] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<Array<{ id: string, label: string }>>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const activeDeviceIdRef = useRef<string>("");
@@ -86,6 +88,13 @@ function AppSidebarContent() {
     nextStartTimeRef.current = 0;
 
     const unsubscribe = subscribe((event) => {
+      if (event.type === "json" && event.packet?.action === "LIST_AUDIO_DEVICES") {
+        if (event.packet.metrics?.audio_devices) {
+          setAudioDevices(event.packet.metrics.audio_devices);
+        }
+        return;
+      }
+
       if (event.type === "binary") {
         const payload = event.data;
         const bufferPromise = payload instanceof Blob ? payload.arrayBuffer() : Promise.resolve(payload);
@@ -145,7 +154,7 @@ function AppSidebarContent() {
     };
   }, [isAudioStreaming, subscribe]);
 
-  const toggleAudioStream = () => {
+  const toggleAudioStream = (selectedMicrophoneId?: string) => {
     const target = activeDeviceIdRef.current;
     if (!target) return;
 
@@ -153,7 +162,7 @@ function AppSidebarContent() {
       dispatch("STOP_AUDIO_STREAM", {}, target);
       setIsAudioStreaming(false);
     } else {
-      dispatch("START_AUDIO_STREAM", {}, target);
+      dispatch("START_AUDIO_STREAM", { device_id: selectedMicrophoneId }, target);
       setIsAudioStreaming(true);
     }
   };
@@ -267,17 +276,54 @@ function AppSidebarContent() {
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-mono text-sidebar-foreground/50 uppercase tracking-wide">User Mode</p>
               {deviceId && (
-                <button
-                  onClick={toggleAudioStream}
-                  className="p-1 hover:text-foreground text-sidebar-foreground/60 transition-colors focus:outline-none focus:ring-0 cursor-pointer"
-                  title={isAudioStreaming ? "Stop Live Device Audio Listening" : "Listen Live Device Microphone/Audio"}
-                >
-                  {isAudioStreaming ? (
-                    <Mic className="w-4.5 h-4.5 text-rose-500 animate-pulse" />
-                  ) : (
-                    <MicOff className="w-4.5 h-4.5 text-sidebar-foreground/30 hover:text-sidebar-foreground/75" />
+                <div className="flex items-center gap-1 relative">
+                  <button
+                    onClick={() => {
+                      if (!isAudioStreaming) {
+                        dispatch("LIST_AUDIO_DEVICES", {}, deviceId);
+                        setMicDropdownOpen(!micDropdownOpen);
+                      } else {
+                        toggleAudioStream();
+                      }
+                    }}
+                    className="p-1 hover:text-foreground text-sidebar-foreground/60 transition-colors focus:outline-none focus:ring-0 cursor-pointer"
+                    title={isAudioStreaming ? "Stop Live Device Audio Listening" : "Select & Listen to Live Microphone"}
+                  >
+                    {isAudioStreaming ? (
+                      <Mic className="w-4.5 h-4.5 text-rose-500 animate-pulse" />
+                    ) : (
+                      <div className="flex items-center gap-0.5">
+                        <MicOff className="w-4.5 h-4.5 text-sidebar-foreground/30 hover:text-sidebar-foreground/75" />
+                        <ChevronDown className="w-3 h-3 text-sidebar-foreground/30" />
+                      </div>
+                    )}
+                  </button>
+                  
+                  {micDropdownOpen && !isAudioStreaming && (
+                    <div className="absolute top-6 left-0 w-48 bg-card border border-border rounded-md shadow-lg z-50 p-2 text-xs">
+                      <p className="text-muted-foreground mb-2 px-1 font-semibold">Select Audio Device</p>
+                      {audioDevices.length === 0 ? (
+                        <p className="px-1 text-muted-foreground animate-pulse">Loading devices...</p>
+                      ) : (
+                        <ul className="space-y-1 max-h-32 overflow-y-auto">
+                          {audioDevices.map(dev => (
+                            <li key={dev.id}>
+                              <button
+                                className="w-full text-left px-2 py-1.5 hover:bg-muted rounded truncate"
+                                onClick={() => {
+                                  setMicDropdownOpen(false);
+                                  toggleAudioStream(dev.id);
+                                }}
+                              >
+                                {dev.label}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
-                </button>
+                </div>
               )}
             </div>
             <nav className="space-y-2">

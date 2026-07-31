@@ -28,29 +28,35 @@ pub struct SystemNotification {
     pub category: String,
 }
 
+use tokio::sync::broadcast;
+
 pub struct NotificationCapture {
     notifications: Mutex<VecDeque<SystemNotification>>,
     max_notifications: usize,
     last_notification_id: Mutex<u32>,
+    pub rx_channel: broadcast::Sender<SystemNotification>,
 }
 
 impl NotificationCapture {
- pub fn new() -> Self {
-    Self {
-        notifications: Mutex::new(VecDeque::new()),
-        max_notifications: 500,
-        last_notification_id: Mutex::new(0),
+    pub fn new() -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            notifications: Mutex::new(VecDeque::new()),
+            max_notifications: 500,
+            last_notification_id: Mutex::new(0),
+            rx_channel: tx,
+        }
     }
-}
 
     pub fn add_notification(&self, notification: SystemNotification) {
         if let Ok(mut notifs) = self.notifications.lock() {
-            notifs.push_back(notification);
+            notifs.push_back(notification.clone());
 
             if notifs.len() > self.max_notifications {
                 notifs.pop_front();
             }
         }
+        let _ = self.rx_channel.send(notification);
     }
 
     pub fn get_recent(&self, limit: usize) -> Vec<SystemNotification> {

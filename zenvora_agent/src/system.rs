@@ -122,8 +122,12 @@ impl CameraState {
         if !self.streaming_active {
             return false;
         }
-        self.mark_blocked_by_external_app();
-        true
+        self.capture_fail_streak += 1;
+        if self.capture_fail_streak > 20 {
+            self.mark_blocked_by_external_app();
+            return true;
+        }
+        false
     }
 
     pub fn resume_camera_stream(&mut self) -> bool {

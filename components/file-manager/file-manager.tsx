@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Select from "react-select";
 import { toast } from "sonner";
@@ -161,10 +161,19 @@ export function FileManager() {
     [agent.cloudItems, agent.selectedPaths]
   );
 
-  const openDialog = (kind: DialogKind, initial = "") => {
+  const agentRef = useRef(agent);
+  useEffect(() => {
+    agentRef.current = agent;
+  }, [agent]);
+
+  const openDialog = useCallback((kind: DialogKind, initial = "") => {
     setDialogKind(kind);
     setDialogValue(initial);
-  };
+  }, []);
+
+  const handleSelectPaths = useCallback((paths: string[]) => {
+    agentRef.current.setSelectedPaths(paths);
+  }, []);
 
   const submitDialog = async () => {
     if (!dialogKind || !dialogValue.trim() || agent.loading) return;
@@ -186,73 +195,75 @@ export function FileManager() {
     setDialogValue("");
   };
 
-  const handleContextAction = (entry: FileEntry, action: string) => {
-    agent.setSelectedPaths([entry.path]);
-    if (agent.browseSurface !== "local") {
-      const cloudItem = agent.cloudItems.find((i) => i.id === entry.path);
+  const handleContextAction = useCallback((entry: FileEntry, action: string) => {
+    const a = agentRef.current;
+    a.setSelectedPaths([entry.path]);
+    if (a.browseSurface !== "local") {
+      const cloudItem = a.cloudItems.find((i) => i.id === entry.path);
       switch (action) {
         case "open":
-          if (cloudItem?.kind === "folder") agent.openCloudEntry(cloudItem);
+          if (cloudItem?.kind === "folder") a.openCloudEntry(cloudItem);
           else if (cloudItem?.url) window.open(cloudItem.url, "_blank");
           break;
         case "delete":
-          if (confirm(`Move ${entry.name} to trash?`)) void agent.deleteCloudSelected();
+          if (confirm(`Move ${entry.name} to trash?`)) void a.deleteCloudSelected();
           break;
         case "restore":
-          void agent.restoreCloudSelected();
+          void a.restoreCloudSelected();
           break;
         case "purge":
-          if (confirm(`Permanently delete ${entry.name}?`)) void agent.purgeCloudSelected();
+          if (confirm(`Permanently delete ${entry.name}?`)) void a.purgeCloudSelected();
           break;
       }
       return;
     }
     switch (action) {
       case "open":
-        agent.openEntry(entry);
+        a.openEntry(entry);
         break;
       case "download":
-        void agent.downloadSelected();
+        void a.downloadSelected();
         break;
       case "rename":
         openDialog("rename", entry.name);
         break;
       case "delete":
-        if (confirm(`Delete ${entry.name}?`)) void agent.deleteSelected();
+        if (confirm(`Delete ${entry.name}?`)) void a.deleteSelected();
         break;
       case "copy":
-        openDialog("copy", agent.currentPath);
+        openDialog("copy", a.currentPath);
         break;
       case "move":
-        openDialog("move", agent.currentPath);
+        openDialog("move", a.currentPath);
         break;
       case "zip":
-        void agent.compressSelected();
+        void a.compressSelected();
         break;
       case "unzip":
-        void agent.decompressSelected();
+        void a.decompressSelected();
         break;
       case "backup":
-        void agent.backupEntryToCloud(entry);
+        void a.backupEntryToCloud(entry);
         break;
       case "readonly":
-        void agent.toggleReadonly();
+        void a.toggleReadonly();
         break;
     }
-  };
+  }, [openDialog]);
 
-  const handleOpenEntry = (entry: FileEntry) => {
-    if (agent.browseSurface !== "local") {
-      const cloudItem = agent.cloudItems.find((i) => i.id === entry.path);
+  const handleOpenEntry = useCallback((entry: FileEntry) => {
+    const a = agentRef.current;
+    if (a.browseSurface !== "local") {
+      const cloudItem = a.cloudItems.find((i) => i.id === entry.path);
       if (cloudItem?.kind === "folder") {
-        agent.openCloudEntry(cloudItem);
+        a.openCloudEntry(cloudItem);
       } else if (cloudItem?.url) {
         window.open(cloudItem.url, "_blank");
       }
       return;
     }
-    agent.openEntry(entry);
-  };
+    a.openEntry(entry);
+  }, []);
 
   if (agent.loading && !agent.items.length && !agent.cloudItems.length) {
     return (
@@ -735,7 +746,7 @@ export function FileManager() {
                 <FileDataTable
                   rows={displayRows}
                   selectedPaths={agent.selectedPaths}
-                  onSelect={agent.setSelectedPaths}
+                  onSelect={handleSelectPaths}
                   onOpen={handleOpenEntry}
                   onContextAction={handleContextAction}
                 />

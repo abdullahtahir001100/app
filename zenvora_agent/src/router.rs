@@ -84,7 +84,7 @@ pub fn handle_history_command(action: &str) -> Option<CommandResponse> {
 }
 
 pub fn is_audio_action(action: &str) -> bool {
-    matches!(action, "START_AUDIO_STREAM" | "STOP_AUDIO_STREAM")
+    matches!(action, "START_AUDIO_STREAM" | "STOP_AUDIO_STREAM" | "LIST_AUDIO_DEVICES")
 }
 
 pub fn dispatch_command(packet: IncomingPacket, agent: &mut AgentState) -> Option<CommandResponse> {

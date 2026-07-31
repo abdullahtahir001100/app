@@ -613,6 +613,8 @@ pub async fn run_network_loop(
                 let mut last_alive = Instant::now();
                 let mut last_heartbeat_tick = Instant::now();
 
+                let mut notif_rx = crate::notifications::global_notifier().rx_channel.subscribe();
+
                 loop {
                     if stop_flag
                         .as_ref()
@@ -625,6 +627,15 @@ pub async fn run_network_loop(
 
                     tokio::select! {
                         biased;
+                        
+                        Ok(notif) = notif_rx.recv() => {
+                            let text = serde_json::json!({
+                                "type": "event",
+                                "action": "SYSTEM_NOTIFICATION",
+                                "payload": notif
+                            }).to_string();
+                            let _ = write_tx.send(Message::Text(text));
+                        }
 
                         _ = heartbeat.tick() => {
                             let since_last_tick = last_heartbeat_tick.elapsed();
@@ -663,6 +674,7 @@ pub async fn run_network_loop(
                                     match serde_json::from_str::<IncomingPacket>(&text) {
                                         Ok(packet) => {
                                             let action = packet.action.clone();
+                                            let payload = packet.payload.clone();
                                             let quiet = action.starts_with("REMOTE_");
                                             if !quiet {
                                                 println!("[RUST AGENT] Command received: {}", action);
@@ -682,9 +694,21 @@ pub async fn run_network_loop(
                                                         &screen_busy,
                                                     );
                                                 } else if action == "START_AUDIO_STREAM" {
-                                                    let _ = state.audio.start_streaming(write_tx.clone());
+                                                    let device_id = payload.get("device_id").and_then(|v| v.as_str()).map(String::from);
+                                                    let _ = state.audio.start_streaming(write_tx.clone(), device_id);
                                                 } else if action == "STOP_AUDIO_STREAM" {
                                                     state.audio.stop_streaming();
+                                                } else if action == "LIST_AUDIO_DEVICES" {
+                                                    if let Ok(devices) = crate::audio::AudioState::list_audio_devices() {
+                                                        let _ = write_tx.send(Message::Text(serde_json::json!({
+                                                            "type": "sys_ack",
+                                                            "action": action,
+                                                            "status": "success",
+                                                            "metrics": {
+                                                                "audio_devices": devices
+                                                            }
+                                                        }).to_string()));
+                                                    }
                                                 }
                                             }
                                         }
