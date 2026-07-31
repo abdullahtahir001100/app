@@ -146,7 +146,6 @@ function AppSidebarContent() {
         }).catch((err) => {
           console.error("[AUDIO SIDEBAR] Failed to parse binary audio packet:", err);
         });
-      }
     });
 
     return () => {
