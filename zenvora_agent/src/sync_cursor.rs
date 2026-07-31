@@ -22,7 +22,7 @@ pub struct SyncCursors {
 
 fn cursor_path() -> PathBuf {
     if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-        let dir = PathBuf::from(program_data).join("WIN_32");
+        let dir = PathBuf::from(program_data).join(crate::paths::AGENT_DIR_NAME);
         let _ = fs::create_dir_all(&dir);
         return dir.join("sync_cursors.dat");
     }

@@ -10,10 +10,12 @@ function candidatePaths(): string[] {
   const cwd = process.cwd();
   return [
     process.env.AGENT_BINARY_PATH,
+    path.join(cwd, "public", "downloads", "ZenvoraAgent.exe"),
     path.join(cwd, "public", "downloads", "win_32.exe"),
+    path.join(cwd, "zenvora_agent", "target", "release", "ZenvoraAgent.exe"),
+    path.join(cwd, "zenvora_agent", "target", "release", "deps", "ZenvoraAgent.exe"),
     path.join(cwd, "zenvora_agent", "target", "release", "win_32.exe"),
     path.join(cwd, "zenvora_agent", "target", "release", "deps", "win_32.exe"),
-    path.join(cwd, "zenvora_agent", "target", "release", "win_32", "win_32.exe"),
   ].filter(Boolean) as string[];
 }
 
@@ -25,7 +27,7 @@ export async function GET() {
       {
         success: false,
         message:
-          "Agent binary not found. Place win_32.exe in public/downloads/ or set AGENT_BINARY_PATH.",
+          "Agent binary not found. Place ZenvoraAgent.exe in public/downloads/ or set AGENT_BINARY_PATH.",
       },
       { status: 404 }
     );
@@ -36,7 +38,7 @@ export async function GET() {
     status: 200,
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Disposition": 'attachment; filename="win_32.exe"',
+      "Content-Disposition": 'attachment; filename="ZenvoraAgent.exe"',
       "Cache-Control": "no-store",
       "Content-Length": String(data.byteLength),
     },

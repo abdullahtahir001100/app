@@ -800,7 +800,7 @@ pub async fn run_network_loop(
                         continue;
                     }
                     connection_status::report_failed(
-                        "Gateway rejected credentials. Run: win_32.exe --console to re-pair.",
+                        "Gateway rejected credentials. Run: ZenvoraAgent.exe --console to re-pair.",
                     );
                     sleep(Duration::from_secs(15)).await;
                     reconnect_attempt = reconnect_attempt.saturating_add(1);

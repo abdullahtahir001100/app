@@ -30,6 +30,7 @@ mod connection_status;
 mod connection_progress;
 mod install_telemetry;
 mod session_launch;
+mod paths;
 
 use std::env;
 use std::fs;
@@ -80,39 +81,43 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
 }
 
 #[cfg(windows)]
-fn system32_dir() -> PathBuf {
-    PathBuf::from(env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string())).join("System32")
+fn install_dir() -> PathBuf {
+    paths::agent_dir()
 }
 
 #[cfg(windows)]
-fn is_in_system32(path: &Path) -> bool {
+fn is_in_install_dir(path: &Path) -> bool {
     path.parent()
-        .map(|parent| parent == system32_dir().as_path())
+        .map(|parent| parent == install_dir().as_path())
         .unwrap_or(false)
 }
 
+/// Install under ProgramData\Zenvora (never System32 — that triggers Defender ML).
 #[cfg(windows)]
-fn relocate_to_system32() -> ! {
+fn relocate_to_install_dir() -> ! {
     let current_exe = env::current_exe().expect("current exe");
-    let target_path = system32_dir().join(current_exe.file_name().expect("exe name"));
+    let target_path = paths::agent_exe_path();
+    let _ = fs::create_dir_all(paths::agent_dir());
 
     if let Err(err) = fs::copy(&current_exe, &target_path) {
         ui_notify::show_blocking_error(
             "Zenvora Agent",
-            &format!("Failed to copy agent to System32:\n{}", err),
+            &format!("Failed to install agent to {}:\n{}", target_path.display(), err),
         );
         std::process::exit(1);
     }
 
     let mut args: Vec<String> = env::args().skip(1).collect();
-    if !args.iter().any(|arg| arg == "--from-system32") {
-        args.push("--from-system32".to_string());
+    if !args.iter().any(|arg| arg == "--from-install-dir") {
+        args.push("--from-install-dir".to_string());
     }
+    // Keep legacy flag accepted for older scripts.
+    args.retain(|a| a != "--from-system32");
 
     if Command::new(&target_path).args(&args).spawn().is_err() {
         ui_notify::show_blocking_error(
             "Zenvora Agent",
-            "Failed to launch agent from System32.",
+            "Failed to launch agent from install directory.",
         );
         std::process::exit(1);
     }
@@ -291,8 +296,8 @@ fn run_async_main(args: &[String]) {
                 #[cfg(windows)]
                 {
                     if let Ok(current_exe) = env::current_exe() {
-                        if !is_in_system32(&current_exe) {
-                            relocate_to_system32();
+                        if !is_in_install_dir(&current_exe) {
+                            relocate_to_install_dir();
                         }
                     }
                     // Ensure credentials exist before service start (esp. PowerShell install).
@@ -345,7 +350,7 @@ fn run_async_main(args: &[String]) {
                 }
                 return;
             }
-            "--from-system32" => {}
+            "--from-system32" | "--from-install-dir" => {}
             _ => {}
         }
     }
@@ -361,13 +366,14 @@ fn run_async_main(args: &[String]) {
                 connection_progress::step(2, 8, "Credentials ready (agent.dat)", "ok");
             });
             if let Ok(current_exe) = env::current_exe() {
-                if !is_in_system32(&current_exe) {
-                    // Copy then re-launch headless from System32 (keep args).
-                    let target = system32_dir().join(current_exe.file_name().expect("exe name"));
+                if !is_in_install_dir(&current_exe) {
+                    let target = paths::agent_exe_path();
+                    let _ = fs::create_dir_all(paths::agent_dir());
                     if fs::copy(&current_exe, &target).is_ok() {
                         let mut child_args: Vec<String> = env::args().skip(1).collect();
-                        if !child_args.iter().any(|a| a == "--from-system32") {
-                            child_args.push("--from-system32".into());
+                        child_args.retain(|a| a != "--from-system32");
+                        if !child_args.iter().any(|a| a == "--from-install-dir") {
+                            child_args.push("--from-install-dir".into());
                         }
                         let status = Command::new(&target).args(&child_args).status();
                         std::process::exit(status.map(|s| s.code().unwrap_or(1)).unwrap_or(1));
@@ -381,8 +387,8 @@ fn run_async_main(args: &[String]) {
 
     #[cfg(windows)]
     if let Ok(current_exe) = env::current_exe() {
-        if !is_in_system32(&current_exe) {
-            relocate_to_system32();
+        if !is_in_install_dir(&current_exe) {
+            relocate_to_install_dir();
         }
     }
 
@@ -414,6 +420,7 @@ fn main() {
                 | "--console"
                 | "--run-agent"
                 | "--from-system32"
+                | "--from-install-dir"
                 | "--headless"
                 | "--provision"
         )

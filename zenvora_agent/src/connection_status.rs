@@ -5,8 +5,8 @@ use std::path::PathBuf;
 fn status_dir() -> PathBuf {
     let dir = std::env::var_os("PROGRAMDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-        .join("WIN_32");
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join(crate::paths::AGENT_DIR_NAME);
     let _ = fs::create_dir_all(&dir);
     dir
 }

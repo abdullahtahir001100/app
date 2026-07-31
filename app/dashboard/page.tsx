@@ -739,7 +739,7 @@ export default function DashboardPage() {
 
               <div className="border-t border-border px-8 py-5 bg-background">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-muted-foreground">win_32.exe · headless provision + service install</p>
+                  <p className="text-sm text-muted-foreground">ZenvoraAgent.exe · headless provision + service install</p>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <Button variant="outline" onClick={() => setShowPairModal(false)}>
                       Close

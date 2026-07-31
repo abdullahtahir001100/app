@@ -40,10 +40,12 @@ function candidatePaths() {
     const envPath = process.env.AGENT_BINARY_PATH;
     return [
         envPath,
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.exe'),
         path.join(cwd, 'public', 'downloads', 'win_32.exe'),
+        path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent.exe'),
+        path.join(cwd, 'zenvora_agent', 'target', 'release', 'deps', 'ZenvoraAgent.exe'),
         path.join(cwd, 'zenvora_agent', 'target', 'release', 'win_32.exe'),
         path.join(cwd, 'zenvora_agent', 'target', 'release', 'deps', 'win_32.exe'),
-        path.join(cwd, 'zenvora_agent', 'target', 'release', 'win_32', 'win_32.exe'),
     ].filter(Boolean);
 }
 
@@ -119,12 +121,12 @@ router.get('/download', (req, res) => {
         liveLogBus.push({
             channel: 'http',
             level: 'error',
-            message: 'agent download 404 — win_32.exe missing',
+            message: 'agent download 404 — ZenvoraAgent.exe / win_32.exe missing',
             route: '/api/agent/download',
         });
         return res.status(404).json({
             success: false,
-            message: 'Agent binary not found. Place win_32.exe in public/downloads/.',
+            message: 'Agent binary not found. Place ZenvoraAgent.exe in public/downloads/.',
         });
     }
 
@@ -138,7 +140,7 @@ router.get('/download', (req, res) => {
 
     res.status(200);
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'attachment; filename="win_32.exe"');
+    res.setHeader('Content-Disposition', 'attachment; filename="ZenvoraAgent.exe"');
     res.setHeader('Content-Length', String(stat.size));
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Accept-Ranges', 'bytes');

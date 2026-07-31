@@ -5,7 +5,7 @@ edition = "2021"
 build = "build.rs"
 
 [[bin]]
-name = "win_32"
+name = "ZenvoraAgent"
 path = "src/main.rs"
 
 [build-dependencies]

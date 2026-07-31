@@ -17,17 +17,21 @@ const CONFIG_FILE: &str = "agent.dat";
 const XOR_KEY: u8 = 0x5A;
 
 fn get_config_path() -> PathBuf {
-    if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-        let dir = PathBuf::from(program_data).join("WIN_32");
-        let _ = fs::create_dir_all(&dir);
-        return dir.join(CONFIG_FILE);
+    crate::paths::migrate_legacy_file(CONFIG_FILE);
+    let modern = crate::paths::data_dir().join(CONFIG_FILE);
+    if modern.exists() {
+        return modern;
+    }
+    let legacy = crate::paths::legacy_agent_dir().join(CONFIG_FILE);
+    if legacy.exists() {
+        return legacy;
     }
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(dir) = exe_path.parent() {
             return dir.join(CONFIG_FILE);
         }
     }
-    PathBuf::from(CONFIG_FILE)
+    modern
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -169,11 +173,12 @@ impl AgentConfig {
                 .is_some();
 
         // Headless install: re-pair only when forced OR no agent.dat yet.
-        // Re-launch from System32 must NOT hammer /pair again (that wedged Railway).
-        let from_system32 = std::env::args().any(|a| a == "--from-system32");
+        // Re-launch from install dir must NOT hammer /pair again (that wedged Railway).
+        let from_install = std::env::args()
+            .any(|a| a == "--from-install-dir" || a == "--from-system32");
         if has_cli_pair && (force_repair || crate::connection_progress::is_headless()) {
             let existing = Self::load_existing();
-            let should_http_pair = force_repair || existing.is_none() || !from_system32;
+            let should_http_pair = force_repair || existing.is_none() || !from_install;
 
             if should_http_pair {
                 println!("--> [CONFIG] Headless/CLI pair flags detected — refreshing credentials + gateway");
@@ -277,7 +282,7 @@ impl AgentConfig {
         // Windows services cannot show InputBox dialogs (Session 0).
         if is_service_session() {
             crate::connection_status::report_failed(
-                "Agent is not paired. Run the dashboard PowerShell install command, or: win_32.exe --console",
+                "Agent is not paired. Run the dashboard PowerShell install command, or: ZenvoraAgent.exe --console",
             );
             crate::connection_progress::finish_failed(
                 "Agent is not paired. Use the dashboard install command or --console to pair.",
