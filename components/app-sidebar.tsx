@@ -71,6 +71,17 @@ function AppSidebarContent() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = subscribe((event) => {
+      if (event.type === "json" && event.packet?.action === "LIST_AUDIO_DEVICES") {
+        if (event.packet.metrics?.audio_devices) {
+          setAudioDevices(event.packet.metrics.audio_devices);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [subscribe]);
+
   // Handle gateway binary streaming events for audio packets (0x0A)
   useEffect(() => {
     if (!isAudioStreaming) {
@@ -87,15 +98,8 @@ function AppSidebarContent() {
     audioContextRef.current = audioCtx;
     nextStartTimeRef.current = 0;
 
+    // Handle gateway binary streaming events for audio packets (0x0A)
     const unsubscribe = subscribe((event) => {
-      if (event.type === "json" && event.packet?.action === "LIST_AUDIO_DEVICES") {
-        if (event.packet.metrics?.audio_devices) {
-          setAudioDevices(event.packet.metrics.audio_devices);
-        }
-        return;
-      }
-
-      if (event.type === "binary") {
         const payload = event.data;
         const bufferPromise = payload instanceof Blob ? payload.arrayBuffer() : Promise.resolve(payload);
         bufferPromise.then((buffer) => {

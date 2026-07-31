@@ -123,7 +123,7 @@ impl CameraState {
             return false;
         }
         self.capture_fail_streak += 1;
-        if self.capture_fail_streak > 20 {
+        if self.capture_fail_streak > 150 {
             self.mark_blocked_by_external_app();
             return true;
         }
