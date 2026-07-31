@@ -655,8 +655,10 @@ export default function DashboardPage() {
                   <div className="pt-2">
                     <h3 className="text-xl font-semibold mb-2">Short install command</h3>
                     <p className="text-sm text-muted-foreground mb-3">
-                      Run in <strong className="text-foreground">Admin PowerShell</strong>. This short line calls the server;
-                      the server returns the full download + pair steps. Keep this modal open for live logs.
+                      Run in <strong className="text-foreground">Admin PowerShell</strong> (Win 10 / 11 best;
+                      Win 8.1 / 7 need .NET 4.5+). Uses a timeout-safe download — not{" "}
+                      <code className="text-xs">irm | iex</code> (that hangs on many PCs).
+                      Keep this modal open for live logs.
                       {bootstrapCode ? (
                         <span className="ml-2 font-mono text-foreground">code={bootstrapCode}</span>
                       ) : null}

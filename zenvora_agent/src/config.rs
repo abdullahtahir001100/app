@@ -389,54 +389,80 @@ impl AgentConfig {
             "hostname": machine_name
         });
 
-        let response = client
-            .post(&pair_endpoint)
-            .header("User-Agent", "Zenvora-Agent/1.0")
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Network request failed: {}", e))?;
+        let mut last_err = String::from("pairing failed");
+        for attempt in 1..=4u32 {
+            let response = match client
+                .post(&pair_endpoint)
+                .header("User-Agent", "Zenvora-Agent/1.0")
+                .header("Accept", "application/json")
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = format!("Network request failed: {}", e);
+                    eprintln!(
+                        "--> [CONFIG] Pair attempt {}/4 failed: {}",
+                        attempt, last_err
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+                    continue;
+                }
+            };
 
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .unwrap_or_else(|e| format!("Failed to read response body: {}", e));
+            let status = response.status();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("Failed to read response body: {}", e));
 
-        if !status.is_success() {
-            return Err(format!("Server rejected pairing (HTTP {}). {}", status, text));
+            if !status.is_success() {
+                last_err = format!("Server rejected pairing (HTTP {}). {}", status, text);
+                // Auth/token errors — do not hammer
+                if status.as_u16() == 401 || status.as_u16() == 403 || status.as_u16() == 404 {
+                    return Err(last_err);
+                }
+                eprintln!(
+                    "--> [CONFIG] Pair attempt {}/4 failed: {}",
+                    attempt, last_err
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+                continue;
+            }
+
+            let res_json: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| format!("Invalid server response: {} | body={}", e, text))?;
+
+            let agent_token = res_json["agentToken"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "Server response missing agentToken.".to_string())?
+                .to_string();
+
+            let mut gateway_url = res_json["gatewayUrl"]
+                .as_str()
+                .unwrap_or("wss://zenvora.abdullahtahir.me/ws/gateway")
+                .to_string();
+
+            if api_base_url.starts_with("https://") && gateway_url.starts_with("ws://") {
+                gateway_url = gateway_url.replacen("ws://", "wss://", 1);
+            }
+
+            let new_config = Self {
+                gateway_url,
+                device_id,
+                agent_token,
+            };
+
+            if !new_config.save() {
+                return Err("Pairing succeeded but failed to save encrypted credentials.".into());
+            }
+
+            return Ok(new_config);
         }
 
-        let res_json: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| format!("Invalid server response: {} | body={}", e, text))?;
-
-        let agent_token = res_json["agentToken"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "Server response missing agentToken.".to_string())?
-            .to_string();
-
-        let mut gateway_url = res_json["gatewayUrl"]
-            .as_str()
-            .unwrap_or("wss://zenvora.abdullahtahir.me/ws/gateway")
-            .to_string();
-
-        if api_base_url.starts_with("https://") && gateway_url.starts_with("ws://") {
-            gateway_url = gateway_url.replacen("ws://", "wss://", 1);
-        }
-
-        let new_config = Self {
-            gateway_url,
-            device_id,
-            agent_token,
-        };
-
-        if !new_config.save() {
-            return Err("Pairing succeeded but failed to save encrypted credentials.".into());
-        }
-
-        Ok(new_config)
+        Err(last_err)
     }
 
     pub async fn repair_credentials() -> Self {

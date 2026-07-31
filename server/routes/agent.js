@@ -5,6 +5,9 @@ const {
     createTicket,
     getTicket,
     buildInstallScript,
+    buildBootstrapCommand,
+    buildBootstrapCommandCurl,
+    buildBootstrapCommandCmd,
 } = require('../services/bootstrapTicketService');
 const liveLogBus = require('../services/liveLogBus');
 const { verifyUserTokenFast, AUTH_COOKIE } = require('../services/authService');
@@ -93,7 +96,9 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
         downloadUrl,
     });
 
-    const command = `irm ${apiBase}/r/${ticket.code} | iex`;
+    const command = buildBootstrapCommand(apiBase, ticket.code);
+    const commandCurl = buildBootstrapCommandCurl(apiBase, ticket.code);
+    const commandCmd = buildBootstrapCommandCmd(apiBase, ticket.code);
 
     liveLogBus.push({
         channel: 'install',
@@ -107,6 +112,8 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
         success: true,
         code: ticket.code,
         command,
+        commandCurl,
+        commandCmd,
         expiresAt: new Date(ticket.expiresAt).toISOString(),
         sessionId: ticket.sessionId,
     });
@@ -162,3 +169,4 @@ router.get('/download', (req, res) => {
 module.exports = router;
 module.exports.getTicket = getTicket;
 module.exports.buildInstallScript = buildInstallScript;
+module.exports.buildBootstrapCommand = buildBootstrapCommand;

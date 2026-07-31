@@ -95,8 +95,10 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
     const auditLogger = createAuditLogger();
 
     server.on('upgrade', (req, socket, head) => {
-        const pathOnly = String(req.url || '').split('?')[0];
-        if (pathOnly !== '/ws/gateway') {
+        const urlObj = new URL(String(req.url || ''), 'http://localhost');
+        const pathOnly = urlObj.pathname;
+        
+        if (pathOnly !== '/ws/gateway' && pathOnly !== '/ws/media') {
             if (typeof nextUpgradeHandler === 'function') {
                 nextUpgradeHandler(req, socket, head);
             } else {
@@ -129,6 +131,12 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             return;
         }
 
+        // Only users can connect to /ws/media
+        if (pathOnly === '/ws/media' && auth.kind !== 'user') {
+            rejectUpgrade(socket, 403, 'Forbidden');
+            return;
+        }
+
         const clientKey = auth.kind === 'user'
             ? `user:${auth.user.id}`
             : `pending:${auth.ip || clientIp(req)}`;
@@ -142,11 +150,17 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         try {
             wss.handleUpgrade(req, socket, head, (ws) => {
                 ws.authContext = auth;
+                if (pathOnly === '/ws/media') {
+                    ws.mediaSubscription = {
+                        channel: urlObj.searchParams.get('channel'),
+                        deviceId: urlObj.searchParams.get('deviceId')
+                    };
+                }
                 liveLogBus.push({
                     channel: 'ws',
                     level: 'info',
-                    message: `upgrade /ws/gateway kind=${auth.kind}`,
-                    route: '/ws/gateway',
+                    message: `upgrade ${pathOnly} kind=${auth.kind}`,
+                    route: pathOnly,
                     userId: auth.kind === 'user' ? auth.user?.id : null,
                     meta: { kind: auth.kind },
                 });
@@ -157,7 +171,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                 channel: 'ws',
                 level: 'error',
                 message: `upgrade failed: ${error?.message || error}`,
-                route: '/ws/gateway',
+                route: pathOnly,
             });
             rejectUpgrade(socket, 500, 'Internal Server Error');
         }

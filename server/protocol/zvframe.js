@@ -28,6 +28,8 @@ const MsgType = Object.freeze({
     COMMAND_RESULT: 0x21,
     SYNC_CURSOR: 0x30,
     SYNC_BATCH: 0x31,
+    MEDIA_FRAME: 0x40,
+    MEDIA_ACK: 0x41,
 });
 
 const EventKind = Object.freeze({

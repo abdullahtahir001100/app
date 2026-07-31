@@ -432,6 +432,14 @@ async function handleSocketMessage(ws, message) {
             return;
         }
 
+        if (packet.type === 'media_ack') {
+            if (ws.authContext?.kind === 'user') {
+                const { sendMediaAckToAgent } = require('../media/mediaRelay');
+                sendMediaAckToAgent(packet.deviceId, packet.channel, packet.payload);
+            }
+            return;
+        }
+
         if (packet.type === 'install_log') {
             const {
                 appendLog,

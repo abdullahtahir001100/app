@@ -102,7 +102,7 @@ nextApp.prepare().then(() => {
     app.use('/api/live-logs', express.json(), liveLogsRoutes);
     app.use('/api/agent', agentRoutes);
 
-    // Short bootstrap: irm https://host/r/XXXXXX | iex
+    // Short bootstrap — clients must NOT use irm|iex (hangs on many Windows)
     app.get('/r/:code', (req, res) => {
         const ticket = getTicket(req.params.code);
         if (!ticket) {
@@ -118,10 +118,13 @@ nextApp.prepare().then(() => {
             userId: ticket.userId,
             meta: { code: ticket.code, sessionId: ticket.sessionId },
         });
+        const body = buildInstallScript(ticket);
         res.status(200)
             .type('text/plain; charset=utf-8')
-            .set('Cache-Control', 'no-store')
-            .send(buildInstallScript(ticket));
+            .set('Cache-Control', 'no-store, no-cache')
+            .set('X-Content-Type-Options', 'nosniff')
+            .set('Content-Length', Buffer.byteLength(body, 'utf8'))
+            .send(body);
     });
 
     app.get('/api/virtual-files/share/:token', async (req, res) => {

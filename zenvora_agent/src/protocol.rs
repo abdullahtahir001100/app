@@ -30,6 +30,8 @@ pub enum MsgType {
     CommandResult = 0x21,
     SyncCursor = 0x30,
     SyncBatch = 0x31,
+    MediaFrame = 0x40,
+    MediaAck = 0x41,
 }
 
 impl MsgType {
@@ -46,6 +48,8 @@ impl MsgType {
             0x21 => Self::CommandResult,
             0x30 => Self::SyncCursor,
             0x31 => Self::SyncBatch,
+            0x40 => Self::MediaFrame,
+            0x41 => Self::MediaAck,
             _ => return None,
         })
     }

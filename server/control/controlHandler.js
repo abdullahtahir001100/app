@@ -53,6 +53,8 @@ async function handleAuth(socket, seq, payload) {
     const deviceId = String(body.deviceId || '').trim();
     const token = String(body.token || body.authToken || '').trim();
 
+    const channel = String(body.channel || 'control').trim();
+
     if (!deviceId || !token) {
         sendFrame(socket, encodeJsonFrame(MsgType.AUTH_FAIL, seq, { message: 'deviceId/token required' }));
         return false;
@@ -71,6 +73,30 @@ async function handleAuth(socket, seq, payload) {
     if (!credential?.userId) {
         sendFrame(socket, encodeJsonFrame(MsgType.AUTH_FAIL, seq, { message: 'auth failed' }));
         return false;
+    }
+
+    if (channel !== 'control') {
+        const { registerMediaSocket } = require('../media/mediaRelay');
+        registerMediaSocket(socket, deviceId, String(credential.userId), channel);
+        
+        sendFrame(socket, encodeJsonFrame(MsgType.AUTH_OK, seq, {
+            deviceId,
+            channel,
+            serverTime: Date.now(),
+        }));
+        
+        try {
+            const liveLogBus = require('../services/liveLogBus');
+            liveLogBus.push({
+                channel: 'tcp',
+                level: 'info',
+                message: `agent media AUTH_OK ${deviceId} (${channel})`,
+                deviceId,
+                userId: String(credential.userId),
+            });
+        } catch (_) {}
+        
+        return true;
     }
 
     socket.controlAuth = {
@@ -267,12 +293,23 @@ async function onFrame(socket, frame) {
         case MsgType.COMMAND_RESULT:
             handleCommandResult(socket, seq, payload);
             break;
+        case MsgType.MEDIA_FRAME:
+        case MsgType.MEDIA_ACK:
+            const { handleMediaFrame } = require('../media/mediaRelay');
+            handleMediaFrame(socket, frame);
+            break;
         default:
             break;
     }
 }
 
 function onSocketClose(socket) {
+    if (socket.mediaAuth) {
+        const { unregisterMediaSocket } = require('../media/mediaRelay');
+        unregisterMediaSocket(socket);
+        return;
+    }
+
     const auth = socket.controlAuth;
     if (!auth) return;
 

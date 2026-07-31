@@ -31,7 +31,8 @@ mod connection_progress;
 mod install_telemetry;
 mod session_launch;
 mod paths;
-
+pub mod media_channels;
+pub mod screen_abr;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};

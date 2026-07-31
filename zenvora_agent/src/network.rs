@@ -45,15 +45,17 @@ use crate::ui_notify;
 
 const SCREEN_FRAME_INTERVAL_MS: u64 = 16;
 const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
-const HANDSHAKE_TIMEOUT_SECS: u64 = 15;
+const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
 const CONNECT_TIMEOUT_SECS: u64 = 45;
 const NETWORK_WAIT_SECS: u64 = 15;
-const MAX_BACKOFF_SECS: u64 = 30;
-const HEARTBEAT_INTERVAL_SECS: u64 = 20;
-const HEARTBEAT_TIMEOUT_SECS: u64 = 65;
-const SLEEP_JUMP_SECS: u64 = 40;
-/// Transient connect/handshake failures only become final after this many tries.
-const FINAL_FAIL_AFTER_ATTEMPTS: u32 = 5;
+const MAX_BACKOFF_SECS: u64 = 45;
+const HEARTBEAT_INTERVAL_SECS: u64 = 15;
+const HEARTBEAT_TIMEOUT_SECS: u64 = 120;
+const SLEEP_JUMP_SECS: u64 = 90;
+/// Only used for install UI "failed" status — agent keeps reconnecting forever.
+const FINAL_FAIL_AFTER_ATTEMPTS: u32 = 8;
+/// After a stable session, reset backoff so brief blips don't look like hard failure.
+const STABLE_SESSION_SECS: u64 = 45;
 
 fn report_transient_or_final(config: &AgentConfig, reconnect_attempt: u32, message: &str) {
     if reconnect_attempt + 1 >= FINAL_FAIL_AFTER_ATTEMPTS {
@@ -505,6 +507,7 @@ pub async fn run_network_loop(
                 }
 
                 let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Message>();
+                let session_started = Instant::now();
                 let activity_logger =
                     ActivityLogger::init_activity_logger(write_tx.clone(), config.device_id.clone());
                 state.activity_logger = Some(activity_logger.clone());
@@ -782,6 +785,9 @@ pub async fn run_network_loop(
                 writer_task.abort();
                 state.audio.stop_streaming();
                 invalidate_monitor_cache();
+                if session_started.elapsed() >= Duration::from_secs(STABLE_SESSION_SECS) {
+                    reconnect_attempt = 0;
+                }
                 connection_status::log("Socket disconnected. Reconnecting...");
             }
             Ok(Err(err)) => {
