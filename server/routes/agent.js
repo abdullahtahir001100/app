@@ -42,6 +42,7 @@ function candidatePaths() {
         envPath,
         path.join(cwd, 'public', 'downloads', 'win_32.exe'),
         path.join(cwd, 'zenvora_agent', 'target', 'release', 'win_32.exe'),
+        path.join(cwd, 'zenvora_agent', 'target', 'release', 'deps', 'win_32.exe'),
         path.join(cwd, 'zenvora_agent', 'target', 'release', 'win_32', 'win_32.exe'),
     ].filter(Boolean);
 }
