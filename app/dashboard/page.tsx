@@ -32,9 +32,12 @@ export default function DashboardPage() {
   const [openControlMenu, setOpenControlMenu] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [restartingId, setRestartingId] = useState<string | null>(null);
-  const [installSessionId] = useState(() => `web-${Date.now().toString(36)}`);
+  const [installSessionId, setInstallSessionId] = useState(() => `web-${Date.now().toString(36)}`);
   const [installLogs, setInstallLogs] = useState<InstallLogEntry[]>([]);
   const [installLive, setInstallLive] = useState(false);
+  const [installCommand, setInstallCommand] = useState("Loading short command…");
+  const [bootstrapCode, setBootstrapCode] = useState<string | null>(null);
+  const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
   const devices = useMemo(
@@ -137,7 +140,7 @@ export default function DashboardPage() {
   const apiBase = (
     process.env.NEXT_PUBLIC_API_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
-    "https://zenvora.abdullahtahir.me"
+    (typeof window !== "undefined" ? window.location.origin : "https://zenvora.abdullahtahir.me")
   ).replace(/\/$/, "");
   const gatewayUrl =
     process.env.NEXT_PUBLIC_GATEWAY_URL ||
@@ -146,95 +149,65 @@ export default function DashboardPage() {
   const agentDownloadUrl =
     process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL || `${apiBase}/api/agent/download`;
 
-  const installCommand = useMemo(() => {
-    const token = pairingToken || "<PAIR_TOKEN>";
-    const userId = pairingUserId || "<PAIR_USER_ID>";
-
-    // Build script body, then UTF-16LE Base64 encode for -EncodedCommand.
-    // This avoids outer PowerShell eating $token / $url when the one-liner is pasted.
-    const script = [
-      "$ErrorActionPreference = 'Stop'",
-      "$ProgressPreference = 'SilentlyContinue'",
-    
-      `$token = '${token.replace(/'/g, "''")}'`,
-      `$userId = '${userId.replace(/'/g, "''")}'`,
-      `$api = '${apiBase.replace(/'/g, "''")}'`,
-      `$gw = '${gatewayUrl.replace(/'/g, "''")}'`,
-      `$url = '${agentDownloadUrl.replace(/'/g, "''")}'`,
-    
-      "$out = Join-Path $env:TEMP 'win_32.exe'",
-    
-      "Write-Host ('[' + (Get-Date).ToString('HH:mm:ss') + '] [1/4] Downloading agent...') -ForegroundColor Cyan",
-    
-      "$downloaded = $false",
-      "for ($i = 1; $i -le 3 -and -not $downloaded; $i++) {",
-      "  try {",
-      "    if (Test-Path $out) { Remove-Item $out -Force -ErrorAction SilentlyContinue }",
-      "    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 60",
-      "    if ((Test-Path $out) -and ((Get-Item $out).Length -gt 0)) {",
-      "      $downloaded = $true",
-      "    }",
-      "  }",
-      "  catch {",
-      "    Write-Host ('Download attempt ' + $i + ' failed: ' + $_.Exception.Message) -ForegroundColor Yellow",
-      "    if ($i -lt 3) { Start-Sleep -Seconds 2 }",
-      "  }",
-      "}",
-    
-      "if (-not $downloaded) { throw 'Download failed after 3 attempts.' }",
-    
-      "Write-Host ('[' + (Get-Date).ToString('HH:mm:ss') + '] Download completed.') -ForegroundColor Green",
-    
-      "Write-Host '[2/4] Starting agent service...' -ForegroundColor Cyan",
-    
-      `Start-Process -FilePath $out -ArgumentList @(
-        '--headless',
-        '--force-repair',
-        '--pair-token',$token,
-        '--pair-user-id',$userId,
-        '--api-url',$api,
-        '--gateway-url',$gw,
-        '--install-session','${installSessionId.replace(/'/g, "''")}'
-      ) -WindowStyle Hidden`,
-    
-      "Start-Sleep -Milliseconds 500",
-    
-      "Write-Host '[3/4] Agent started successfully.' -ForegroundColor Green",
-      "Write-Host '[4/4] Live logs are available in Dashboard → Pair Device → Live install logs.' -ForegroundColor Green",
-    ].join("; ");
-    
-    const encoded = (() => {
-      if (typeof window === "undefined") return "";
-      const codes = new Uint16Array(script.length);
-      for (let i = 0; i < script.length; i += 1) codes[i] = script.charCodeAt(i);
-      const bytes = new Uint8Array(codes.buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-      return btoa(binary);
-    })();
-
-    if (!encoded) {
-      return `powershell -ExecutionPolicy Bypass -NoProfile -Command "& { \`$ErrorActionPreference='Stop'; \`$token='${token}'; \`$userId='${userId}'; \`$api='${apiBase}'; \`$gw='${gatewayUrl}'; \`$url='${agentDownloadUrl}'; \`$out=Join-Path \`$env:TEMP 'win_32.exe'; Write-Host '[1/4] Downloading agent...' -ForegroundColor Cyan; Invoke-WebRequest -Uri \`$url -OutFile \`$out -UseBasicParsing; Write-Host '[2/4] Launching...' -ForegroundColor Cyan; & \`$out --headless --pair-token \`$token --pair-user-id \`$userId --api-url \`$api --gateway-url \`$gw --install-session '${installSessionId}'; Write-Host '[3/4] Done.' -ForegroundColor Green }"`;
+  const refreshBootstrapCommand = async (token: string, userId: string) => {
+    setBootstrapLoading(true);
+    try {
+      const sessionId = `web-${Date.now().toString(36)}`;
+      setInstallSessionId(sessionId);
+      const res = await fetch("/api/agent/bootstrap", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pairingToken: token,
+          pairingUserId: userId,
+          sessionId,
+          apiBase,
+          gatewayUrl,
+          downloadUrl: agentDownloadUrl,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success || !data?.command) {
+        throw new Error(data?.message || "Could not create install code");
+      }
+      setBootstrapCode(String(data.code || ""));
+      setInstallCommand(String(data.command));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Bootstrap failed";
+      setInstallCommand(`# ${message} — reopen Pair Device`);
+      setBootstrapCode(null);
+      toast.error(message);
+    } finally {
+      setBootstrapLoading(false);
     }
+  };
 
-    return `powershell -ExecutionPolicy Bypass -NoProfile -EncodedCommand ${encoded}`;
-  }, [pairingToken, pairingUserId, apiBase, gatewayUrl, agentDownloadUrl, installSessionId]);
+  useEffect(() => {
+    if (!showPairModal || !pairingToken || !pairingUserId) return;
+    void refreshBootstrapCommand(pairingToken, pairingUserId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPairModal, pairingToken, pairingUserId]);
 
   const copyInstallCommand = async () => {
     try {
+      if (!installCommand || installCommand.startsWith("#") || installCommand.startsWith("Loading")) {
+        toast.error("Short command not ready yet");
+        return;
+      }
       setInstallLogs((prev) => [
         ...prev,
         {
           step: 0,
           total: 8,
           state: "running",
-          message: "Command copied — run it as Admin. Live logs will appear here.",
+          message: `Command copied (${bootstrapCode || "code"}) — run in Admin PowerShell.`,
           at: new Date().toISOString(),
         },
       ]);
       await navigator.clipboard.writeText(installCommand);
       setCopiedCmd(true);
-      toast.success("Install command copied — keep this modal open for live logs");
+      toast.success("Short command copied — keep this modal open for live logs");
       setTimeout(() => setCopiedCmd(false), 2000);
     } catch {
       toast.error("Could not copy command");
@@ -608,7 +581,7 @@ export default function DashboardPage() {
             <DialogHeader className="px-8 pt-8 pb-4">
               <DialogTitle>Pair Device ON Zenvora Agent</DialogTitle>
               <DialogDescription className="mt-3 text-sm text-muted-foreground max-w-2xl">
-                Copy the install command, run it as Admin, and <strong className="text-foreground">keep this modal open</strong>.
+                Copy the short command, run it as Admin, and <strong className="text-foreground">keep this modal open</strong>.
                 Live install logs appear in the black console at the bottom of this dialog.
               </DialogDescription>
             </DialogHeader>
@@ -680,17 +653,37 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="pt-2">
-                    <h3 className="text-xl font-semibold mb-2">One-line install (PowerShell)</h3>
+                    <h3 className="text-xl font-semibold mb-2">Short install command</h3>
                     <p className="text-sm text-muted-foreground mb-3">
-                      Run as Administrator. Keep this modal open — install steps stream here live (HTTP + WSS).
-                      Terminal also shows a step loader. Manual EXE double-click uses the same live feed after pairing.
+                      Run in <strong className="text-foreground">Admin PowerShell</strong>. This short line calls the server;
+                      the server returns the full download + pair steps. Keep this modal open for live logs.
+                      {bootstrapCode ? (
+                        <span className="ml-2 font-mono text-foreground">code={bootstrapCode}</span>
+                      ) : null}
                     </p>
                     <div className="rounded-xl border border-border bg-muted/40 p-3">
-                      <pre className="whitespace-pre-wrap break-all text-xs font-mono leading-5 max-h-28 overflow-auto">
-                        {installCommand}
+                      <pre className="whitespace-pre-wrap break-all text-sm font-mono leading-5 max-h-28 overflow-auto">
+                        {bootstrapLoading ? "Creating short code…" : installCommand}
                       </pre>
-                      <div className="mt-3 flex justify-end">
-                        <Button variant="outline" size="sm" onClick={() => void copyInstallCommand()} className="gap-2">
+                      <div className="mt-3 flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={bootstrapLoading || !pairingToken}
+                          onClick={() => {
+                            if (pairingToken && pairingUserId) void refreshBootstrapCommand(pairingToken, pairingUserId);
+                          }}
+                          className="gap-2"
+                        >
+                          Refresh code
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void copyInstallCommand()}
+                          disabled={bootstrapLoading || !bootstrapCode}
+                          className="gap-2"
+                        >
                           {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                           {copiedCmd ? "Copied" : "Copy command"}
                         </Button>
@@ -751,8 +744,12 @@ export default function DashboardPage() {
                     <Button variant="outline" onClick={() => setShowPairModal(false)}>
                       Close
                     </Button>
-                    <Button className="bg-foreground text-background hover:bg-foreground/90" onClick={() => void copyInstallCommand()}>
-                      Copy Install Command
+                    <Button
+                      className="bg-foreground text-background hover:bg-foreground/90"
+                      disabled={bootstrapLoading || !bootstrapCode}
+                      onClick={() => void copyInstallCommand()}
+                    >
+                      Copy Short Command
                     </Button>
                   </div>
                 </div>

@@ -16,6 +16,8 @@ const logsRoutes = require('./server/routes/logs');
 const installLogsRoutes = require('./server/routes/installLogs');
 const securityAuditRoutes = require('./server/routes/security-audit');
 const liveLogsRoutes = require('./server/routes/live-logs');
+const agentRoutes = require('./server/routes/agent');
+const { getTicket, buildInstallScript } = require('./server/services/bootstrapTicketService');
 const { initWebSocketGateway } = require('./server/sockets/gateway');
 const { initTcpControlGateway } = require('./server/control/tcpGateway');
 const { lookupShareToken, serviceErrorResponse } = require('./server/services/virtualFileService');
@@ -98,6 +100,29 @@ nextApp.prepare().then(() => {
     app.use('/api/install-logs', express.json(), installLogsRoutes);
     app.use('/api/security', express.json(), securityAuditRoutes);
     app.use('/api/live-logs', express.json(), liveLogsRoutes);
+    app.use('/api/agent', agentRoutes);
+
+    // Short bootstrap: irm https://host/r/XXXXXX | iex
+    app.get('/r/:code', (req, res) => {
+        const ticket = getTicket(req.params.code);
+        if (!ticket) {
+            res.status(404).type('text/plain').send(
+                "Write-Host 'Invalid or expired install code. Open Dashboard → Pair Device and copy a fresh command.' -ForegroundColor Red\r\n"
+            );
+            return;
+        }
+        liveLogBus.push({
+            channel: 'install',
+            level: 'info',
+            message: `bootstrap script fetched for ${ticket.code}`,
+            userId: ticket.userId,
+            meta: { code: ticket.code, sessionId: ticket.sessionId },
+        });
+        res.status(200)
+            .type('text/plain; charset=utf-8')
+            .set('Cache-Control', 'no-store')
+            .send(buildInstallScript(ticket));
+    });
 
     app.get('/api/virtual-files/share/:token', async (req, res) => {
         try {

@@ -48,7 +48,8 @@ function isPublicApiRoute(pathname = "") {
         '/api/install-logs',
         '/api/agent/download',
         '/api/health',
-        '/downloads/'
+        '/downloads/',
+        '/r/',
     ];
 
     return publicPaths.some(path =>
