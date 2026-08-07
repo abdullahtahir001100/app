@@ -65,6 +65,7 @@ export function useFileAgent() {
   const [editMode, setEditMode] = useState(false);
   const [metaTags, setMetaTags] = useState("");
   const [metaCategory, setMetaCategory] = useState("");
+  const [lastMetadata, setLastMetadata] = useState<Record<string, unknown> | null>(null);
   const [cloudBackups, setCloudBackups] = useState<CloudBackupEntry[]>([]);
   const [cloudUploadFolder, setCloudUploadFolder] = useState("/");
   const [cloudFolderOptions, setCloudFolderOptions] = useState<VirtualFolderOption[]>([
@@ -598,6 +599,7 @@ export function useFileAgent() {
       case "FILE_GET_METADATA":
         setMetaTags(Array.isArray(fileResult.tags) ? (fileResult.tags as string[]).join(", ") : "");
         setMetaCategory(String(fileResult.category || ""));
+        setLastMetadata(fileResult as Record<string, unknown>);
         setLoading(false);
         break;
       case "FILE_DELETE":
@@ -1191,6 +1193,8 @@ export function useFileAgent() {
     setMetaTags,
     metaCategory,
     setMetaCategory,
+    lastMetadata,
+    setLastMetadata,
     cloudBackups,
     cloudUploadFolder,
     setCloudUploadFolder,

@@ -1,7 +1,8 @@
 const { MsgType, encodeJsonFrame } = require('../protocol/zvframe');
 const { getConnectionRegistry } = require('../sockets/registry');
+const { dashboardUserId, wrapBinaryForDevice } = require('../sockets/fanout');
 
-// Registry for media TCP sockets: deviceId -> { screen: socket, camera: socket, ... }
+// Registry for media agent sockets: deviceId -> { screen: socket, camera: socket, ... }
 const mediaRegistry = new Map();
 
 function getMediaRegistryEntry(deviceId) {
@@ -15,13 +16,15 @@ function getMediaRegistryEntry(deviceId) {
 
 function registerMediaSocket(socket, deviceId, userId, channel) {
     const entry = getMediaRegistryEntry(deviceId);
-    
-    // Close old socket if exists
+
     if (entry[channel] && entry[channel] !== socket && !entry[channel].destroyed) {
-        entry[channel].destroy();
+        try {
+            entry[channel].destroy?.();
+            entry[channel].close?.();
+        } catch (_) {}
     }
 
-    socket.mediaAuth = { deviceId, userId, channel };
+    socket.mediaAuth = { deviceId: String(deviceId), userId: String(userId), channel: String(channel) };
     entry[channel] = socket;
 }
 
@@ -48,43 +51,57 @@ function handleMediaFrame(socket, frame) {
 
 function broadcastMediaFrame(deviceId, channel, payloadBuf) {
     const registry = getConnectionRegistry();
-    // Wrap in 0xFE envelope for backward compatibility
-    const idBuf = Buffer.from(deviceId, 'utf8');
-    const envelope = Buffer.allocUnsafe(2 + idBuf.length + payloadBuf.length);
-    envelope[0] = 0xFE;
-    envelope[1] = idBuf.length;
-    idBuf.copy(envelope, 2);
-    payloadBuf.copy(envelope, 2 + idBuf.length);
+    const ownerId = getOwnerId(deviceId);
+    const envelope = wrapBinaryForDevice(deviceId, payloadBuf);
 
+    let sent = 0;
     for (const [key, client] of registry.entries()) {
         if (!key.startsWith('DASHBOARD_')) continue;
-        const ctx = client.authContext;
-        
-        // We only broadcast to the owner
-        if (!ctx || String(ctx.userId) !== String(getOwnerId(deviceId))) continue;
-        
-        // If client connected via dedicated media WS, they have mediaSubscription
-        if (client.mediaSubscription && 
-            client.mediaSubscription.deviceId === deviceId && 
-            client.mediaSubscription.channel === channel) {
-            
-            // Server-side backpressure: drop frame if bufferedAmount > 1MB
-            if (client.ws && client.ws.bufferedAmount > 1024 * 1024) {
-                continue;
-            }
-            
-            client.send(envelope);
+        const uid = dashboardUserId(client);
+        const role = client?.authContext?.user?.role || client?.authContext?.role;
+        const pages = client?.authContext?.user?.pages || client?.authContext?.pages || [];
+        const isAdminViewer = role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'));
+        if (!isAdminViewer && (!ownerId || uid !== String(ownerId))) continue;
+
+        const sub = client.mediaSubscription;
+        const wantsChannel = !sub
+            || (String(sub.deviceId) === String(deviceId)
+                && (!sub.channel || String(sub.channel) === String(channel)));
+
+        if (!wantsChannel && sub) continue;
+
+        const ws = client.ws || client;
+        if (ws && typeof ws.bufferedAmount === 'number' && ws.bufferedAmount > 1024 * 1024) {
+            continue;
         }
+
+        try {
+            if (typeof client.send === 'function') {
+                client.send(envelope);
+            } else if (ws && typeof ws.send === 'function') {
+                ws.send(envelope, { binary: true });
+            }
+            sent += 1;
+        } catch (_) {}
     }
+    return sent;
 }
 
 function getOwnerId(deviceId) {
     const entry = mediaRegistry.get(String(deviceId));
     if (entry) {
-        for (const channel in entry) {
-            return entry[channel].mediaAuth.userId;
+        for (const channel of Object.keys(entry)) {
+            const auth = entry[channel]?.mediaAuth;
+            if (auth?.userId) return String(auth.userId);
         }
     }
+    // Fallback: agent gateway registry
+    try {
+        const registry = getConnectionRegistry();
+        const agent = registry.get(`AGENT_${deviceId}`) || registry.get(`DEVICE_${deviceId}`);
+        const uid = agent?.authContext?.userId || agent?.authContext?.user?.id;
+        if (uid) return String(uid);
+    } catch (_) {}
     return null;
 }
 
@@ -93,9 +110,11 @@ function sendMediaAckToAgent(deviceId, channel, ackPayload) {
     if (entry && entry[channel]) {
         const socket = entry[channel];
         if (!socket.destroyed) {
-            const seq = 0n; 
+            const seq = 0n;
             const buf = encodeJsonFrame(MsgType.MEDIA_ACK, seq, ackPayload);
-            socket.write(buf);
+            try {
+                socket.write(buf);
+            } catch (_) {}
         }
     }
 }
@@ -104,5 +123,6 @@ module.exports = {
     registerMediaSocket,
     unregisterMediaSocket,
     handleMediaFrame,
-    sendMediaAckToAgent
+    sendMediaAckToAgent,
+    broadcastMediaFrame,
 };

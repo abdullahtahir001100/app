@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
+import { MediaGatewayClient } from "@/lib/media-gateway-client";
 
 const FRAME_SCREEN_STREAM = 0x04;
 const FRAME_SCREEN_SNAPSHOT = 0x05;
@@ -28,6 +29,8 @@ type UseScreenRemoteOptions = {
   subscribe: (listener: (event: { type: string; data?: ArrayBuffer | Blob; packet?: Record<string, unknown> }) => void) => () => void;
   /** Only paint frames from this agent (multi-device isolation). */
   selectedDeviceRef?: React.MutableRefObject<string>;
+  /** When set, open dedicated /ws/media for frames. */
+  mediaDeviceId?: string;
 };
 
 function parseResolution(resolution: string) {
@@ -36,7 +39,7 @@ function parseResolution(resolution: string) {
   return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-export function useScreenRemote({ subscribe, selectedDeviceRef }: UseScreenRemoteOptions) {
+export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }: UseScreenRemoteOptions) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bitmapRef = useRef<ImageBitmap | null>(null);
@@ -247,6 +250,19 @@ export function useScreenRemote({ subscribe, selectedDeviceRef }: UseScreenRemot
       if (bitmapRef.current) bitmapRef.current.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (!mediaDeviceId) return;
+    const client = new MediaGatewayClient();
+    const unsub = client.subscribe((data) => {
+      processBinaryRef.current(data);
+    });
+    void client.connect(mediaDeviceId, "screen");
+    return () => {
+      unsub();
+      client.disconnect();
+    };
+  }, [mediaDeviceId]);
 
   return {
     canvasRef,

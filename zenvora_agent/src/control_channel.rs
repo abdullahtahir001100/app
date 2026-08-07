@@ -1,5 +1,5 @@
 //! Always-on control channel (agent ⇄ Node).
-//! Prefers Raw TCP; falls back to binary WebSocket `/ws/control` when TCP is blocked.
+//! Prefers binary WebSocket `/ws/control`; Raw TCP only when ENABLE_CONTROL_TCP=1.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tokio::time::{interval, sleep, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
 
+use crate::app_history::AppHistoryCollector;
 use crate::browser_history::BrowserHistoryCollector;
 use crate::config::AgentConfig;
 use crate::connection_status;
@@ -22,12 +23,33 @@ use crate::protocol::{
 };
 use crate::sync_cursor::SyncCursors;
 
-const HEARTBEAT_SECS: u64 = 3;
+const HEARTBEAT_SECS: u64 = 25;
 const HISTORY_WATCH_SECS: u64 = 8;
 const DEFAULT_CONTROL_PORT: u16 = 9443;
-const MAX_BACKOFF_SECS: u64 = 20;
+const MAX_BACKOFF_SECS: u64 = 30;
+const HISTORY_BATCH_SIZE: usize = 300;
 
 pub type ControlTx = mpsc::UnboundedSender<Vec<u8>>;
+
+fn tcp_enabled() -> bool {
+    matches!(
+        std::env::var("ENABLE_CONTROL_TCP")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn next_backoff(current: u64) -> u64 {
+    match current {
+        0 | 1 => 2,
+        2 => 5,
+        5 => 10,
+        10 => 20,
+        _ => MAX_BACKOFF_SECS,
+    }
+}
 
 fn control_port() -> u16 {
     std::env::var("CONTROL_TCP_PORT")
@@ -87,6 +109,7 @@ async fn run_session(
 
     let mut parser = FrameParser::new();
     let mut authed = false;
+    let mut did_full_sync = false;
     let mut heartbeat = interval(Duration::from_secs(HEARTBEAT_SECS));
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut history_tick = interval(Duration::from_secs(HISTORY_WATCH_SECS));
@@ -109,6 +132,10 @@ async fn run_session(
                         MsgType::AuthOk => {
                             authed = true;
                             connection_status::log("Control channel AUTH_OK");
+                            if !did_full_sync && cursors.needs_full_sync() {
+                                let _ = push_full_history_batches(&write_tx, seq_out, cursors);
+                                did_full_sync = true;
+                            }
                         }
                         MsgType::AuthFail => {
                             connection_status::log("Control channel AUTH_FAIL");
@@ -127,6 +154,9 @@ async fn run_session(
                                 if action == "FETCH_BROWSER_HISTORY_DELTA" || action == "FETCH_BROWSER_HISTORY" {
                                     let _ = push_browser_delta(&write_tx, seq_out, cursors);
                                 }
+                                if action == "FETCH_APP_HISTORY_DELTA" || action == "FETCH_APP_HISTORY" {
+                                    let _ = push_app_delta(&write_tx, seq_out, cursors);
+                                }
                             }
                         }
                         _ => {}
@@ -141,6 +171,7 @@ async fn run_session(
             }
             _ = history_tick.tick(), if authed => {
                 let _ = push_browser_delta(&write_tx, seq_out, cursors);
+                let _ = push_app_delta(&write_tx, seq_out, cursors);
             }
         }
     }
@@ -159,93 +190,121 @@ pub async fn run_control_loop(config: AgentConfig, stop_flag: Option<Arc<AtomicB
             break;
         }
 
-        // 1) Prefer Raw TCP
         let mut connected = false;
-        if let Some((host, port)) = resolve_tcp_addr(&config) {
-            connection_status::log(format!("Control TCP connecting {host}:{port}"));
-            if let Ok(stream) = TcpStream::connect((host.as_str(), port)).await {
-                let _ = stream.set_nodelay(true);
-                let (mut reader, mut writer) = stream.into_split();
-                let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                let (read_tx, read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                let write_tx = tx.clone();
 
-                let writer_task = tokio::spawn(async move {
-                    while let Some(buf) = rx.recv().await {
-                        if writer.write_all(&buf).await.is_err() {
-                            break;
-                        }
-                    }
-                });
-                let reader_task = tokio::spawn(async move {
-                    let mut buf = vec![0u8; 64 * 1024];
-                    loop {
-                        match reader.read(&mut buf).await {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                if read_tx.send(buf[..n].to_vec()).is_err() {
-                                    break;
-                                }
+        // 1) Prefer binary WebSocket /ws/control (WS-first)
+        if let Some(ws_url) = resolve_ws_control_url(&config) {
+            connection_status::log(format!("Control WS connecting {ws_url}"));
+            if let Ok(url) = Url::parse(&ws_url) {
+                if let Ok((ws_stream, _)) = connect_async(url).await {
+                    let (mut write_pipe, mut read_pipe) = ws_stream.split();
+                    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let (read_tx, read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let write_tx = tx.clone();
+
+                    let writer_task = tokio::spawn(async move {
+                        while let Some(buf) = rx.recv().await {
+                            if write_pipe.send(Message::Binary(buf)).await.is_err() {
+                                break;
                             }
                         }
-                    }
-                });
-
-                connected = true;
-                backoff = 1;
-                let _ = run_session(write_tx, read_rx, &config, &stop_flag, &mut cursors, &mut seq_out).await;
-                writer_task.abort();
-                reader_task.abort();
-                connection_status::log("Control TCP disconnected");
-            } else {
-                connection_status::log("Control TCP connect failed — trying WS fallback");
-            }
-        }
-
-        // 2) Fallback: binary WebSocket /ws/control (Railway / HTTP-only)
-        if !connected {
-            if let Some(ws_url) = resolve_ws_control_url(&config) {
-                connection_status::log(format!("Control WS connecting {ws_url}"));
-                if let Ok(url) = Url::parse(&ws_url) {
-                    if let Ok((ws_stream, _)) = connect_async(url).await {
-                        let (mut write_pipe, mut read_pipe) = ws_stream.split();
-                        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                        let (read_tx, read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                        let write_tx = tx.clone();
-
-                        let writer_task = tokio::spawn(async move {
-                            while let Some(buf) = rx.recv().await {
-                                if write_pipe.send(Message::Binary(buf)).await.is_err() {
-                                    break;
-                                }
-                            }
-                        });
-                        let reader_task = tokio::spawn(async move {
-                            while let Some(msg) = read_pipe.next().await {
-                                match msg {
-                                    Ok(Message::Binary(bin)) => {
-                                        if read_tx.send(bin).is_err() {
-                                            break;
-                                        }
+                    });
+                    let reader_task = tokio::spawn(async move {
+                        while let Some(msg) = read_pipe.next().await {
+                            match msg {
+                                Ok(Message::Binary(bin)) => {
+                                    if read_tx.send(bin).is_err() {
+                                        break;
                                     }
-                                    Ok(Message::Close(_)) | Err(_) => break,
-                                    _ => {}
                                 }
+                                Ok(Message::Ping(p)) => {
+                                    // tungstenite auto-pongs on some paths; ignore payload here
+                                    let _ = p;
+                                }
+                                Ok(Message::Close(_)) | Err(_) => break,
+                                _ => {}
                             }
-                        });
+                        }
+                    });
 
-                        backoff = 1;
-                        let _ = run_session(write_tx, read_rx, &config, &stop_flag, &mut cursors, &mut seq_out).await;
-                        writer_task.abort();
-                        reader_task.abort();
-                        connection_status::log("Control WS disconnected");
-                    }
+                    connected = true;
+                    backoff = 1;
+                    let _ = run_session(
+                        write_tx,
+                        read_rx,
+                        &config,
+                        &stop_flag,
+                        &mut cursors,
+                        &mut seq_out,
+                    )
+                    .await;
+                    writer_task.abort();
+                    reader_task.abort();
+                    connection_status::log("Control WS disconnected");
                 }
             }
         }
 
+        // 2) Optional Raw TCP (ENABLE_CONTROL_TCP=1 only)
+        if !connected && tcp_enabled() {
+            if let Some((host, port)) = resolve_tcp_addr(&config) {
+                connection_status::log(format!("Control TCP connecting {host}:{port}"));
+                if let Ok(stream) = TcpStream::connect((host.as_str(), port)).await {
+                    let _ = stream.set_nodelay(true);
+                    let (mut reader, mut writer) = stream.into_split();
+                    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let (read_tx, read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let write_tx = tx.clone();
+
+                    let writer_task = tokio::spawn(async move {
+                        while let Some(buf) = rx.recv().await {
+                            if writer.write_all(&buf).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    let reader_task = tokio::spawn(async move {
+                        let mut buf = vec![0u8; 64 * 1024];
+                        loop {
+                            match reader.read(&mut buf).await {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => {
+                                    if read_tx.send(buf[..n].to_vec()).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    connected = true;
+                    backoff = 1;
+                    let _ = run_session(
+                        write_tx,
+                        read_rx,
+                        &config,
+                        &stop_flag,
+                        &mut cursors,
+                        &mut seq_out,
+                    )
+                    .await;
+                    writer_task.abort();
+                    reader_task.abort();
+                    connection_status::log("Control TCP disconnected");
+                } else {
+                    connection_status::log("Control TCP connect failed");
+                }
+            }
+        }
+
+        if !connected {
+            connection_status::log(format!(
+                "Control connect failed — retry in {backoff}s"
+            ));
+        }
+
         sleep(Duration::from_secs(backoff)).await;
-        backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
+        backoff = next_backoff(backoff);
     }
 }
 
@@ -261,7 +320,127 @@ fn apply_ack_cursor(cursors: &mut SyncCursors, body: &Value) {
                 cursors.browser_firefox_time = v;
             }
         }
+        if let Some(v) = cursor.get("app_last_opened").and_then(|x| x.as_str()) {
+            if v > cursors.app_last_opened.as_str() {
+                cursors.app_last_opened = v.to_string();
+            }
+        }
+        if cursor.get("full_sync_done").and_then(|x| x.as_bool()) == Some(true) {
+            cursors.full_sync_done = true;
+        }
     }
+}
+
+fn push_full_history_batches(
+    tx: &ControlTx,
+    seq_out: &mut u64,
+    cursors: &mut SyncCursors,
+) -> bool {
+    let browser = BrowserHistoryCollector::collect_all_history();
+    let mut chrome_hw = cursors.browser_chromium_time;
+    let mut ff_hw = cursors.browser_firefox_time;
+
+    for chunk in browser.chunks(HISTORY_BATCH_SIZE) {
+        let items: Vec<Value> = chunk
+            .iter()
+            .map(|e| {
+                if e.browser.to_lowercase().contains("firefox") {
+                    // visit_time stored as i64-ish string sometimes — keep as-is
+                }
+                json!({
+                    "browser": e.browser,
+                    "url": e.url,
+                    "title": e.title,
+                    "visitTime": e.visit_time,
+                    "visitCount": e.visit_count,
+                    "windowsUser": e.windows_user,
+                    "browserProfile": e.browser_profile,
+                })
+            })
+            .collect();
+
+        *seq_out += 1;
+        let body = json!({
+            "kind": EventKind::BrowserHistory as u8,
+            "items": items,
+            "incremental": false,
+            "cursor": {
+                "browser_chromium_time": chrome_hw,
+                "browser_firefox_time": ff_hw,
+            },
+            "seq": cursors.bump_event_seq(),
+        });
+        if tx
+            .send(encode_json_frame(MsgType::SyncBatch, *seq_out, &body))
+            .is_err()
+        {
+            return false;
+        }
+    }
+
+    let (max_chrome, max_ff) = BrowserHistoryCollector::discover_high_water();
+    chrome_hw = chrome_hw.max(max_chrome);
+    ff_hw = ff_hw.max(max_ff);
+    cursors.browser_chromium_time = chrome_hw;
+    cursors.browser_firefox_time = ff_hw;
+
+    let apps = AppHistoryCollector::collect_all_app_history();
+    for chunk in apps.chunks(HISTORY_BATCH_SIZE) {
+        let items: Vec<Value> = chunk
+            .iter()
+            .map(|e| {
+                json!({
+                    "appName": e.app_name,
+                    "executablePath": e.executable_path,
+                    "lastOpened": e.last_opened,
+                    "appType": e.app_type,
+                    "windowsUser": e.windows_user,
+                })
+            })
+            .collect();
+        *seq_out += 1;
+        let body = json!({
+            "kind": EventKind::AppHistory as u8,
+            "items": items,
+            "incremental": false,
+            "cursor": { "app_last_opened": cursors.app_last_opened },
+            "seq": cursors.bump_event_seq(),
+        });
+        if tx
+            .send(encode_json_frame(MsgType::SyncBatch, *seq_out, &body))
+            .is_err()
+        {
+            return false;
+        }
+    }
+
+    if let Some(last) = apps
+        .iter()
+        .map(|e| e.last_opened.as_str())
+        .max()
+        .map(|s| s.to_string())
+    {
+        cursors.app_last_opened = last;
+    }
+
+    cursors.full_sync_done = true;
+    cursors.save();
+
+    *seq_out += 1;
+    let ack_hint = json!({
+        "kind": EventKind::BrowserHistory as u8,
+        "items": [],
+        "incremental": false,
+        "cursor": {
+            "browser_chromium_time": cursors.browser_chromium_time,
+            "browser_firefox_time": cursors.browser_firefox_time,
+            "app_last_opened": cursors.app_last_opened,
+            "full_sync_done": true,
+        },
+        "seq": cursors.bump_event_seq(),
+    });
+    tx.send(encode_json_frame(MsgType::SyncBatch, *seq_out, &ack_hint))
+        .is_ok()
 }
 
 fn push_browser_delta(
@@ -310,10 +489,46 @@ fn push_browser_delta(
     let body = json!({
         "kind": EventKind::BrowserHistory as u8,
         "items": items,
+        "incremental": true,
         "cursor": cursor,
         "seq": cursors.bump_event_seq(),
     });
 
     let frame = encode_json_frame(MsgType::SyncBatch, *seq_out, &body);
     tx.send(frame).is_ok()
+}
+
+fn push_app_delta(tx: &ControlTx, seq_out: &mut u64, cursors: &mut SyncCursors) -> bool {
+    let (entries, new_cursor) = AppHistoryCollector::collect_since(&cursors.app_last_opened);
+    if new_cursor > cursors.app_last_opened {
+        cursors.app_last_opened = new_cursor.clone();
+        cursors.save();
+    }
+    if entries.is_empty() {
+        return true;
+    }
+
+    let items: Vec<Value> = entries
+        .iter()
+        .map(|e| {
+            json!({
+                "appName": e.app_name,
+                "executablePath": e.executable_path,
+                "lastOpened": e.last_opened,
+                "appType": e.app_type,
+                "windowsUser": e.windows_user,
+            })
+        })
+        .collect();
+
+    *seq_out += 1;
+    let body = json!({
+        "kind": EventKind::AppHistory as u8,
+        "items": items,
+        "incremental": true,
+        "cursor": { "app_last_opened": new_cursor },
+        "seq": cursors.bump_event_seq(),
+    });
+    tx.send(encode_json_frame(MsgType::SyncBatch, *seq_out, &body))
+        .is_ok()
 }

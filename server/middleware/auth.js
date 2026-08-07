@@ -56,6 +56,35 @@ function isPublicApiRoute(pathname = "") {
         pathname === path || pathname.startsWith(path + "/")
     );
 }
+
+async function loadUserPermissions(userId, role) {
+    try {
+        const Permission = require('../models/Permission');
+        const doc = await Permission.findOne({ userId }).lean();
+        if (!doc) {
+            return Permission.defaultsForRole(role);
+        }
+        return Array.isArray(doc.pages) ? doc.pages : Permission.defaultsForRole(role);
+    } catch (_) {
+        return role === 'admin'
+            ? ['dashboard', 'shell', 'files', 'camera', 'screen', 'logs', 'notifications', 'console', 'admin', 'devices.any']
+            : ['dashboard', 'shell', 'files', 'camera', 'screen', 'logs', 'notifications'];
+    }
+}
+
+function userHasPage(pages, pageKey) {
+    if (!pageKey) return true;
+    if (Array.isArray(pages) && pages.includes(pageKey)) return true;
+    return false;
+}
+
+async function userCanAccessAnyDevice(user) {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    const pages = user.pages || await loadUserPermissions(user.id, user.role);
+    return Array.isArray(pages) && pages.includes('devices.any');
+}
+
 async function attachUser(req, res, next) {
     const token = extractToken(req);
     const payload = await verifyUserToken(token);
@@ -63,11 +92,13 @@ async function attachUser(req, res, next) {
         return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
+    const pages = await loadUserPermissions(payload.sub, payload.role);
     req.user = {
         id: payload.sub,
         email: payload.email,
         role: payload.role,
-        name: payload.name
+        name: payload.name,
+        pages,
     };
     req.authToken = token;
     return next();
@@ -77,11 +108,13 @@ async function optionalUser(req, res, next) {
     const token = extractToken(req);
     const payload = await verifyUserToken(token);
     if (payload?.sub) {
+        const pages = await loadUserPermissions(payload.sub, payload.role);
         req.user = {
             id: payload.sub,
             email: payload.email,
             role: payload.role,
-            name: payload.name
+            name: payload.name,
+            pages,
         };
         req.authToken = token;
     }
@@ -96,13 +129,34 @@ async function requireAuthUnlessPublic(req, res, next) {
     return attachUser(req, res, next);
 }
 
+function requireAdmin(req, res, next) {
+    if (!req.user?.id) {
+        return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    if (req.user.role !== 'admin' && !userHasPage(req.user.pages, 'admin')) {
+        return res.status(403).json({ success: false, message: 'Admin access required.' });
+    }
+    return next();
+}
+
+function requirePagePermission(pageKey) {
+    return (req, res, next) => {
+        if (!req.user?.id) {
+            return res.status(401).json({ success: false, message: 'Authentication required.' });
+        }
+        if (req.user.role === 'admin' || userHasPage(req.user.pages, pageKey)) {
+            return next();
+        }
+        return res.status(403).json({ success: false, message: `Missing permission: ${pageKey}` });
+    };
+}
+
 function extractRequestedUserId(req) {
     const candidates = [
         req.query?.userId,
         req.body?.userId,
         req.params?.userId,
         req.headers?.['x-user-id'],
-        req.headers?.['x-user-id']
     ];
 
     for (const candidate of candidates) {
@@ -126,6 +180,10 @@ async function requireUserIdOwnership(req, res, next) {
     }
 
     if (String(requestedUserId) !== String(req.user.id)) {
+        if (await userCanAccessAnyDevice(req.user)) {
+            req.requestedUserId = requestedUserId;
+            return next();
+        }
         return res.status(403).json({ success: false, message: 'userId does not belong to the authenticated user.' });
     }
 
@@ -146,6 +204,11 @@ function extractDeviceId(req) {
 async function enforceDeviceAccess(req, res, next) {
     const deviceId = extractDeviceId(req);
     if (!deviceId) return next();
+
+    if (await userCanAccessAnyDevice(req.user)) {
+        req.deviceId = String(deviceId);
+        return next();
+    }
 
     const allowed = await userOwnsDevice(req.user.id, String(deviceId));
     if (!allowed) {
@@ -168,6 +231,11 @@ async function requireDeviceAccess(req, res, next) {
         return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
+    if (await userCanAccessAnyDevice(req.user)) {
+        req.deviceId = String(deviceId);
+        return next();
+    }
+
     const allowed = await userOwnsDevice(req.user.id, String(deviceId));
     if (!allowed) {
         return res.status(403).json({ success: false, message: 'You do not have access to this device.' });
@@ -181,11 +249,13 @@ async function verifyRequestAuth(request) {
     const token = extractToken(request);
     const payload = await verifyUserToken(token);
     if (!payload?.sub) return null;
+    const pages = await loadUserPermissions(payload.sub, payload.role);
     return {
         id: payload.sub,
         email: payload.email,
         role: payload.role,
-        name: payload.name
+        name: payload.name,
+        pages,
     };
 }
 
@@ -193,6 +263,7 @@ async function verifyRequestDeviceAccess(request, deviceId) {
     const user = await verifyRequestAuth(request);
     if (!user) return { ok: false, status: 401, message: 'Authentication required.' };
     if (!deviceId) return { ok: true, user };
+    if (await userCanAccessAnyDevice(user)) return { ok: true, user };
     const allowed = await userOwnsDevice(user.id, String(deviceId));
     if (!allowed) {
         return { ok: false, status: 403, message: 'You do not have access to this device.' };
@@ -205,11 +276,15 @@ module.exports = {
     attachUser,
     optionalUser,
     requireAuthUnlessPublic,
+    requireAdmin,
+    requirePagePermission,
     requireUserIdOwnership,
     enforceDeviceAccess,
     requireDeviceAccess,
     extractToken,
     verifyRequestAuth,
     verifyRequestDeviceAccess,
-    parseCookies
+    parseCookies,
+    loadUserPermissions,
+    userCanAccessAnyDevice,
 };

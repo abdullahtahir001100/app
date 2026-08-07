@@ -183,6 +183,33 @@ impl AppHistoryCollector {
         apps
     }
 
+    /// Incremental: entries with last_opened strictly after cursor (ISO / sortable string).
+    pub fn collect_since(min_last_opened: &str) -> (Vec<AppHistory>, String) {
+        let all = Self::collect_all_app_history();
+        if min_last_opened.is_empty() {
+            let max = all
+                .iter()
+                .map(|e| e.last_opened.clone())
+                .max()
+                .unwrap_or_default();
+            return (Vec::new(), max);
+        }
+        let mut max = min_last_opened.to_string();
+        let mut out: Vec<AppHistory> = all
+            .into_iter()
+            .filter(|e| e.last_opened.as_str() > min_last_opened)
+            .collect();
+        for e in &out {
+            if e.last_opened > max {
+                max = e.last_opened.clone();
+            }
+        }
+        if out.len() > 500 {
+            out.truncate(500);
+        }
+        (out, max)
+    }
+
     pub fn to_json_array(apps: &[AppHistory]) -> serde_json::Value {
         json!(apps.iter().map(|a| json!({
             "appName": a.app_name,

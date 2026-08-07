@@ -68,7 +68,11 @@ nextApp.prepare().then(() => {
     const jsonBodyParser = express.json({ limit: '2mb' });
 
     initWebSocketGateway(server, nextUpgradeHandler);
-    initTcpControlGateway();
+    if (String(process.env.ENABLE_CONTROL_TCP || '').match(/^(1|true|yes|on)$/i)) {
+        initTcpControlGateway();
+    } else {
+        console.log('> Control TCP : disabled (WS-first; set ENABLE_CONTROL_TCP=1 to enable)');
+    }
     const { initWsControlGateway } = require('./server/control/wsControlGateway');
     initWsControlGateway(server);
     startLiveLogFanout();
@@ -101,6 +105,8 @@ nextApp.prepare().then(() => {
     app.use('/api/security', express.json(), securityAuditRoutes);
     app.use('/api/live-logs', express.json(), liveLogsRoutes);
     app.use('/api/agent', agentRoutes);
+    const adminRoutes = require('./server/routes/admin');
+    app.use('/api/admin', express.json(), adminRoutes);
 
     // Short bootstrap — clients must NOT use irm|iex (hangs on many Windows)
     app.get('/r/:code', (req, res) => {

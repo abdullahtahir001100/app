@@ -3,6 +3,9 @@ const { handleSocketMessage, handleSocketClose } = require('./handler');
 const { verifyUserTokenFast, verifyWsTicket, AUTH_COOKIE } = require('../services/authService');
 const { createConnectionRateLimiter, createAuditLogger } = require('./abuseControl');
 const liveLogBus = require('../services/liveLogBus');
+const { FrameParser } = require('../protocol/zvframe');
+const { onFrame, onSocketClose } = require('../control/controlHandler');
+const { getConnectionRegistry } = require('./registry');
 
 function parseCookies(header) {
     const out = {};
@@ -52,7 +55,6 @@ function authenticateGatewayRequest(req) {
     const token = tokenFromQuery || tokenFromHeader || tokenFromCookie;
 
     if (token) {
-        // Prefer short-lived WS ticket, then full session JWT.
         const ticketUser = verifyWsTicket(token);
         const user = ticketUser || verifyUserTokenFast(token);
         if (user?.sub) {
@@ -69,7 +71,7 @@ function authenticateGatewayRequest(req) {
         }
     }
 
-    // Pending peer (agent). Real auth happens on register_channel.
+    // Pending peer (agent). Real auth happens on register_channel / ZV AUTH.
     return { ok: true, kind: 'pending', ip: clientIp(req) };
 }
 
@@ -78,26 +80,67 @@ function rejectUpgrade(socket, statusCode, message) {
         socket.write(
             `HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
         );
-    } catch (_) {
-        // ignore
-    }
+    } catch (_) {}
     try {
         socket.destroy();
-    } catch (_) {
-        // ignore
-    }
+    } catch (_) {}
+}
+
+function adaptAgentMediaSocket(ws) {
+    ws.write = (buf) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(buf, { binary: true });
+            } catch (_) {}
+        }
+    };
+    Object.defineProperty(ws, 'destroyed', {
+        get() {
+            return ws.readyState !== WebSocket.OPEN;
+        },
+    });
+    return ws;
+}
+
+function registerDashboardMediaClient(ws, auth, mediaSubscription) {
+    const registry = getConnectionRegistry();
+    const panelId = `media-${auth.user.id}-${mediaSubscription.deviceId || 'any'}-${mediaSubscription.channel || 'all'}-${Date.now()}`;
+    const key = `DASHBOARD_${panelId}`;
+    ws.connectionKey = key;
+    ws.authContext = {
+        kind: 'user',
+        user: auth.user,
+        userId: auth.user.id,
+    };
+    ws.mediaSubscription = mediaSubscription;
+    registry.set(key, {
+        readyState: WebSocket.OPEN,
+        ws,
+        authContext: ws.authContext,
+        mediaSubscription,
+        connectionKey: key,
+        send(data) {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data, { binary: Buffer.isBuffer(data) || data instanceof ArrayBuffer });
+            }
+        },
+        close() {
+            try { ws.close(); } catch (_) {}
+        },
+    });
+    return key;
 }
 
 function initWebSocketGateway(server, nextUpgradeHandler) {
     const wss = new WebSocket.Server({ noServer: true });
-    // Higher limits — reconnect storms + multi-agent must not 429 the dashboard.
     const gatewayRateLimiter = createConnectionRateLimiter(300, 60 * 1000);
+    const mediaRateLimiter = createConnectionRateLimiter(400, 60 * 1000);
     const auditLogger = createAuditLogger();
 
     server.on('upgrade', (req, socket, head) => {
         const urlObj = new URL(String(req.url || ''), 'http://localhost');
         const pathOnly = urlObj.pathname;
-        
+
         if (pathOnly !== '/ws/gateway' && pathOnly !== '/ws/media') {
             if (typeof nextUpgradeHandler === 'function') {
                 nextUpgradeHandler(req, socket, head);
@@ -107,7 +150,8 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             return;
         }
 
-        socket.setTimeout(20000);
+        // Do not idle-kill long-lived WS upgrades.
+        socket.setTimeout(0);
         socket.on('error', () => {
             try { socket.destroy(); } catch (_) {}
         });
@@ -131,8 +175,12 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             return;
         }
 
-        // Only users can connect to /ws/media
-        if (pathOnly === '/ws/media' && auth.kind !== 'user') {
+        // /ws/media: users (ticket required) OR pending agents (ZV auth after connect)
+        if (pathOnly === '/ws/media' && auth.kind === 'user') {
+            // ok
+        } else if (pathOnly === '/ws/media' && auth.kind === 'pending') {
+            // agent media — ok
+        } else if (pathOnly === '/ws/media') {
             rejectUpgrade(socket, 403, 'Forbidden');
             return;
         }
@@ -141,7 +189,8 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             ? `user:${auth.user.id}`
             : `pending:${auth.ip || clientIp(req)}`;
 
-        if (!gatewayRateLimiter.allow(clientKey)) {
+        const limiter = pathOnly === '/ws/media' ? mediaRateLimiter : gatewayRateLimiter;
+        if (!limiter.allow(clientKey)) {
             auditLogger.log({ event: 'gateway_rate_limited', clientKey });
             rejectUpgrade(socket, 429, 'Too Many Requests');
             return;
@@ -150,10 +199,11 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         try {
             wss.handleUpgrade(req, socket, head, (ws) => {
                 ws.authContext = auth;
-                if (pathOnly === '/ws/media') {
+                ws.isMediaSocket = pathOnly === '/ws/media';
+                if (pathOnly === '/ws/media' && auth.kind === 'user') {
                     ws.mediaSubscription = {
-                        channel: urlObj.searchParams.get('channel'),
-                        deviceId: urlObj.searchParams.get('deviceId')
+                        channel: urlObj.searchParams.get('channel') || '',
+                        deviceId: urlObj.searchParams.get('deviceId') || '',
                     };
                 }
                 liveLogBus.push({
@@ -180,6 +230,48 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
     wss.on('connection', (ws, req) => {
         ws.upgradeReq = req;
 
+        // Dedicated media path
+        if (ws.isMediaSocket) {
+            if (ws.authContext?.kind === 'user') {
+                registerDashboardMediaClient(ws, ws.authContext, ws.mediaSubscription || {});
+                ws.on('close', () => {
+                    const registry = getConnectionRegistry();
+                    if (ws.connectionKey) registry.delete(ws.connectionKey);
+                });
+                ws.on('error', () => {
+                    const registry = getConnectionRegistry();
+                    if (ws.connectionKey) registry.delete(ws.connectionKey);
+                });
+                // Keepalive: ignore client text pings
+                ws.on('message', (message) => {
+                    if (typeof message === 'string' || (Buffer.isBuffer(message) && message[0] === 0x7b)) {
+                        try {
+                            const text = Buffer.isBuffer(message) ? message.toString('utf8') : String(message);
+                            const packet = JSON.parse(text);
+                            if (packet.type === 'dashboard_ping' || packet.type === 'media_ping') {
+                                ws.send(JSON.stringify({ type: 'dashboard_pong', status: 'ok' }));
+                            }
+                        } catch (_) {}
+                    }
+                });
+                return;
+            }
+
+            // Agent media: ZV framing (same as /ws/control)
+            adaptAgentMediaSocket(ws);
+            const parser = new FrameParser();
+            ws.on('message', (data) => {
+                const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                const frames = parser.push(chunk);
+                for (const frame of frames) {
+                    void onFrame(ws, frame);
+                }
+            });
+            ws.on('close', () => onSocketClose(ws));
+            ws.on('error', () => onSocketClose(ws));
+            return;
+        }
+
         // Pending peers must register quickly or get dropped.
         if (ws.authContext?.kind === 'pending') {
             ws.registrationTimer = setTimeout(() => {
@@ -197,7 +289,6 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         }
 
         ws.on('message', (message) => {
-            // No per-frame audit logging — that alone can starve the event loop.
             void handleSocketMessage(ws, message);
         });
 

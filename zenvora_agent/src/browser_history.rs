@@ -112,7 +112,7 @@ impl BrowserHistoryCollector {
         (all_history, max_chrome, max_ff)
     }
 
-    fn discover_high_water() -> (i64, i64) {
+    pub fn discover_high_water() -> (i64, i64) {
         let mut max_chrome: i64 = 0;
         let mut max_ff: i64 = 0;
 

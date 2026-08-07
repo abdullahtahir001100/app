@@ -18,6 +18,9 @@ pub struct SyncCursors {
     pub notification_seq: u64,
     /// Activity / general event sequence.
     pub event_seq: u64,
+    /// True after first full browser+app history batch sync completed.
+    #[serde(default)]
+    pub full_sync_done: bool,
 }
 
 fn cursor_path() -> PathBuf {
@@ -48,6 +51,11 @@ impl SyncCursors {
     pub fn bump_event_seq(&mut self) -> u64 {
         self.event_seq = self.event_seq.saturating_add(1);
         self.event_seq
+    }
+
+    /// First run needs one batched full sync until marked done.
+    pub fn needs_full_sync(&self) -> bool {
+        !self.full_sync_done
     }
 }
 

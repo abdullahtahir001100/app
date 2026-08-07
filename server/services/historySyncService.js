@@ -212,6 +212,38 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
     return { count };
 }
 
+async function syncActivityLogs(deviceId, entries, userId = null) {
+    if (!deviceId || !Array.isArray(entries) || !userId) {
+        return { count: 0 };
+    }
+    if (entries.length === 0) return { count: 0 };
+
+    const ActivityLog = require('../models/ActivityLog');
+    let count = 0;
+    for (const entry of entries) {
+        const action = String(entry.action || entry.event || entry.type || '').trim();
+        if (!action) continue;
+        await ActivityLog.create({
+            deviceId,
+            userId,
+            action,
+            category: String(entry.category || 'system'),
+            appName: String(entry.appName || entry.app_name || ''),
+            processName: String(entry.processName || entry.process_name || ''),
+            executablePath: String(entry.executablePath || entry.executable_path || ''),
+            windowTitle: String(entry.windowTitle || entry.window_title || ''),
+            url: String(entry.url || ''),
+            domain: String(entry.domain || ''),
+            device: String(entry.device || deviceId),
+            details: String(entry.details || entry.message || ''),
+            status: String(entry.status || 'success'),
+            metadata: entry.metadata || entry,
+        });
+        count += 1;
+    }
+    return { count };
+}
+
 async function persistHistoryPayload(deviceId, packet) {
     const command = String(packet.command || '');
     const data = Array.isArray(packet.data)
@@ -228,6 +260,8 @@ async function persistHistoryPayload(deviceId, packet) {
             return { command, ...(await syncAppHistory(deviceId, data, userId)) };
         case 'FETCH_SYSTEM_NOTIFICATIONS':
             return { command, ...(await syncSystemNotifications(deviceId, data, userId)) };
+        case 'FETCH_ACTIVITY_LOG':
+            return { command, ...(await syncActivityLogs(deviceId, data, userId)) };
         default:
             return { command, count: 0 };
     }
@@ -237,5 +271,6 @@ module.exports = {
     syncBrowserHistory,
     syncAppHistory,
     syncSystemNotifications,
+    syncActivityLogs,
     persistHistoryPayload
 };

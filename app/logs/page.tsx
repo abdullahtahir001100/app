@@ -165,27 +165,40 @@ export default function LogsPage() {
     });
   }, [subscribe, selectedDevice]);
 
-  // Load DB once per tab/device — no 30s poll spam; live WS covers updates.
+  // Load DB first (fast) — never block initial paint on agent round-trip.
   useEffect(() => {
     if (!selectedDevice) return;
     let cancelled = false;
+    setLoading(true);
     (async () => {
       try {
+        const limit = 500;
         if (activeTab === "activity") {
-          const res = await fetch(`/api/logs/activity?limit=100&deviceId=${selectedDevice}`);
+          const res = await fetch(`/api/logs/activity?limit=${limit}&deviceId=${encodeURIComponent(selectedDevice)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
           const data = await res.json();
           if (!cancelled && data.success) setActivityLogs(data.logs || []);
         } else if (activeTab === "browser") {
-          const res = await fetch(`/api/logs/browser-history?limit=100&deviceId=${selectedDevice}`);
+          const res = await fetch(`/api/logs/browser-history?limit=${limit}&deviceId=${encodeURIComponent(selectedDevice)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
           const data = await res.json();
           if (!cancelled && data.success) setBrowserHistory(data.history || []);
         } else if (activeTab === "apps") {
-          const res = await fetch(`/api/logs/app-history?limit=100&deviceId=${selectedDevice}`);
+          const res = await fetch(`/api/logs/app-history?limit=${limit}&deviceId=${encodeURIComponent(selectedDevice)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
           const data = await res.json();
           if (!cancelled && data.success) setAppHistory(data.history || []);
         }
       } catch (error) {
         console.error("Failed to fetch logs from DB:", error);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {

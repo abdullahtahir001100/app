@@ -39,7 +39,18 @@ function sendToOwnerDashboards(activeConnections, ownerUserId, data, options = {
     let sent = 0;
     activeConnections.forEach((clientSocket, key) => {
         if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
-        if (dashboardUserId(clientSocket) !== owner) return;
+        const uid = dashboardUserId(clientSocket);
+        const role = clientSocket?.authContext?.user?.role;
+        const pages = clientSocket?.authContext?.user?.pages || [];
+        const isAdminViewer = role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'));
+        if (!isAdminViewer && uid !== owner) return;
+
+        // Drop binary under backpressure instead of stalling the event loop.
+        if (options.binary && typeof clientSocket.bufferedAmount === 'number'
+            && clientSocket.bufferedAmount > 1024 * 1024) {
+            return;
+        }
+
         try {
             if (options.binary) {
                 clientSocket.send(data, { binary: true });

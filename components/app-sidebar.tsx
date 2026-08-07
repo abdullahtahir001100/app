@@ -30,7 +30,13 @@ function AppSidebarFallback() {
 function AppSidebarContent() {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [userProfile, setUserProfile] = useState<{name: string; email: string; avatarUrl?: string | null} | null>(null);
+  const [userProfile, setUserProfile] = useState<{
+    name: string;
+    email: string;
+    avatarUrl?: string | null;
+    role?: string;
+    pages?: string[];
+  } | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
   const { isConnected, devices, dispatch, subscribe } = useGateway();
@@ -58,7 +64,9 @@ function AppSidebarContent() {
           setUserProfile({
             name: payload.user.name || "User",
             email: payload.user.email || "",
-            avatarUrl: payload.user.avatarUrl || null
+            avatarUrl: payload.user.avatarUrl || null,
+            role: payload.user.role || "user",
+            pages: Array.isArray(payload.user.pages) ? payload.user.pages : [],
           });
         }
       })
@@ -203,25 +211,33 @@ function AppSidebarContent() {
     router.refresh();
   };
 
-  const userMenuItems = [
-    { icon: Home, label: "Dashboard", href: "/dashboard" },
-    { icon: Smartphone, label: "Devices", href: "/devices" },
-    { icon: Eye, label: "Screen Monitor", href: "/screen" },
-    { icon: Camera, label: "Camera Access", href: "/camera" },
-    { icon: FileText, label: "File Manager", href: "/files" },
-    { icon: TerminalSquare, label: "Shell Control", href: "/shell" },
-    { icon: Bell, label: "Notifications", href: "/notifications" },
-    { icon: History, label: "Activity Logs", href: "/logs" },
-    { icon: ScrollText, label: "Live Console", href: "/console" },
-  ];
+  const can = (page: string) => {
+    if (!userProfile) return page !== "console" && page !== "admin";
+    if (userProfile.role === "admin") return true;
+    return Array.isArray(userProfile.pages) && userProfile.pages.includes(page);
+  };
 
-  // const adminMenuItems = [
-  //   { icon: Shield, label: "Admin Dashboard", href: "/admin" },
-  //   { icon: Smartphone, label: "Devices", href: "/admin/devices" },
-  //   { icon: FileText, label: "Users", href: "/admin/users" },
-  //   { icon: History, label: "System Logs", href: "/admin/logs" },
-  //   { icon: Eye, label: "Security", href: "/admin/security" },
-  // ];
+  const userMenuItems = [
+    { icon: Home, label: "Dashboard", href: "/dashboard", page: "dashboard" },
+    { icon: Smartphone, label: "Devices", href: "/devices", page: "dashboard" },
+    { icon: Eye, label: "Screen Monitor", href: "/screen", page: "screen" },
+    { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
+    { icon: FileText, label: "File Manager", href: "/files", page: "files" },
+    { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
+    { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
+    { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
+    { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
+  ].filter((item) => can(item.page));
+
+  const adminMenuItems = can("admin")
+    ? [
+        { icon: Shield, label: "Admin Dashboard", href: "/admin" },
+        { icon: Smartphone, label: "All Devices", href: "/admin/devices" },
+        { icon: FileText, label: "Users", href: "/admin/users" },
+        { icon: History, label: "Permissions", href: "/admin/permissions" },
+        { icon: Eye, label: "Security", href: "/admin/security" },
+      ]
+    : [];
 
   return (
     <>
@@ -344,23 +360,24 @@ function AppSidebarContent() {
             </nav>
           </div>
 
-          {/* Admin Mode */}
-          {/* <div className="border-t border-sidebar-border pt-8">
-            <p className="text-xs font-mono text-sidebar-foreground/50 uppercase tracking-wide mb-4">Admin Mode</p>
-            <nav className="space-y-2">
-              {adminMenuItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setIsOpen(false)}
-                  className="flex items-center gap-3 px-4 py-3 text-sm rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
-                >
-                  <item.icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </Link>
-              ))}
-            </nav>
-          </div> */}
+          {adminMenuItems.length > 0 && (
+            <div className="border-t border-sidebar-border pt-8">
+              <p className="text-xs font-mono text-sidebar-foreground/50 uppercase tracking-wide mb-4">Admin Mode</p>
+              <nav className="space-y-2">
+                {adminMenuItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsOpen(false)}
+                    className="flex items-center gap-3 px-4 py-3 text-sm rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
+                  >
+                    <item.icon className="w-4 h-4" />
+                    <span>{item.label}</span>
+                  </Link>
+                ))}
+              </nav>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

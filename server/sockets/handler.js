@@ -188,8 +188,11 @@ async function broadcastDeviceList(options = {}) {
         });
 
         for (const [, clientSocket] of dashboardSockets) {
-            const userId = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user?.id : null;
-            const devices = await getDeviceOptions(userId);
+            const user = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user : null;
+            const userId = user?.id || null;
+            const isAdmin = user?.role === 'admin'
+                || (Array.isArray(user?.pages) && user.pages.includes('devices.any'));
+            const devices = await getDeviceOptions(isAdmin ? null : userId);
             const payload = JSON.stringify({
                 type: 'device_list_update',
                 devices
@@ -209,8 +212,9 @@ async function broadcastDeviceList(options = {}) {
 }
 
 /** Instant register ack — live agents only, no Mongo wait. */
-function sendReadyWithLiveDevices(ws, userId) {
-    const live = getLiveDeviceOptions(userId);
+function sendReadyWithLiveDevices(ws, userId, opts = {}) {
+    const seeAll = opts.seeAll === true;
+    const live = getLiveDeviceOptions(seeAll ? null : userId);
     try {
         ws.send(JSON.stringify({
             type: 'sys_ack',
@@ -219,8 +223,7 @@ function sendReadyWithLiveDevices(ws, userId) {
         }));
     } catch (_) {}
 
-    // Enrich from Mongo in background (non-blocking).
-    void getDeviceOptions(userId).then((devices) => {
+    void getDeviceOptions(seeAll ? null : userId).then((devices) => {
         if (ws.readyState !== 1) return;
         try {
             ws.send(JSON.stringify({ type: 'device_list_update', devices }));
@@ -383,6 +386,12 @@ function authorizeSocketAction(ws, targetDeviceId) {
         const userId = String(ws.authContext.user?.id || '');
         if (!userId) return false;
 
+        const role = String(ws.authContext.user?.role || '');
+        const pages = ws.authContext.user?.pages || ws.authContext.pages || [];
+        if (role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'))) {
+            return true;
+        }
+
         const agentSock =
             activeConnections.get(`AGENT_${targetDeviceId}`) ||
             activeConnections.get(`DEVICE_${targetDeviceId}`);
@@ -395,7 +404,6 @@ function authorizeSocketAction(ws, targetDeviceId) {
 
         const cached = ownershipCache.get(userId);
         if (cached && Date.now() - cached.at < 300000 && cached.devices.has(String(targetDeviceId))) {
-            // Device known but not live — allow auth, command will fail offline later.
             return true;
         }
         return false;
@@ -604,7 +612,11 @@ async function handleSocketMessage(ws, message) {
             if (role === 'INSTALL') {
                 ws.send(JSON.stringify({ type: 'sys_ack', status: 'ready', devices: [] }));
             } else {
-                sendReadyWithLiveDevices(ws, userIdForList);
+                const seeAll = ws.authContext?.kind === 'user'
+                    && (ws.authContext.user?.role === 'admin'
+                        || (Array.isArray(ws.authContext.user?.pages)
+                            && ws.authContext.user.pages.includes('devices.any')));
+                sendReadyWithLiveDevices(ws, userIdForList, { seeAll });
             }
             if ((role === 'AGENT' || role === 'DEVICE') && userIdForList) {
                 pushLiveDeviceSnapshot(userIdForList);
@@ -637,7 +649,10 @@ async function handleSocketMessage(ws, message) {
             ws.connectionKey = connectionKey;
 
             const userId = ws.authContext.user?.id || null;
-            sendReadyWithLiveDevices(ws, userId);
+            const seeAll = ws.authContext.user?.role === 'admin'
+                || (Array.isArray(ws.authContext.user?.pages)
+                    && ws.authContext.user.pages.includes('devices.any'));
+            sendReadyWithLiveDevices(ws, userId, { seeAll });
             return;
         }
 

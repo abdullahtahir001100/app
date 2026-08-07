@@ -48,14 +48,25 @@ const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
 const CONNECT_TIMEOUT_SECS: u64 = 45;
 const NETWORK_WAIT_SECS: u64 = 15;
-const MAX_BACKOFF_SECS: u64 = 45;
-const HEARTBEAT_INTERVAL_SECS: u64 = 15;
-const HEARTBEAT_TIMEOUT_SECS: u64 = 120;
+const HEARTBEAT_INTERVAL_SECS: u64 = 25;
+const HEARTBEAT_TIMEOUT_SECS: u64 = 75;
+const MAX_BACKOFF_SECS: u64 = 30;
 const SLEEP_JUMP_SECS: u64 = 90;
 /// Only used for install UI "failed" status — agent keeps reconnecting forever.
 const FINAL_FAIL_AFTER_ATTEMPTS: u32 = 8;
 /// After a stable session, reset backoff so brief blips don't look like hard failure.
 const STABLE_SESSION_SECS: u64 = 45;
+
+fn next_reconnect_backoff(attempt: u32) -> u64 {
+    match attempt {
+        0 | 1 => 1,
+        2 => 2,
+        3 => 5,
+        4 => 10,
+        5 => 20,
+        _ => MAX_BACKOFF_SECS,
+    }
+}
 
 fn report_transient_or_final(config: &AgentConfig, reconnect_attempt: u32, message: &str) {
     if reconnect_attempt + 1 >= FINAL_FAIL_AFTER_ATTEMPTS {
@@ -161,6 +172,7 @@ fn schedule_screen_capture(
     active_index: usize,
     settings: StreamCaptureSettings,
     write_tx: &mpsc::UnboundedSender<Message>,
+    media_tx: &Option<mpsc::UnboundedSender<Vec<u8>>>,
     screen_busy: &Arc<AtomicBool>,
 ) {
     if screen_busy
@@ -171,6 +183,7 @@ fn schedule_screen_capture(
     }
 
     let write_tx = write_tx.clone();
+    let media_tx = media_tx.clone();
     let busy = Arc::clone(screen_busy);
 
     tokio::spawn(async move {
@@ -182,8 +195,15 @@ fn schedule_screen_capture(
             .flatten();
 
         if let Some(jpeg) = jpeg {
-            let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
-            let _ = write_tx.send(Message::Binary(binary));
+            let binary = build_binary_frame(jpeg.clone(), FRAME_SCREEN_STREAM);
+            // Prefer dedicated media WS; fallback to gateway for compatibility.
+            let sent_media = media_tx
+                .as_ref()
+                .map(|tx| tx.send(binary.clone()).is_ok())
+                .unwrap_or(false);
+            if !sent_media {
+                let _ = write_tx.send(Message::Binary(binary));
+            }
         }
 
         busy.store(false, Ordering::Release);
@@ -661,6 +681,9 @@ pub async fn run_network_loop(
                                 eprintln!("--> [NETWORK] Heartbeat send failed. Reconnecting...");
                                 break;
                             }
+                            let _ = write_tx.send(Message::Text(
+                                json!({ "type": "agent_ping" }).to_string(),
+                            ));
                         }
                         msg = read_pipe.next() => {
                             match msg {
@@ -691,6 +714,7 @@ pub async fn run_network_loop(
                                                         state.screen.active_display_index,
                                                         settings,
                                                         &write_tx,
+                                                        &state.screen_media_tx,
                                                         &screen_busy,
                                                     );
                                                 } else if action == "START_AUDIO_STREAM" {
@@ -773,6 +797,7 @@ pub async fn run_network_loop(
                                 state.screen.active_display_index,
                                 settings,
                                 &write_tx,
+                                &state.screen_media_tx,
                                 &screen_busy,
                             );
                         }
@@ -792,7 +817,14 @@ pub async fn run_network_loop(
                             if let Some(frame) = capture_stream_frame(&state.camera) {
                                 state.camera.capture_fail_streak = 0;
                                 let binary = build_binary_frame(frame.payload, frame.kind);
-                                let _ = write_tx.send(Message::Binary(binary));
+                                let sent_media = state
+                                    .camera_media_tx
+                                    .as_ref()
+                                    .map(|tx| tx.send(binary.clone()).is_ok())
+                                    .unwrap_or(false);
+                                if !sent_media {
+                                    let _ = write_tx.send(Message::Binary(binary));
+                                }
                             } else if state.camera.handle_capture_failure() {
                                 state.camera.try_complete_release();
                                 let notice = build_camera_blocked_notice(&state.camera);
@@ -838,9 +870,7 @@ pub async fn run_network_loop(
                 }
 
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
-                let backoff = (3_u64)
-                    .saturating_mul(2_u64.saturating_pow(reconnect_attempt.min(5)))
-                    .min(MAX_BACKOFF_SECS);
+                let backoff = next_reconnect_backoff(reconnect_attempt);
                 connection_status::log(format!("Retrying in {} seconds...", backoff));
                 sleep(Duration::from_secs(backoff)).await;
             }

@@ -29,7 +29,9 @@ import {
   Upload,
   Camera,
   Film,
-  Monitor,
+  Maximize2,
+  Minimize2,
+  Info,
 } from "lucide-react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
@@ -89,6 +91,9 @@ export function FileManager() {
   const [cloudMkdirOpen, setCloudMkdirOpen] = useState(false);
   const [cloudMkdirName, setCloudMkdirName] = useState("");
   const [cloudMkdirParent, setCloudMkdirParent] = useState("/");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [metaDialogOpen, setMetaDialogOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const deviceOption = agent.devices.find((d) => d.value === agent.selectedDevice) || null;
   const driveRoots = useMemo(
@@ -251,6 +256,33 @@ export function FileManager() {
     }
   }, [openDialog]);
 
+  const toggleFullscreen = useCallback(async () => {
+    const el = rootRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen();
+        setIsFullscreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch {
+      toast.error("Fullscreen not available");
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  const openMetadataPopup = useCallback(async () => {
+    await agent.loadMetadata();
+    setMetaDialogOpen(true);
+  }, [agent]);
+
   const handleOpenEntry = useCallback((entry: FileEntry) => {
     const a = agentRef.current;
     if (a.browseSurface !== "local") {
@@ -304,7 +336,7 @@ export function FileManager() {
   }
 
   return (
-    <div className="flex h-screen bg-background">
+    <div ref={rootRef} className="flex h-screen bg-background">
       <AppSidebar />
       <Toaster richColors position="top-right" />
 
@@ -318,10 +350,16 @@ export function FileManager() {
                 Live filesystem on Rust agent PC • secured user folders
               </p>
             </div>
-            <Badge variant={agent.isConnected ? "default" : "destructive"} className="gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${agent.isConnected ? "bg-emerald-400" : "bg-rose-400"}`} />
-              {agent.isConnected ? "Agent online" : "Offline"}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => void toggleFullscreen()} title="Fullscreen">
+                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                <span className="ml-1.5 hidden sm:inline">{isFullscreen ? "Exit" : "Fullscreen"}</span>
+              </Button>
+              <Badge variant={agent.isConnected ? "default" : "destructive"} className="gap-1.5">
+                <span className={`h-2 w-2 rounded-full ${agent.isConnected ? "bg-emerald-400" : "bg-rose-400"}`} />
+                {agent.isConnected ? "Agent online" : "Offline"}
+              </Badge>
+            </div>
           </div>
         </div>
 
@@ -836,7 +874,16 @@ export function FileManager() {
                       <p className="text-muted-foreground">Type</p>
                       <p className="capitalize">{agent.selectedEntry.kind}</p>
                     </div>
+                    <div className="col-span-2">
+                      <p className="text-muted-foreground">Modified</p>
+                      <p>{agent.selectedEntry.modified || "—"}</p>
+                    </div>
                   </div>
+                  {agent.browseSurface === "local" && (
+                    <Button size="sm" variant="secondary" className="h-7 text-xs w-full" onClick={() => void openMetadataPopup()}>
+                      <Info className="h-3 w-3 mr-1" /> Properties / full metadata
+                    </Button>
+                  )}
                   {agent.browseSurface !== "local" && selectedCloudItem && (
                     <>
                       <div className="text-xs">
@@ -877,8 +924,8 @@ export function FileManager() {
                   {agent.browseSurface === "local" && (
                   <>
                   <div className="flex flex-wrap gap-1">
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void agent.loadMetadata()}>
-                      Load meta
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void openMetadataPopup()}>
+                      <Info className="h-3 w-3 mr-1" /> Properties
                     </Button>
                     <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openDialog("copy", agent.currentPath)}>
                       <Copy className="h-3 w-3 mr-1" /> Copy
@@ -1018,6 +1065,53 @@ export function FileManager() {
           }
         }}
       />
+
+      <Dialog open={metaDialogOpen} onOpenChange={setMetaDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>File properties</DialogTitle>
+            <DialogDescription>
+              Complete metadata from the agent filesystem
+            </DialogDescription>
+          </DialogHeader>
+          {agent.lastMetadata ? (
+            <div className="space-y-2 text-sm">
+              {[
+                ["Name", agent.lastMetadata.name],
+                ["Path", agent.lastMetadata.path],
+                ["Size", agent.lastMetadata.sizeLabel || agent.lastMetadata.size],
+                ["Extension", agent.lastMetadata.extension],
+                ["Created", agent.lastMetadata.created],
+                ["Modified", agent.lastMetadata.modified],
+                ["Accessed", agent.lastMetadata.accessed],
+                ["Owner", agent.lastMetadata.owner],
+                ["Read-only", String(agent.lastMetadata.readonly)],
+                ["Hidden", String(agent.lastMetadata.hidden)],
+                ["System", String(agent.lastMetadata.system)],
+                ["Category", agent.lastMetadata.category],
+                [
+                  "Tags",
+                  Array.isArray(agent.lastMetadata.tags)
+                    ? (agent.lastMetadata.tags as string[]).join(", ")
+                    : agent.lastMetadata.tags,
+                ],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="grid grid-cols-[110px_1fr] gap-2 border-b border-border/60 py-1.5">
+                  <span className="text-muted-foreground text-xs">{label}</span>
+                  <span className="break-all font-mono text-xs">{value == null || value === "" ? "—" : String(value)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No metadata loaded yet.</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMetaDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

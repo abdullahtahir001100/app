@@ -167,7 +167,8 @@ router.get('/session', attachUser, async (req, res) => {
             id: payload.sub,
             email: payload.email,
             name: payload.name,
-            role: payload.role,
+            role: payload.role || user?.role || 'user',
+            pages: req.user?.pages || [],
             avatarUrl: user?.avatarUrl || payload?.avatarUrl || null,
             pairingToken: user?.pairingToken || null,
             pairingUserId: user?.pairingUserId || null

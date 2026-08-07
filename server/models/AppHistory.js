@@ -46,6 +46,7 @@ const AppHistorySchema = new mongoose.Schema({
 });
 
 AppHistorySchema.index({ deviceId: 1, lastOpened: -1 });
+AppHistorySchema.index({ userId: 1, deviceId: 1, lastOpened: -1 });
 AppHistorySchema.index({ appType: 1, lastOpened: -1 });
 AppHistorySchema.index({
     deviceId: 1,

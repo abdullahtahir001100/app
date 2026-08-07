@@ -78,6 +78,7 @@ export default function ScreenPage() {
     mapPointerToRemote,
   } = useScreenRemote({
     selectedDeviceRef,
+    mediaDeviceId: selectedDevice || undefined,
     subscribe: (listener) =>
       subscribe((event) => {
         if (event.type === "binary") listener({ type: "binary", data: event.data });

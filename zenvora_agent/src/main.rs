@@ -69,15 +69,29 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
     ));
     let mut agent_state = agent::AgentState::new();
 
-    // Always-on Raw TCP control plane (events/heartbeats/incremental sync).
+    // Always-on control plane (WS-first ZV framing).
     let control_config = config.clone();
     let control_stop = stop_flag.clone();
     tokio::spawn(async move {
         control_channel::run_control_loop(control_config, control_stop).await;
     });
 
-    // Media / command WebSocket (screen, camera, files, shell) — kept for now;
-    // heavy streams should only run while the matching dashboard page is open.
+    // Dedicated media channels — keep heavy frames off /ws/gateway.
+    let media_config = Arc::new(config.clone());
+    let screen_media = media_channels::spawn_media_channel(
+        Arc::clone(&media_config),
+        "screen".to_string(),
+        stop_flag.clone(),
+    );
+    let camera_media = media_channels::spawn_media_channel(
+        Arc::clone(&media_config),
+        "camera".to_string(),
+        stop_flag.clone(),
+    );
+    agent_state.screen_media_tx = Some(screen_media.tx);
+    agent_state.camera_media_tx = Some(camera_media.tx);
+
+    // Media / command WebSocket (shell, files, light telemetry).
     network::run_network_loop(&mut agent_state, &mut config, stop_flag).await;
 }
 

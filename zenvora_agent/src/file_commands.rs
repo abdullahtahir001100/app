@@ -325,27 +325,87 @@ fn entry_to_json(path: &Path, meta: &FileMetaEntry) -> Value {
         .as_ref()
         .map(|m| m.permissions().readonly())
         .unwrap_or(false);
+    let is_dir = meta_fs.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+    let is_file = meta_fs.as_ref().map(|m| m.is_file()).unwrap_or(false);
+    let size = meta_fs.as_ref().map(|m| m.len()).unwrap_or(0);
     let modified = meta_fs
+        .as_ref()
         .and_then(|m| m.modified().ok())
-        .map(format_system_time)
+        .map(format_system_time_iso)
         .unwrap_or_else(|| "unknown".into());
+    let created = meta_fs
+        .as_ref()
+        .and_then(|m| m.created().ok())
+        .map(format_system_time_iso)
+        .unwrap_or_else(|| "unknown".into());
+    let accessed = meta_fs
+        .as_ref()
+        .and_then(|m| m.accessed().ok())
+        .map(format_system_time_iso)
+        .unwrap_or_else(|| "unknown".into());
+
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    #[cfg(windows)]
+    let (hidden, system) = windows_file_attrs(path);
+    #[cfg(not(windows))]
+    let (hidden, system) = (false, false);
 
     json!({
         "path": path_to_forward_slash(path),
+        "name": name,
+        "extension": extension,
+        "size": size,
+        "sizeLabel": format_size(size),
+        "isDir": is_dir,
+        "isFile": is_file,
         "tags": meta.tags,
         "category": meta.category,
         "versions": meta.versions,
         "readonly": readonly,
+        "hidden": hidden,
+        "system": system,
         "modified": modified,
+        "created": created,
+        "accessed": accessed,
+        "owner": whoami::username(),
     })
 }
 
-fn format_system_time(time: SystemTime) -> String {
+fn format_system_time_iso(time: SystemTime) -> String {
     use std::time::UNIX_EPOCH;
     let Ok(duration) = time.duration_since(UNIX_EPOCH) else {
         return "unknown".into();
     };
-    format!("{}", duration.as_secs())
+    // Unix seconds as ISO-ish string (Win7-safe, no chrono dependency needed here)
+    let secs = duration.as_secs() as i64;
+    format!("{secs}")
+}
+
+#[cfg(windows)]
+fn windows_file_attrs(path: &Path) -> (bool, bool) {
+    use std::os::windows::fs::MetadataExt;
+    if let Ok(meta) = fs::metadata(path) {
+        let attrs = meta.file_attributes();
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+        return (
+            (attrs & FILE_ATTRIBUTE_HIDDEN) != 0,
+            (attrs & FILE_ATTRIBUTE_SYSTEM) != 0,
+        );
+    }
+    (false, false)
+}
+
+fn format_system_time(time: SystemTime) -> String {
+    format_system_time_iso(time)
 }
 
 fn format_size(bytes: u64) -> String {

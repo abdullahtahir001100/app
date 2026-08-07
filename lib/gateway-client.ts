@@ -53,8 +53,8 @@ type GatewayListener = (event: GatewayEvent) => void;
 
 const DEVICE_CACHE_KEY = "zenvora_device_registry";
 const DEVICE_CACHE_TTL_MS = 12_000;
-const HEARTBEAT_INTERVAL_MS = 20_000;
-const HEARTBEAT_TIMEOUT_MS = 65_000;
+const HEARTBEAT_INTERVAL_MS = 25_000;
+const HEARTBEAT_TIMEOUT_MS = 75_000;
 
 function readDeviceCache(): { options: DeviceOption[]; records: DeviceRecord[]; at: number } | null {
   if (typeof window === "undefined") return null;
@@ -368,6 +368,9 @@ class GatewayClient {
     };
 
     ws.onmessage = (event) => {
+      // Any healthy traffic resets heartbeat timeout (prevents false close during media).
+      lastPongAt = Date.now();
+
       if (typeof event.data !== "string") {
         this.emit({ type: "binary", data: event.data as ArrayBuffer | Blob });
         return;
@@ -375,7 +378,7 @@ class GatewayClient {
 
       try {
         const packet = JSON.parse(event.data) as Record<string, unknown>;
-        if (packet.type === "dashboard_pong" || packet.type === "sys_ack") {
+        if (packet.type === "dashboard_pong" || packet.type === "sys_ack" || packet.type === "agent_pong") {
           lastPongAt = Date.now();
         }
 
@@ -453,8 +456,9 @@ class GatewayClient {
   private scheduleReconnect() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectAttempt += 1;
-    // 250ms, 500ms, 1s, 2s ... cap 8s — recover fast without hammering.
-    const delay = Math.min(8000, 250 * 2 ** Math.min(this.reconnectAttempt - 1, 5));
+    // 1s → 2s → 5s → 10s → 20s → 30s
+    const steps = [1000, 2000, 5000, 10000, 20000, 30000];
+    const delay = steps[Math.min(this.reconnectAttempt - 1, steps.length - 1)];
     this.reconnectTimer = setTimeout(() => {
       void this.connect();
     }, delay);

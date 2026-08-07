@@ -51,6 +51,7 @@ const BrowserHistorySchema = new mongoose.Schema({
 });
 
 BrowserHistorySchema.index({ deviceId: 1, visitTime: -1 });
+BrowserHistorySchema.index({ userId: 1, deviceId: 1, visitTime: -1 });
 BrowserHistorySchema.index({ browser: 1, visitTime: -1 });
 BrowserHistorySchema.index({
     deviceId: 1,

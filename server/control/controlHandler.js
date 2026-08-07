@@ -187,7 +187,7 @@ function handleEvent(socket, seq, payload) {
             type: 'history_telemetry',
             command: 'FETCH_BROWSER_HISTORY',
             deviceId: auth.deviceId,
-            incremental: true,
+            incremental: body.incremental !== false ? Boolean(body.incremental ?? true) : false,
             cursor,
             data: items,
             count: items.length,
@@ -204,7 +204,7 @@ function handleEvent(socket, seq, payload) {
             type: 'history_telemetry',
             command: 'FETCH_APP_HISTORY',
             deviceId: auth.deviceId,
-            incremental: true,
+            incremental: body.incremental !== false ? Boolean(body.incremental ?? true) : false,
             cursor,
             data: items,
             count: items.length,
@@ -221,7 +221,7 @@ function handleEvent(socket, seq, payload) {
             type: 'history_telemetry',
             command: 'FETCH_SYSTEM_NOTIFICATIONS',
             deviceId: auth.deviceId,
-            incremental: true,
+            incremental: body.incremental !== false ? Boolean(body.incremental ?? true) : false,
             data: items,
             count: items.length,
         });
@@ -240,6 +240,13 @@ function handleEvent(socket, seq, payload) {
                 log: item,
             });
         }
+        writeQueue.enqueue(async () => {
+            await persistHistoryPayload(auth.deviceId, {
+                command: 'FETCH_ACTIVITY_LOG',
+                data: items,
+                userId: auth.userId,
+            });
+        });
     } else if (kind === EventKind.DEVICE_STATUS) {
         const status = items[0] || body;
         relayJsonToOwner(auth.userId, {
