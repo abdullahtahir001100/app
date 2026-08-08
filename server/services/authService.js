@@ -370,6 +370,10 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
         },
         { upsert: true, new: true }
     );
+    await Device.deleteMany({
+        deviceId: cleanDeviceId,
+        userId: { $ne: userId },
+    }).catch(() => {});
 
     return { credential: doc, agentToken };
 }
@@ -461,6 +465,10 @@ async function pairAgent(body) {
         },
         { upsert: true, new: true }
     );
+    await Device.deleteMany({
+        deviceId,
+        userId: { $ne: user._id },
+    }).catch(() => {});
 
     return {
         agentToken,

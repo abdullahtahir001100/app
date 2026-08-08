@@ -119,7 +119,7 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
     }
 });
 
-router.post('/heartbeat', attachUser, requireUserIdOwnership, async (req, res) => {
+router.post('/heartbeat', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, localIp, clientPort, platform } = req.body;
         const publicIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
@@ -127,10 +127,16 @@ router.post('/heartbeat', attachUser, requireUserIdOwnership, async (req, res) =
         if (!deviceId || !localIp) return res.status(400).json({ success: false });
 
         const updatedDevice = await Device.findOneAndUpdate(
-            { userId: req.user.id, deviceId },
+            { deviceId },
             {
-                platform, localIp, publicIp, clientPort,
-                status: 'online', lastSeen: new Date()
+                $set: {
+                    platform, localIp, publicIp, clientPort,
+                    status: 'online', lastSeen: new Date(),
+                },
+                $setOnInsert: {
+                    userId: req.user.id,
+                    deviceId,
+                },
             },
             { new: true, upsert: true }
         );

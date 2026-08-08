@@ -54,7 +54,8 @@ export default function AdminUsersPage() {
       try {
         const session = await fetch("/api/auth/session", { credentials: "include" });
         const sessionData = await session.json().catch(() => ({}));
-        if (!session.ok || sessionData?.user?.role !== "admin") {
+        const canAdmin = sessionData?.user?.role === "admin" || (Array.isArray(sessionData?.user?.pages) && sessionData.user.pages.includes("admin"));
+      if (!session.ok || !canAdmin) {
           router.replace("/dashboard");
           return;
         }

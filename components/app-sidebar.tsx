@@ -9,6 +9,7 @@ import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 
 import Link from "next/link";
+import { clearDeviceRegistryCache, gatewayClient } from "@/lib/gateway-client";
 
 function AppSidebarFallback() {
   return (
@@ -200,7 +201,8 @@ function AppSidebarContent() {
     }
 
     try {
-      sessionStorage.removeItem("zenvora_device_registry");
+      clearDeviceRegistryCache();
+      gatewayClient.clearCachedDevices();
       sessionStorage.removeItem("zenvora_camera_streaming");
       sessionStorage.removeItem("zenvora_screen_streaming");
     } catch {

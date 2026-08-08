@@ -16,7 +16,7 @@ const {
     serviceErrorResponse
 } = require('../services/virtualFileService');
 
-const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
 
 const router = express.Router();
 const upload = multer({
@@ -24,7 +24,7 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-router.get('/trash', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/trash', attachUser, requirePagePermission('files'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await listTrashItems(req);
         return res.status(200).json(payload);
@@ -34,7 +34,7 @@ router.get('/trash', attachUser, requireUserIdOwnership, requireDeviceAccess, as
     }
 });
 
-router.get('/browse', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/browse', attachUser, requirePagePermission('files'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await browseVirtualFolder(req);
         return res.status(200).json(payload);
@@ -45,7 +45,7 @@ router.get('/browse', attachUser, requireUserIdOwnership, requireDeviceAccess, a
     }
 });
 
-router.get('/folders', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/folders', attachUser, requirePagePermission('files'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await listVirtualFolders(req);
         return res.status(200).json(payload);
@@ -58,7 +58,7 @@ router.get('/folders', attachUser, requireUserIdOwnership, requireDeviceAccess, 
     }
 });
 
-router.get('/list', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/list', attachUser, requirePagePermission('files'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await browseVirtualFolder(req);
         return res.status(200).json(payload);
@@ -68,7 +68,7 @@ router.get('/list', attachUser, requireUserIdOwnership, requireDeviceAccess, asy
     }
 });
 
-router.post('/folders', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/folders', attachUser, requirePagePermission('files'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await createVirtualFolder(req);
         return res.status(200).json(payload);
@@ -78,7 +78,7 @@ router.post('/folders', attachUser, requireUserIdOwnership, requireDeviceAccess,
     }
 });
 
-router.post('/upload', attachUser, requireUserIdOwnership, requireDeviceAccess, upload.single('file'), async (req, res) => {
+router.post('/upload', attachUser, requirePagePermission('files'), requireUserIdOwnership, requireDeviceAccess, upload.single('file'), async (req, res) => {
     try {
         const payload = await uploadVirtualFile(req, req.file);
         return res.status(200).json(payload);
@@ -89,7 +89,7 @@ router.post('/upload', attachUser, requireUserIdOwnership, requireDeviceAccess, 
     }
 });
 
-router.patch('/:id/rename', attachUser, requireUserIdOwnership, async (req, res) => {
+router.patch('/:id/rename', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await renameVirtualFile(req, req.params.id, req.body || {});
         return res.status(200).json(payload);
@@ -99,7 +99,7 @@ router.patch('/:id/rename', attachUser, requireUserIdOwnership, async (req, res)
     }
 });
 
-router.patch('/:id/move', attachUser, requireUserIdOwnership, async (req, res) => {
+router.patch('/:id/move', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await moveVirtualFile(req, req.params.id, req.body || {});
         return res.status(200).json(payload);
@@ -109,7 +109,7 @@ router.patch('/:id/move', attachUser, requireUserIdOwnership, async (req, res) =
     }
 });
 
-router.post('/:id/share', attachUser, requireUserIdOwnership, async (req, res) => {
+router.post('/:id/share', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await shareVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
@@ -120,7 +120,7 @@ router.post('/:id/share', attachUser, requireUserIdOwnership, async (req, res) =
     }
 });
 
-router.delete('/folders/:id', attachUser, requireUserIdOwnership, async (req, res) => {
+router.delete('/folders/:id', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await deleteVirtualFolder(req, req.params.id);
         return res.status(200).json(payload);
@@ -130,7 +130,7 @@ router.delete('/folders/:id', attachUser, requireUserIdOwnership, async (req, re
     }
 });
 
-router.post('/:id/restore', attachUser, requireUserIdOwnership, async (req, res) => {
+router.post('/:id/restore', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await restoreVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
@@ -140,7 +140,7 @@ router.post('/:id/restore', attachUser, requireUserIdOwnership, async (req, res)
     }
 });
 
-router.delete('/:id/permanent', attachUser, requireUserIdOwnership, async (req, res) => {
+router.delete('/:id/permanent', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await purgeVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
@@ -150,7 +150,7 @@ router.delete('/:id/permanent', attachUser, requireUserIdOwnership, async (req, 
     }
 });
 
-router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
+router.delete('/:id', attachUser, requirePagePermission('files'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await deleteVirtualFile(req, req.params.id);
         return res.status(200).json(payload);

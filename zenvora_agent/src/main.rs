@@ -77,6 +77,7 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
     });
 
     // Dedicated media channels — keep heavy frames off /ws/gateway.
+    media_channels::init_media_transport_from_env();
     let media_config = Arc::new(config.clone());
     let screen_media = media_channels::spawn_media_channel(
         Arc::clone(&media_config),

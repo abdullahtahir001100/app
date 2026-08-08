@@ -16,10 +16,13 @@ pub fn is_history_action(action: &str) -> bool {
 }
 
 pub fn is_agent_control_action(action: &str) -> bool {
-    matches!(action, "RESTART_AGENT" | "RESTART_SERVICE")
+    matches!(
+        action,
+        "RESTART_AGENT" | "RESTART_SERVICE" | "SET_PREFERRED_MEDIA_TRANSPORT"
+    )
 }
 
-pub fn handle_agent_control_command(action: &str) -> Option<CommandResponse> {
+pub fn handle_agent_control_command(action: &str, payload: &serde_json::Value) -> Option<CommandResponse> {
     match action {
         "RESTART_AGENT" | "RESTART_SERVICE" => {
             // Respond first, then restart shortly so the ACK can leave the socket.
@@ -35,6 +38,28 @@ pub fn handle_agent_control_command(action: &str) -> Option<CommandResponse> {
                     "status": "success",
                     "action": action,
                     "message": "Agent restart scheduled."
+                }),
+                frame: None,
+                frame_kind: 0,
+            })
+        }
+        "SET_PREFERRED_MEDIA_TRANSPORT" => {
+            let transport = payload
+                .get("transport")
+                .or_else(|| payload.get("preferredMediaTransport"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("wss");
+            crate::media_channels::set_preferred_media_transport(transport);
+            Some(CommandResponse {
+                json: serde_json::json!({
+                    "type": "sys_ack",
+                    "status": "success",
+                    "action": action,
+                    "preferredMediaTransport": crate::media_channels::preferred_media_transport(),
+                    "message": format!(
+                        "Media transport set to {} (manual only — no auto-failover).",
+                        crate::media_channels::preferred_media_transport()
+                    )
                 }),
                 frame: None,
                 frame_kind: 0,
@@ -89,7 +114,7 @@ pub fn is_audio_action(action: &str) -> bool {
 
 pub fn dispatch_command(packet: IncomingPacket, agent: &mut AgentState) -> Option<CommandResponse> {
     if is_agent_control_action(&packet.action) {
-        handle_agent_control_command(&packet.action)
+        handle_agent_control_command(&packet.action, &packet.payload)
     } else if is_history_action(&packet.action) {
         handle_history_command(&packet.action)
     } else if is_shell_action(&packet.action) {

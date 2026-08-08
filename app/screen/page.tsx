@@ -25,6 +25,11 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Select from "react-select";
+import {
+  dispatchMediaTransportPreference,
+  getPreferredMediaTransport,
+  type MediaTransport,
+} from "@/lib/media-transport";
 
 type StreamQuality = "low" | "medium" | "high" | "ultra";
 
@@ -87,6 +92,7 @@ export default function ScreenPage() {
   });
 
   const [commandStatus, setCommandStatus] = useState("Connecting...");
+  const [mediaTransport, setMediaTransport] = useState<MediaTransport>("wss");
   const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
   const canControl = isConnected && agentOnline;
   const [isStreaming, setIsStreaming] = useState(false);
@@ -109,6 +115,23 @@ export default function ScreenPage() {
   useEffect(() => {
     streamQualityRef.current = streamQuality;
   }, [streamQuality]);
+
+  useEffect(() => {
+    setMediaTransport(getPreferredMediaTransport());
+  }, []);
+
+  const switchMediaTransport = useCallback(
+    (next: MediaTransport) => {
+      setMediaTransport(next);
+      const ok = dispatchMediaTransportPreference(gatewayDispatch, next, selectedDevice);
+      setCommandStatus(
+        ok
+          ? `Switched media transport to ${next.toUpperCase()} (manual). Restart stream if needed.`
+          : `Saved ${next.toUpperCase()} preference — agent offline / not pushed.`
+      );
+    },
+    [gatewayDispatch, selectedDevice]
+  );
 
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
@@ -174,9 +197,7 @@ export default function ScreenPage() {
         setCommandStatus(
           result.reason === "offline"
             ? "Gateway disconnected — reconnecting..."
-            : result.reason === "agent-offline"
-              ? "Agent offline — start zenvora_agent on the PC."
-              : "No live agent found."
+            : "No live agent found."
         );
         if (result.reason === "offline") ensureConnected();
         return false;
@@ -507,7 +528,20 @@ export default function ScreenPage() {
             </Button>
           </div>
 
-          <p className="mt-2 text-xs text-muted-foreground font-mono truncate">{commandStatus}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <p className="text-xs text-muted-foreground font-mono truncate flex-1 min-w-[12rem]">{commandStatus}</p>
+            {(!hasLiveFrame || !agentOnline || commandStatus.toLowerCase().includes("fail") || commandStatus.toLowerCase().includes("offline") || commandStatus.toLowerCase().includes("ticket")) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0 text-xs"
+                onClick={() => switchMediaTransport(mediaTransport === "wss" ? "tcp" : "wss")}
+                disabled={!selectedDevice}
+              >
+                Switch to {mediaTransport === "wss" ? "TCP" : "WSS"}
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-1 min-h-0 p-4 lg:p-6 gap-4 lg:gap-6">

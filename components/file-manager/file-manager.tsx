@@ -94,7 +94,7 @@ export function FileManager() {
   const [cloudMkdirParent, setCloudMkdirParent] = useState("/");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [metaDialogOpen, setMetaDialogOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const mainPanelRef = useRef<HTMLElement>(null);
 
   const deviceOption = agent.devices.find((d) => d.value === agent.selectedDevice) || null;
   const driveRoots = useMemo(
@@ -257,26 +257,9 @@ export function FileManager() {
     }
   }, [openDialog]);
 
-  const toggleFullscreen = useCallback(async () => {
-    const el = rootRef.current;
-    if (!el) return;
-    try {
-      if (!document.fullscreenElement) {
-        await el.requestFullscreen();
-        setIsFullscreen(true);
-      } else {
-        await document.exitFullscreen();
-        setIsFullscreen(false);
-      }
-    } catch {
-      toast.error("Fullscreen not available");
-    }
-  }, []);
-
-  useEffect(() => {
-    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+  const toggleFullscreen = useCallback(() => {
+    // Expand content panel only — keep AppSidebar mounted and visible.
+    setIsFullscreen((v) => !v);
   }, []);
 
   const openMetadataPopup = useCallback(async () => {
@@ -337,11 +320,18 @@ export function FileManager() {
   }
 
   return (
-    <div ref={rootRef} className="flex h-screen bg-background">
+    <div className="flex h-screen bg-background">
       <AppSidebar />
       <Toaster richColors position="top-right" />
 
-      <main className="flex flex-1 flex-col lg:ml-64 min-h-0">
+      <main
+        ref={mainPanelRef}
+        className={`flex flex-1 flex-col min-h-0 bg-background ${
+          isFullscreen
+            ? "fixed inset-0 z-30 lg:left-64"
+            : "lg:ml-64"
+        }`}
+      >
         {/* Header */}
         <div className="border-b border-border px-4 py-4 lg:px-6 shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -582,7 +572,11 @@ export function FileManager() {
                         <button
                           key={root.path}
                           type="button"
-                          onClick={() => agent.navigateTo(root.path)}
+                          onClick={() => {
+                            if (agent.loading) return;
+                            agent.navigateTo(root.path);
+                          }}
+                          disabled={agent.loading}
                           className={`w-full text-left rounded-md px-2.5 py-2 text-sm transition-colors ${
                             pathsEqual(agent.currentPath, root.path)
                               ? "bg-accent text-accent-foreground font-medium"
@@ -605,7 +599,11 @@ export function FileManager() {
                       <button
                         key={root.path}
                         type="button"
-                        onClick={() => agent.navigateTo(root.path)}
+                        onClick={() => {
+                          if (agent.loading) return;
+                          agent.navigateTo(root.path);
+                        }}
+                        disabled={agent.loading}
                         className={`w-full text-left rounded-md px-2.5 py-2 text-sm transition-colors ${
                           pathsEqual(agent.currentPath, root.path)
                             ? "bg-accent text-accent-foreground font-medium"

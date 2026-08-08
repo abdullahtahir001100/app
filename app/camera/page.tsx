@@ -12,6 +12,12 @@ import { useGateway } from "@/hooks/use-gateway";
 import { gatewayClient } from "@/lib/gateway-client";
 import type { DeviceOption } from "@/lib/gateway-client";
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
+import { MediaGatewayClient } from "@/lib/media-gateway-client";
+import {
+  dispatchMediaTransportPreference,
+  getPreferredMediaTransport,
+  type MediaTransport,
+} from "@/lib/media-transport";
 
 function b64ToBlob(b64: string, mimeType: string): Blob {
   const binary = atob(b64);
@@ -57,6 +63,7 @@ export default function CameraPage() {
   const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
   const canControl = isConnected && agentOnline;
   const [commandStatus, setCommandStatus] = useState("Waiting for live agent...");
+  const [mediaTransport, setMediaTransport] = useState<MediaTransport>("wss");
   const selectedDeviceRef = useRef("");
   const activeCameraRef = useRef("");
   const deviceOptionsRef = useRef<DeviceOption[]>([]);
@@ -115,6 +122,10 @@ export default function CameraPage() {
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
   }, [selectedDevice]);
+
+  useEffect(() => {
+    setMediaTransport(getPreferredMediaTransport());
+  }, []);
 
   useEffect(() => {
     activeCameraRef.current = activeCamera;
@@ -387,6 +398,25 @@ export default function CameraPage() {
   // ========================================================
   const processBinaryRef = useRef(processBinaryPayload);
   processBinaryRef.current = processBinaryPayload;
+
+  useEffect(() => {
+    const deviceId = selectedDevice || "";
+    if (!deviceId || !isCameraOn) return;
+    const client = new MediaGatewayClient();
+    const unsub = client.subscribe((data) => {
+      void processBinaryRef.current(data).catch((err) => {
+        console.error("Media WS frame decode failed:", err);
+        setCommandStatus("Media frame received but decode failed.");
+      });
+    });
+    void client.connect(deviceId, "camera").catch(() => {
+      setCommandStatus("Media ticket failed — check /api/auth/ws-ticket and /ws/media.");
+    });
+    return () => {
+      unsub();
+      client.disconnect();
+    };
+  }, [selectedDevice, isCameraOn]);
 
   useEffect(() => {
     return subscribe((event) => {
@@ -892,8 +922,28 @@ export default function CameraPage() {
             </div>
           </div>
 
-          <div className="mb-8 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-            {commandStatus}
+          <div className="mb-8 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground flex flex-wrap items-center gap-3">
+            <span className="flex-1 min-w-[12rem]">{commandStatus}</span>
+            {(!hasLiveFrame || !agentOnline || commandStatus.toLowerCase().includes("fail") || commandStatus.toLowerCase().includes("offline") || commandStatus.toLowerCase().includes("ticket")) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0 text-xs"
+                disabled={!selectedDevice}
+                onClick={() => {
+                  const next: MediaTransport = mediaTransport === "wss" ? "tcp" : "wss";
+                  setMediaTransport(next);
+                  const ok = dispatchMediaTransportPreference(gatewayDispatch, next, selectedDevice);
+                  setCommandStatus(
+                    ok
+                      ? `Switched media transport to ${next.toUpperCase()} (manual).`
+                      : `Saved ${next.toUpperCase()} preference — agent offline / not pushed.`
+                  );
+                }}
+              >
+                Switch to {mediaTransport === "wss" ? "TCP" : "WSS"}
+              </Button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mb-8">

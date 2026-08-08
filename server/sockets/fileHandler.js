@@ -35,12 +35,21 @@ const FILE_ACTION_TOKENS = [
 
 const fileOpWaiters = [];
 
+function removeFileOpWaiter(requestId) {
+    const idx = fileOpWaiters.findIndex((w) => w.requestId === requestId);
+    if (idx < 0) return null;
+    const waiter = fileOpWaiters.splice(idx, 1)[0];
+    if (waiter.timer) clearTimeout(waiter.timer);
+    return waiter;
+}
+
 function waitForFileOp(requestId, timeoutMs = 20000) {
     return new Promise((resolve, reject) => {
-        const entry = { requestId, resolve, reject, timer: null };
+        const entry = { requestId, resolve, reject, timer: null, settled: false };
         entry.timer = setTimeout(() => {
-            const idx = fileOpWaiters.findIndex((w) => w.requestId === requestId);
-            if (idx >= 0) fileOpWaiters.splice(idx, 1);
+            if (entry.settled) return;
+            entry.settled = true;
+            removeFileOpWaiter(requestId);
             reject(new Error('Timed out waiting for agent file response'));
         }, timeoutMs);
         fileOpWaiters.push(entry);
@@ -52,12 +61,17 @@ function resolveFileOpWaiters(packet) {
     const requestId = fileResult.request_id || packet.request_id;
     if (!requestId) return;
 
-    const idx = fileOpWaiters.findIndex((w) => w.requestId === requestId);
-    if (idx < 0) return;
-
-    const waiter = fileOpWaiters.splice(idx, 1)[0];
-    clearTimeout(waiter.timer);
+    const waiter = removeFileOpWaiter(requestId);
+    if (!waiter || waiter.settled) return;
+    waiter.settled = true;
     waiter.resolve(packet);
+}
+
+function rejectFileOpWaiter(requestId, error) {
+    const waiter = removeFileOpWaiter(requestId);
+    if (!waiter || waiter.settled) return;
+    waiter.settled = true;
+    waiter.reject(error instanceof Error ? error : new Error(String(error || 'File operation failed')));
 }
 
 function getAgentSocket(targetDeviceId, activeConnections) {
@@ -89,7 +103,14 @@ function execFileCommand(action, targetDeviceId, payload = {}) {
     const outboundPayload = { ...payload, _requestId: requestId };
 
     const waitPromise = waitForFileOp(requestId);
-    forwardFileCommandToAgent(action, targetDeviceId, outboundPayload, activeConnections);
+    // Prevent unhandledRejection if caller forgets .catch — still surface via returned promise.
+    waitPromise.catch(() => {});
+    try {
+        forwardFileCommandToAgent(action, targetDeviceId, outboundPayload, activeConnections);
+    } catch (error) {
+        rejectFileOpWaiter(requestId, error);
+        return Promise.reject(error);
+    }
     return waitPromise;
 }
 

@@ -6,7 +6,7 @@ const {
     deleteVirtualFile,
     serviceErrorResponse
 } = require('../services/virtualFileService');
-const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
 
 const router = express.Router();
 const upload = multer({
@@ -14,7 +14,7 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-router.get('/list', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/list', attachUser, requirePagePermission('camera'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await listDeviceMedia(req);
         return res.status(200).json(payload);
@@ -25,7 +25,7 @@ router.get('/list', attachUser, requireUserIdOwnership, requireDeviceAccess, asy
     }
 });
 
-router.post('/upload', attachUser,upload.single('file'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/upload', attachUser, upload.single('file'), requirePagePermission('camera'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No media file received.' });
@@ -56,7 +56,7 @@ router.post('/upload', attachUser,upload.single('file'), requireUserIdOwnership,
     }
 });
 
-router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
+router.delete('/:id', attachUser, requirePagePermission('camera'), requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await deleteVirtualFile(req, req.params.id);
         return res.status(200).json(payload);

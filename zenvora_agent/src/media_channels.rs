@@ -1,7 +1,8 @@
 //! Dedicated media channels (screen / camera) over WebSocket `/ws/media`.
-//! Prefers WSS; Raw TCP only when ENABLE_CONTROL_TCP=1.
+//! Manual transport preference only (`PREFERRED_MEDIA_TRANSPORT` / SET_PREFERRED_MEDIA_TRANSPORT).
+//! No auto-failover between WSS and TCP.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,6 +24,38 @@ use crate::protocol::{
 const DEFAULT_CONTROL_PORT: u16 = 9443;
 const MAX_BACKOFF_SECS: u64 = 30;
 const HEARTBEAT_SECS: u64 = 25;
+
+/// 0 = wss (default), 1 = tcp
+static MEDIA_TRANSPORT_PREF: AtomicU8 = AtomicU8::new(0);
+
+pub fn init_media_transport_from_env() {
+    let v = std::env::var("PREFERRED_MEDIA_TRANSPORT").unwrap_or_else(|_| "wss".into());
+    set_preferred_media_transport(&v);
+}
+
+pub fn set_preferred_media_transport(value: &str) {
+    let next = match value.trim().to_lowercase().as_str() {
+        "tcp" => 1u8,
+        _ => 0u8,
+    };
+    MEDIA_TRANSPORT_PREF.store(next, Ordering::SeqCst);
+    connection_status::log(format!(
+        "Media transport preference set to {}",
+        if next == 1 { "tcp" } else { "wss" }
+    ));
+}
+
+pub fn preferred_media_transport() -> &'static str {
+    if MEDIA_TRANSPORT_PREF.load(Ordering::SeqCst) == 1 {
+        "tcp"
+    } else {
+        "wss"
+    }
+}
+
+fn prefer_tcp() -> bool {
+    MEDIA_TRANSPORT_PREF.load(Ordering::SeqCst) == 1
+}
 
 fn tcp_enabled() -> bool {
     matches!(
@@ -112,8 +145,10 @@ async fn run_media_loop(
         }
 
         let mut connected = false;
+        let use_tcp = prefer_tcp();
 
-        // 1) Prefer WSS /ws/media
+        // Manual preference only — never auto-flip to the other transport.
+        if !use_tcp {
         if let Some(ws_url) = resolve_ws_media_url(&config) {
             connection_status::log(format!(
                 "Media WS ({channel_name}) connecting {ws_url}"
@@ -228,10 +263,12 @@ async fn run_media_loop(
                 }
             }
         }
-
-        // 2) Optional TCP
-        if !connected && tcp_enabled() {
+        } else if tcp_enabled() {
+            // TCP preference: only attempt TCP (requires ENABLE_CONTROL_TCP=1).
             if let Some((host, port)) = resolve_tcp_addr(&config) {
+                connection_status::log(format!(
+                    "Media TCP ({channel_name}) connecting {host}:{port}"
+                ));
                 if let Ok(stream) = TcpStream::connect((host.as_str(), port)).await {
                     let _ = stream.set_nodelay(true);
                     let (mut reader, mut writer) = stream.into_split();
@@ -305,6 +342,17 @@ async fn run_media_loop(
                     }
                 }
             }
+        } else {
+            connection_status::log(format!(
+                "Media TCP preferred ({channel_name}) but ENABLE_CONTROL_TCP is off — not auto-switching to WSS"
+            ));
+        }
+
+        if !connected {
+            connection_status::log(format!(
+                "Media {} connect failed ({channel_name}) — waiting before retry (no auto-failover)",
+                if use_tcp { "TCP" } else { "WSS" }
+            ));
         }
 
         sleep(Duration::from_secs(backoff)).await;

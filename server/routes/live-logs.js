@@ -3,6 +3,7 @@ const { recent } = require('../services/liveLogBus');
 const { getConnectionRegistry } = require('../sockets/registry');
 const { controlAgents } = require('../control/controlHandler');
 const { verifyUserTokenFast, AUTH_COOKIE } = require('../services/authService');
+const { attachUser, requirePagePermission } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ function requireUserFast(req, res, next) {
     return next();
 }
 
-router.get('/', requireUserFast, (req, res) => {
+router.get('/', attachUser, requirePagePermission('console'), (req, res) => {
     const limit = Number(req.query.limit) || 400;
     const channel = req.query.channel ? String(req.query.channel) : null;
     const registry = getConnectionRegistry();

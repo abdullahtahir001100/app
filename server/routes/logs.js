@@ -3,10 +3,10 @@ const router = express.Router();
 const ActivityLog = require('../models/ActivityLog');
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
-const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
 
 // Get activity logs with filters
-router.get('/activity', attachUser, requireUserIdOwnership, async (req, res) => {
+router.get('/activity', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, category, status, limit = 50, offset = 0 } = req.query;
 
@@ -35,7 +35,7 @@ router.get('/activity', attachUser, requireUserIdOwnership, async (req, res) => 
 });
 
 // Get browser history with filters
-router.get('/browser-history', attachUser, requireUserIdOwnership, async (req, res) => {
+router.get('/browser-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, browser, domain, limit = 100, offset = 0 } = req.query;
 
@@ -64,7 +64,7 @@ router.get('/browser-history', attachUser, requireUserIdOwnership, async (req, r
 });
 
 // Get app history with filters
-router.get('/app-history', attachUser, requireUserIdOwnership, async (req, res) => {
+router.get('/app-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, appType, limit = 100, offset = 0 } = req.query;
 
@@ -92,7 +92,7 @@ router.get('/app-history', attachUser, requireUserIdOwnership, async (req, res) 
 });
 
 // Create activity log
-router.post('/activity', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/activity', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, action, category, device, details, status, metadata } = req.body;
 
@@ -126,7 +126,7 @@ router.post('/activity', attachUser, requireUserIdOwnership, requireDeviceAccess
 });
 
 // Create browser history entries (from Rust agent)
-router.post('/browser-history', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/browser-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, entries } = req.body;
 
@@ -160,7 +160,7 @@ router.post('/browser-history', attachUser, requireUserIdOwnership, requireDevic
 });
 
 // Create app history entries (from Rust agent)
-router.post('/app-history', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/app-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, entries } = req.body;
 
@@ -193,7 +193,7 @@ router.post('/app-history', attachUser, requireUserIdOwnership, requireDeviceAcc
 });
 
 // Get browser statistics
-router.get('/browser-stats', attachUser, requireUserIdOwnership, async (req, res) => {
+router.get('/browser-stats', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
 
@@ -224,7 +224,7 @@ router.get('/browser-stats', attachUser, requireUserIdOwnership, async (req, res
 
 // Get most visited domains
 
-router.get('/activity-stats', attachUser, requireUserIdOwnership, async (req, res) => {
+router.get('/activity-stats', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
         const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
@@ -250,7 +250,7 @@ router.get('/activity-stats', attachUser, requireUserIdOwnership, async (req, re
 
 const mongoose = require('mongoose');
 
-router.get('/top-domains', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/top-domains', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
 
@@ -289,7 +289,7 @@ router.get('/top-domains', attachUser, requireUserIdOwnership, requireDeviceAcce
 });
 
 
-router.get('/top-apps', attachUser, requireDeviceAccess, async (req, res) => {
+router.get('/top-apps', attachUser, requirePagePermission('logs'), requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
 

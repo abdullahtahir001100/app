@@ -108,14 +108,17 @@ router.get('/me', attachUser, async (req, res) => {
 });
 
 /** Short-lived WS auth ticket — use when Cookie is not sent on Upgrade. */
-router.get('/ws-ticket', attachUser, (req, res) => {
+function issueWsTicket(req, res) {
     const ticket = signWsTicket(req.user);
     return res.status(200).json({
         success: true,
         ticket,
         expiresIn: 120
     });
-});
+}
+
+router.get('/ws-ticket', attachUser, issueWsTicket);
+router.post('/ws-ticket', attachUser, issueWsTicket);
 
 router.get('/agents', attachUser, async (req, res) => {
     const devices = await listUserDevices(req.user.id);

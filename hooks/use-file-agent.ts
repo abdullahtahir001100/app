@@ -84,8 +84,13 @@ export function useFileAgent() {
   const previewBlobUrlRef = useRef<string | null>(null);
   const initInFlightRef = useRef(false);
   const initializedDeviceRef = useRef("");
+  const loadingRef = useRef(false);
   const gatewayDispatchRef = useRef(gatewayDispatch);
   gatewayDispatchRef.current = gatewayDispatch;
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
 
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
@@ -700,10 +705,12 @@ export function useFileAgent() {
     (path: string) => {
       const target = normalizePath(path);
       if (!target) return;
+      if (loadingRef.current) return;
       setSelectedPaths([]);
       clearPreviewBlob();
       setPreviewText("");
       setPreviewPath("");
+      setLoading(true);
       void listDirectory(target);
     },
     [clearPreviewBlob, listDirectory]

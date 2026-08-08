@@ -4,9 +4,9 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 
 const notification = require("../services/notificationService");
-const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
 // Get notifications for current device
-router.get('/', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, category, limit = 50 } = req.query;
         
@@ -34,7 +34,7 @@ router.get('/', attachUser, requireUserIdOwnership, requireDeviceAccess, async (
     }
 });
 
-router.put('/mark-all-read', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.put('/mark-all-read', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId } = req.body;
 
@@ -53,7 +53,7 @@ router.put('/mark-all-read', attachUser, requireUserIdOwnership, requireDeviceAc
 });
 
 // Get notification cou nt by category
-router.get('/categories', attachUser, requireUserIdOwnership, async (req, res) => {
+router.get('/categories', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, async (req, res) => {
 
     console.log("CATEGORIES ROUTE HIT");
 
@@ -75,7 +75,7 @@ router.get('/categories', attachUser, requireUserIdOwnership, async (req, res) =
     });
 });
 // Create notification (from Rust agent)
-router.post('/', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, app, title, message, icon, category } = req.body;
 
@@ -109,7 +109,7 @@ router.post('/', attachUser, requireUserIdOwnership, requireDeviceAccess, async 
 });
 
 // Bulk create notifications
-router.post('/bulk', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/bulk', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { notifications } = req.body;
 
@@ -139,7 +139,7 @@ router.post('/bulk', attachUser, requireUserIdOwnership, requireDeviceAccess, as
 });
 
 // Mark notification as read
-router.put('/:id/read', attachUser, requireUserIdOwnership, async (req, res) => {
+router.put('/:id/read', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, async (req, res) => {
     try {
         const notification = await Notification.findOneAndUpdate(
             { _id: req.params.id, userId: req.user.id },
@@ -158,7 +158,7 @@ router.put('/:id/read', attachUser, requireUserIdOwnership, async (req, res) => 
 });
 
 // Delete notification
-router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
+router.delete('/:id', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, async (req, res) => {
     try {
         const notification = await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
 
@@ -173,7 +173,7 @@ router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
 });
 
 // Clear all notifications
-router.post('/clear/all', attachUser, requireUserIdOwnership, async (req, res) => {
+router.post('/clear/all', attachUser, requirePagePermission('notifications'), requireUserIdOwnership, async (req, res) => {
     try {
         const result = await Notification.deleteMany({ userId: req.user.id });
 

@@ -171,7 +171,7 @@ fn get_storage_used_percent() -> Option<u32> {
 fn schedule_screen_capture(
     active_index: usize,
     settings: StreamCaptureSettings,
-    write_tx: &mpsc::UnboundedSender<Message>,
+    _write_tx: &mpsc::UnboundedSender<Message>,
     media_tx: &Option<mpsc::UnboundedSender<Vec<u8>>>,
     screen_busy: &Arc<AtomicBool>,
 ) {
@@ -182,7 +182,6 @@ fn schedule_screen_capture(
         return;
     }
 
-    let write_tx = write_tx.clone();
     let media_tx = media_tx.clone();
     let busy = Arc::clone(screen_busy);
 
@@ -195,15 +194,9 @@ fn schedule_screen_capture(
             .flatten();
 
         if let Some(jpeg) = jpeg {
-            let binary = build_binary_frame(jpeg.clone(), FRAME_SCREEN_STREAM);
-            // Prefer dedicated media WS; fallback to gateway for compatibility.
-            let sent_media = media_tx
-                .as_ref()
-                .map(|tx| tx.send(binary.clone()).is_ok())
-                .unwrap_or(false);
-            if !sent_media {
-                let _ = write_tx.send(Message::Binary(binary));
-            }
+            let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
+            // Media WS only — never flood /ws/gateway (stalls dashboard heartbeats).
+            let _ = media_tx.as_ref().map(|tx| tx.send(binary));
         }
 
         busy.store(false, Ordering::Release);
@@ -817,14 +810,11 @@ pub async fn run_network_loop(
                             if let Some(frame) = capture_stream_frame(&state.camera) {
                                 state.camera.capture_fail_streak = 0;
                                 let binary = build_binary_frame(frame.payload, frame.kind);
-                                let sent_media = state
+                                // Media WS only — never flood gateway.
+                                let _ = state
                                     .camera_media_tx
                                     .as_ref()
-                                    .map(|tx| tx.send(binary.clone()).is_ok())
-                                    .unwrap_or(false);
-                                if !sent_media {
-                                    let _ = write_tx.send(Message::Binary(binary));
-                                }
+                                    .map(|tx| tx.send(binary));
                             } else if state.camera.handle_capture_failure() {
                                 state.camera.try_complete_release();
                                 let notice = build_camera_blocked_notice(&state.camera);

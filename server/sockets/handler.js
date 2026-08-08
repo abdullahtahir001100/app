@@ -95,6 +95,33 @@ function rememberOwnership(userId, deviceId) {
     entry.at = Date.now();
 }
 
+/** Remove deviceId from every user's ownership set (re-pair / ownership transfer). */
+function clearOwnershipForDevice(deviceId) {
+    const id = String(deviceId || '');
+    if (!id) return;
+    for (const entry of ownershipCache.values()) {
+        entry.devices.delete(id);
+    }
+}
+
+/**
+ * Upsert device by deviceId only — one row per physical agent.
+ * Transfers ownership when re-paired under a different user.
+ */
+async function upsertDeviceExclusive(deviceId, update, ownerUserId) {
+    const id = String(deviceId || '');
+    if (!id) return;
+    const setDoc = { ...update, deviceId: id };
+    if (ownerUserId) setDoc.userId = ownerUserId;
+    await Device.updateOne({ deviceId: id }, { $set: setDoc }, { upsert: true });
+    if (ownerUserId) {
+        await Device.deleteMany({
+            deviceId: id,
+            userId: { $ne: ownerUserId },
+        }).catch(() => {});
+    }
+}
+
 /**
  * Live online agents for a specific owner.
  * FAIL CLOSED: missing userId returns [] unless opts.seeAll === true (verified admin only).
@@ -639,6 +666,7 @@ async function handleSocketMessage(ws, message) {
                     : null;
 
             if (role === 'AGENT' || role === 'DEVICE') {
+                clearOwnershipForDevice(deviceOrPanelId);
                 rememberOwnership(userIdForList, deviceOrPanelId);
             }
 
@@ -938,11 +966,7 @@ async function flushPendingMetricsDb() {
     pendingMetricsDb.clear();
     for (const [deviceId, item] of entries) {
         try {
-            await Device.updateOne(
-                item.ownerUserId ? { deviceId, userId: item.ownerUserId } : { deviceId },
-                { $set: item.update },
-                { upsert: true }
-            );
+            await upsertDeviceExclusive(deviceId, item.update, item.ownerUserId || null);
         } catch (_) {
             // ignore — next flush will retry newer data
         }

@@ -56,9 +56,11 @@ export class MediaGatewayClient {
 
   private async fetchTicket(): Promise<string | null> {
     try {
+      // Must match server: GET /api/auth/ws-ticket (POST also supported).
       const res = await fetch("/api/auth/ws-ticket", {
-        method: "POST",
+        method: "GET",
         credentials: "include",
+        cache: "no-store",
       });
       if (!res.ok) return null;
       const data = await res.json().catch(() => ({}));
@@ -99,6 +101,12 @@ export class MediaGatewayClient {
 
     this.connecting = true;
     const ticket = await this.fetchTicket();
+    if (!ticket) {
+      console.warn("[MEDIA] ws-ticket missing — not opening /ws/media without auth");
+      this.connecting = false;
+      this.scheduleReconnect();
+      return;
+    }
     const url = this.mediaUrl(ticket);
 
     let ws: WebSocket;

@@ -51,39 +51,99 @@ export type GatewayEvent =
 
 type GatewayListener = (event: GatewayEvent) => void;
 
-const DEVICE_CACHE_KEY = "zenvora_device_registry";
+const DEVICE_CACHE_PREFIX = "zenvora_device_registry:";
+const DEVICE_CACHE_LEGACY_KEY = "zenvora_device_registry";
 const DEVICE_CACHE_TTL_MS = 12_000;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const HEARTBEAT_TIMEOUT_MS = 75_000;
+const CACHE_USER_KEY = "zenvora_cache_user_id";
 
-function readDeviceCache(): { options: DeviceOption[]; records: DeviceRecord[]; at: number } | null {
+function deviceCacheKey(userId: string | null | undefined) {
+  return `${DEVICE_CACHE_PREFIX}${userId || "anon"}`;
+}
+
+function readDeviceCache(userId?: string | null): {
+  options: DeviceOption[];
+  records: DeviceRecord[];
+  at: number;
+  userId?: string;
+} | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(DEVICE_CACHE_KEY);
+    // Drop legacy unscoped cache (cross-user leak source).
+    sessionStorage.removeItem(DEVICE_CACHE_LEGACY_KEY);
+    const uid = userId || sessionStorage.getItem(CACHE_USER_KEY);
+    if (!uid) return null;
+    const raw = sessionStorage.getItem(deviceCacheKey(uid));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       options?: DeviceOption[];
       records?: DeviceRecord[];
       at?: number;
+      userId?: string;
     };
     if (!parsed.at || !Array.isArray(parsed.options) || !Array.isArray(parsed.records)) {
       return null;
     }
-    return { options: parsed.options, records: parsed.records, at: parsed.at };
+    if (parsed.userId && parsed.userId !== uid) return null;
+    return { options: parsed.options, records: parsed.records, at: parsed.at, userId: uid };
   } catch {
     return null;
   }
 }
 
-function writeDeviceCache(options: DeviceOption[], records: DeviceRecord[]) {
+function writeDeviceCache(
+  options: DeviceOption[],
+  records: DeviceRecord[],
+  userId?: string | null
+) {
   if (typeof window === "undefined") return;
   try {
+    const uid = userId || sessionStorage.getItem(CACHE_USER_KEY);
+    if (!uid) return;
+    sessionStorage.setItem(CACHE_USER_KEY, uid);
     sessionStorage.setItem(
-      DEVICE_CACHE_KEY,
-      JSON.stringify({ options, records, at: Date.now() })
+      deviceCacheKey(uid),
+      JSON.stringify({ options, records, at: Date.now(), userId: uid })
     );
   } catch {
     // ignore quota errors
+  }
+}
+
+export function clearDeviceRegistryCache() {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(DEVICE_CACHE_LEGACY_KEY);
+    const uid = sessionStorage.getItem(CACHE_USER_KEY);
+    if (uid) sessionStorage.removeItem(deviceCacheKey(uid));
+    sessionStorage.removeItem(CACHE_USER_KEY);
+    // Sweep any leftover keyed caches
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(DEVICE_CACHE_PREFIX)) sessionStorage.removeItem(k);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/** Bind device cache to the signed-in user; clears stale cache on user switch. */
+export function bindDeviceCacheUser(userId: string | null | undefined) {
+  if (typeof window === "undefined") return;
+  const next = userId ? String(userId) : "";
+  try {
+    const prev = sessionStorage.getItem(CACHE_USER_KEY) || "";
+    if (prev && next && prev !== next) {
+      clearDeviceRegistryCache();
+    }
+    if (next) {
+      sessionStorage.setItem(CACHE_USER_KEY, next);
+    } else {
+      clearDeviceRegistryCache();
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -167,8 +227,38 @@ class GatewayClient {
       this.devices = cached.options;
       this.fullDevices = cached.records;
       this.lastRefreshAt = cached.at;
+    } else {
+      this.devices = [];
+      this.fullDevices = [];
     }
     this.bindLifecycleHandlers();
+  }
+
+  /** Call after login/session resolve so cache never crosses users. */
+  bindUser(userId: string | null | undefined) {
+    const prev =
+      typeof window !== "undefined" ? sessionStorage.getItem(CACHE_USER_KEY) : null;
+    bindDeviceCacheUser(userId);
+    if (prev && userId && prev !== String(userId)) {
+      this.devices = [];
+      this.fullDevices = [];
+      this.lastRefreshAt = 0;
+      this.emit({ type: "devices", devices: [] });
+    } else if (userId) {
+      const cached = readDeviceCache(String(userId));
+      if (cached) {
+        this.devices = cached.options;
+        this.fullDevices = cached.records;
+        this.lastRefreshAt = cached.at;
+      }
+    }
+  }
+
+  clearCachedDevices() {
+    clearDeviceRegistryCache();
+    this.devices = [];
+    this.fullDevices = [];
+    this.lastRefreshAt = 0;
   }
 
   private bindLifecycleHandlers() {
