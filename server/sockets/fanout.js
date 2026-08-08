@@ -33,19 +33,20 @@ function dashboardUserId(clientSocket) {
  * If ownerUserId is empty, send nothing (fail closed for multi-user isolation).
  */
 function sendToOwnerDashboards(activeConnections, ownerUserId, data, options = {}) {
-    const owner = String(ownerUserId || '');
+    const owner = String(ownerUserId || '').trim();
     if (!owner) return 0;
 
     let sent = 0;
     activeConnections.forEach((clientSocket, key) => {
         if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
-        const uid = dashboardUserId(clientSocket);
+        const uid = dashboardUserId(clientSocket).trim();
+        if (!uid) return; // fail closed — no anonymous dashboards
+
         const role = clientSocket?.authContext?.user?.role;
         const pages = clientSocket?.authContext?.user?.pages || [];
         const isAdminViewer = role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'));
         if (!isAdminViewer && uid !== owner) return;
 
-        // Drop binary under backpressure instead of stalling the event loop.
         if (options.binary && typeof clientSocket.bufferedAmount === 'number'
             && clientSocket.bufferedAmount > 1024 * 1024) {
             return;

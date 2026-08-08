@@ -280,9 +280,9 @@ export function FileManager() {
   }, []);
 
   const openMetadataPopup = useCallback(async () => {
-    await agent.loadMetadata();
+    await agentRef.current.loadMetadata();
     setMetaDialogOpen(true);
-  }, [agent]);
+  }, []);
 
   const handleOpenEntry = useCallback((entry: FileEntry) => {
     const a = agentRef.current;

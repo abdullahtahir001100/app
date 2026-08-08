@@ -57,7 +57,9 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
     let sent = 0;
     for (const [key, client] of registry.entries()) {
         if (!key.startsWith('DASHBOARD_')) continue;
-        const uid = dashboardUserId(client);
+        const uid = dashboardUserId(client).trim();
+        if (!uid) continue;
+
         const role = client?.authContext?.user?.role || client?.authContext?.role;
         const pages = client?.authContext?.user?.pages || client?.authContext?.pages || [];
         const isAdminViewer = role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'));

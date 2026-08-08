@@ -341,10 +341,9 @@ class GatewayClient {
         })
       );
       this.emit({ type: "connected" });
-      // Live device list comes via sys_ack; HTTP refresh only if cache empty.
-      if (this.devices.length === 0) {
-        void this.refreshDevices({ force: true });
-      }
+      // Always re-fetch owner-scoped HTTP list after connect — never trust a stale
+      // session cache that may have leaked cross-user devices from a prior bug.
+      void this.refreshDevices({ force: true });
 
       heartbeatTimer = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) {

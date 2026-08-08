@@ -101,10 +101,10 @@ export function useFileAgent() {
     currentPathRef.current = currentPath;
   }, [currentPath]);
 
+  // Connect once on mount — do NOT force-refresh devices in a loop.
   useEffect(() => {
     ensureConnected();
-    void refreshDevices(true);
-  }, [ensureConnected, refreshDevices]);
+  }, [ensureConnected]);
 
   useEffect(() => {
     if (devices.length === 0) return;
@@ -509,9 +509,10 @@ export function useFileAgent() {
 
   useEffect(() => {
     if (!isConnected || !selectedDevice) return;
-    if (initializedDeviceRef.current === selectedDevice && items.length > 0) return;
+    if (initInFlightRef.current) return;
+    if (initializedDeviceRef.current === selectedDevice) return;
     void initExplorerRef.current();
-  }, [isConnected, selectedDevice, items.length]);
+  }, [isConnected, selectedDevice]);
 
   const handleFileTelemetryRef = useRef<(packet: FileTelemetryPacket & Record<string, unknown>) => void>(() => {});
   handleFileTelemetryRef.current = (packet) => {

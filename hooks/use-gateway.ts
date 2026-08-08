@@ -53,20 +53,12 @@ export function useGateway() {
 
   const dispatch = useCallback(
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
-      // Prefer explicit target; never coerce to devices[0] when override is empty string.
       const target =
         (targetOverride && String(targetOverride).trim()) || resolveTarget();
       if (!target) return { ok: false as const, reason: "no-agent" as const };
       if (!gatewayClient.isOpen()) {
         gatewayClient.ensureConnected();
         return { ok: false as const, reason: "offline" as const };
-      }
-      const deviceOnline = devicesRef.current.some(
-        (d) => d.value === target && d.status === "online"
-      );
-      if (!deviceOnline) {
-        // Soft-fail: still try dispatch if WS is up (HTTP status can lag).
-        // Security ownership is enforced server-side.
       }
       if (!gatewayClient.dispatch(action, target, payload)) {
         return { ok: false as const, reason: "offline" as const };
@@ -90,6 +82,19 @@ export function useGateway() {
     []
   );
 
+  // Stable — never re-bind each render (that caused file-manager reload loops).
+  const ensureConnected = useCallback(() => {
+    gatewayClient.ensureConnected();
+  }, []);
+
+  const subscribe = useCallback(
+    (listener: Parameters<typeof gatewayClient.subscribe>[0]) =>
+      gatewayClient.subscribe(listener),
+    []
+  );
+
+  const getFullDevices = useCallback(() => gatewayClient.getFullDevices(), []);
+
   return {
     isConnected,
     devices,
@@ -101,8 +106,8 @@ export function useGateway() {
     isDeviceOnline,
     getSocket,
     socket,
-    subscribe: gatewayClient.subscribe.bind(gatewayClient),
-    getFullDevices: gatewayClient.getFullDevices.bind(gatewayClient),
-    ensureConnected: gatewayClient.ensureConnected.bind(gatewayClient),
+    subscribe,
+    getFullDevices,
+    ensureConnected,
   };
 }

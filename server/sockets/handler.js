@@ -95,15 +95,24 @@ function rememberOwnership(userId, deviceId) {
     entry.at = Date.now();
 }
 
-function getLiveDeviceOptions(userId = null) {
+/**
+ * Live online agents for a specific owner.
+ * FAIL CLOSED: missing userId returns [] unless opts.seeAll === true (verified admin only).
+ */
+function getLiveDeviceOptions(userId = null, opts = {}) {
+    const seeAll = opts.seeAll === true;
+    if (!seeAll && !userId) return [];
+
     return Array.from(activeConnections.entries())
         .filter(([key, socket]) => {
             if (!key.startsWith('AGENT_') && !key.startsWith('DEVICE_')) return false;
             if (socket?.readyState !== 1) return false;
             const auth = socket?.authContext;
             if (!auth || auth.kind !== 'agent') return false;
-            if (!userId) return true;
-            return String(auth.userId || '') === String(userId);
+            if (seeAll) return true;
+            const owner = String(auth.userId || '').trim();
+            if (!owner) return false; // unowned agent never shown to normal users
+            return owner === String(userId);
         })
         .map(([key, socket]) => {
             const deviceId = String(key.replace(/^AGENT_/, '').replace(/^DEVICE_/, ''));
@@ -118,12 +127,18 @@ function getLiveDeviceOptions(userId = null) {
         });
 }
 
-async function getDeviceOptions(userId = null) {
-    const cacheKey = String(userId || '__all__');
+/**
+ * Device list for dashboards.
+ * FAIL CLOSED: missing userId returns [] unless opts.seeAll === true.
+ */
+async function getDeviceOptions(userId = null, opts = {}) {
+    const seeAll = opts.seeAll === true;
+    if (!seeAll && !userId) return [];
+
+    const cacheKey = seeAll ? '__all__' : String(userId);
     const cached = deviceOptionsCache.get(cacheKey);
     if (cached && Date.now() - cached.at < 8000) {
-        // Always refresh live status onto cached rows.
-        const liveIds = new Set(getLiveDeviceOptions(userId).map((d) => d.value));
+        const liveIds = new Set(getLiveDeviceOptions(userId, { seeAll }).map((d) => d.value));
         return cached.devices.map((d) => ({
             ...d,
             status: liveIds.has(d.value) ? 'online' : 'offline',
@@ -131,11 +146,11 @@ async function getDeviceOptions(userId = null) {
         }));
     }
 
-    const liveDevices = getLiveDeviceOptions(userId);
+    const liveDevices = getLiveDeviceOptions(userId, { seeAll });
     const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
-    const query = userId ? { userId } : {};
+    const query = seeAll ? {} : { userId };
     const allDevices = await Device.find(query)
-        .select('deviceId hostname platform localIp publicIp battery storage lastSeen network username')
+        .select('deviceId hostname platform localIp publicIp battery storage lastSeen network username userId')
         .sort({ lastSeen: -1 })
         .lean()
         .maxTimeMS(2500);
@@ -161,8 +176,21 @@ async function getDeviceOptions(userId = null) {
         };
     });
 
+    // Include live agents that aren't in Mongo yet — still owner-scoped.
+    for (const live of liveDevices) {
+        if (!devices.some((d) => d.value === live.value)) {
+            devices.unshift(live);
+        }
+    }
+
     deviceOptionsCache.set(cacheKey, { devices, at: Date.now() });
     return devices;
+}
+
+function isPrivilegedDashboardUser(user) {
+    if (!user) return false;
+    if (String(user.role || '') === 'admin') return true;
+    return Array.isArray(user.pages) && user.pages.includes('devices.any');
 }
 
 let lastBroadcastAt = 0;
@@ -189,10 +217,11 @@ async function broadcastDeviceList(options = {}) {
 
         for (const [, clientSocket] of dashboardSockets) {
             const user = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user : null;
-            const userId = user?.id || null;
-            const isAdmin = user?.role === 'admin'
-                || (Array.isArray(user?.pages) && user.pages.includes('devices.any'));
-            const devices = await getDeviceOptions(isAdmin ? null : userId);
+            const userId = user?.id ? String(user.id) : null;
+            if (!userId) continue; // never broadcast a global list to an unauthenticated dashboard
+
+            const seeAll = isPrivilegedDashboardUser(user);
+            const devices = await getDeviceOptions(userId, { seeAll });
             const payload = JSON.stringify({
                 type: 'device_list_update',
                 devices
@@ -213,8 +242,14 @@ async function broadcastDeviceList(options = {}) {
 
 /** Instant register ack — live agents only, no Mongo wait. */
 function sendReadyWithLiveDevices(ws, userId, opts = {}) {
-    const seeAll = opts.seeAll === true;
-    const live = getLiveDeviceOptions(seeAll ? null : userId);
+    const seeAll = opts.seeAll === true && Boolean(userId);
+    if (!userId && !seeAll) {
+        try {
+            ws.send(JSON.stringify({ type: 'sys_ack', status: 'ready', devices: [] }));
+        } catch (_) {}
+        return;
+    }
+    const live = getLiveDeviceOptions(userId, { seeAll });
     try {
         ws.send(JSON.stringify({
             type: 'sys_ack',
@@ -223,7 +258,7 @@ function sendReadyWithLiveDevices(ws, userId, opts = {}) {
         }));
     } catch (_) {}
 
-    void getDeviceOptions(seeAll ? null : userId).then((devices) => {
+    void getDeviceOptions(userId, { seeAll }).then((devices) => {
         if (ws.readyState !== 1) return;
         try {
             ws.send(JSON.stringify({ type: 'device_list_update', devices }));
@@ -383,12 +418,10 @@ function authorizeSocketAction(ws, targetDeviceId) {
         return String(ws.authContext.deviceId || '') === String(targetDeviceId);
     }
     if (ws.authContext?.kind === 'user') {
-        const userId = String(ws.authContext.user?.id || '');
+        const userId = String(ws.authContext.user?.id || '').trim();
         if (!userId) return false;
 
-        const role = String(ws.authContext.user?.role || '');
-        const pages = ws.authContext.user?.pages || ws.authContext.pages || [];
-        if (role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'))) {
+        if (isPrivilegedDashboardUser(ws.authContext.user)) {
             return true;
         }
 
@@ -611,12 +644,22 @@ async function handleSocketMessage(ws, message) {
 
             if (role === 'INSTALL') {
                 ws.send(JSON.stringify({ type: 'sys_ack', status: 'ready', devices: [] }));
+            } else if (role === 'DASHBOARD') {
+                const user = ws.authContext?.user;
+                const uid = user?.id ? String(user.id) : null;
+                if (!uid) {
+                    ws.send(JSON.stringify({
+                        type: 'sys_ack',
+                        status: 'auth_failed',
+                        message: 'dashboard user id required'
+                    }));
+                    ws.close();
+                    return;
+                }
+                sendReadyWithLiveDevices(ws, uid, { seeAll: isPrivilegedDashboardUser(user) });
             } else {
-                const seeAll = ws.authContext?.kind === 'user'
-                    && (ws.authContext.user?.role === 'admin'
-                        || (Array.isArray(ws.authContext.user?.pages)
-                            && ws.authContext.user.pages.includes('devices.any')));
-                sendReadyWithLiveDevices(ws, userIdForList, { seeAll });
+                // Agents get empty device list ack — they don't need other devices.
+                sendReadyWithLiveDevices(ws, userIdForList ? String(userIdForList) : null, { seeAll: false });
             }
             if ((role === 'AGENT' || role === 'DEVICE') && userIdForList) {
                 pushLiveDeviceSnapshot(userIdForList);
@@ -648,11 +691,19 @@ async function handleSocketMessage(ws, message) {
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
-            const userId = ws.authContext.user?.id || null;
-            const seeAll = ws.authContext.user?.role === 'admin'
-                || (Array.isArray(ws.authContext.user?.pages)
-                    && ws.authContext.user.pages.includes('devices.any'));
-            sendReadyWithLiveDevices(ws, userId, { seeAll });
+            const userId = ws.authContext.user?.id ? String(ws.authContext.user.id) : null;
+            if (!userId) {
+                ws.send(JSON.stringify({
+                    type: 'sys_ack',
+                    status: 'auth_failed',
+                    message: 'dashboard user id required'
+                }));
+                ws.close();
+                return;
+            }
+            sendReadyWithLiveDevices(ws, userId, {
+                seeAll: isPrivilegedDashboardUser(ws.authContext.user),
+            });
             return;
         }
 

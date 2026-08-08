@@ -2,12 +2,19 @@ const express = require('express');
 const router = express.Router();
 const Device = require('../models/Device');
 const { getLiveDeviceOptions } = require('../sockets/handler');
-const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
+const {
+    attachUser,
+    requireUserIdOwnership,
+    requireDeviceAccess,
+    userCanAccessAnyDevice,
+} = require('../middleware/auth');
 
 router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const allDevices = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
-        const liveDevices = getLiveDeviceOptions(req.user.id);
+        const seeAll = await userCanAccessAnyDevice(req.user);
+        const query = seeAll ? {} : { userId: req.user.id };
+        const allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
+        const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
         const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
 
         const devices = allDevices.map((device) => {
@@ -22,6 +29,19 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
             };
         });
 
+        // Include live agents not yet in Mongo (still owner-scoped unless seeAll).
+        for (const live of liveDevices) {
+            if (!devices.some((d) => String(d.deviceId || d.value) === String(live.value))) {
+                devices.unshift({
+                    deviceId: live.value,
+                    value: live.value,
+                    label: live.label,
+                    status: 'online',
+                    hostname: live.label,
+                });
+            }
+        }
+
         res.status(200).json({ success: true, devices });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -30,12 +50,16 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
 
 router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
-        const device = await Device.findOne({ userId: req.user.id, deviceId: req.params.deviceId }).lean();
+        const seeAll = await userCanAccessAnyDevice(req.user);
+        const filter = seeAll
+            ? { deviceId: req.params.deviceId }
+            : { userId: req.user.id, deviceId: req.params.deviceId };
+        const device = await Device.findOne(filter).lean();
         if (!device) {
             return res.status(404).json({ success: false, message: 'Device not found' });
         }
 
-        const liveDevices = getLiveDeviceOptions(req.user.id);
+        const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
         const isLive = liveDevices.some((d) => String(d.value) === String(device.deviceId));
 
         res.status(200).json({
@@ -52,9 +76,11 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
 
 router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const liveDevices = getLiveDeviceOptions(req.user.id);
+        const seeAll = await userCanAccessAnyDevice(req.user);
+        const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
         const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
-        const deviceRecords = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
+        const query = seeAll ? {} : { userId: req.user.id };
+        const deviceRecords = await Device.find(query).sort({ lastSeen: -1 }).lean();
 
         const devices = deviceRecords.map((record) => {
             const deviceId = String(record.deviceId || '');

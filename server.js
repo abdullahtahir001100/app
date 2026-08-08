@@ -143,9 +143,14 @@ nextApp.prepare().then(() => {
         }
     });
 
-    app.get('/api/network/live-agents', attachUser, (req, res) => {
+    app.get('/api/network/live-agents', attachUser, async (req, res) => {
         const { getLiveDeviceOptions } = require('./server/sockets/handler');
-        res.status(200).json({ success: true, devices: getLiveDeviceOptions(req.user.id) });
+        const { userCanAccessAnyDevice } = require('./server/middleware/auth');
+        const seeAll = await userCanAccessAnyDevice(req.user);
+        res.status(200).json({
+            success: true,
+            devices: getLiveDeviceOptions(req.user.id, { seeAll }),
+        });
     });
 
     app.use((req, res) => nextHandler(req, res));
