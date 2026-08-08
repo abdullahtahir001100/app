@@ -249,29 +249,14 @@ const lastCommandRef = useRef<string>("");
   }, []);
 
   const runShellCommand = useCallback(
-
-
-
-
-
-
-
-
-
-
-
-
-    
     async (command: string, source: "input" | "response") => {
-
-
-        lastCommandRef.current = trimmed;
-
-if (/^cd\s+/i.test(trimmed)) {
-  currentDirectoryRef.current = trimmed;
-}
       const trimmed = command.trim();
       if (!trimmed) return false;
+
+      lastCommandRef.current = trimmed;
+      if (/^cd\s+/i.test(trimmed)) {
+        currentDirectoryRef.current = trimmed.replace(/^cd\s+/i, "").trim() || trimmed;
+      }
 
       const target = resolveTarget();
       if (!isConnected || !target) {
@@ -289,14 +274,18 @@ if (/^cd\s+/i.test(trimmed)) {
       appendMessage({
         id: `terminal-${Date.now()}`,
         role: "assistant",
-      text: `Executing in terminal: ${trimmed}${
-  currentDirectoryRef.current
-    ? ` (context: ${currentDirectoryRef.current})`
-    : ""
-}`,
+        text: `Executing in terminal: ${trimmed}${
+          currentDirectoryRef.current
+            ? ` (context: ${currentDirectoryRef.current})`
+            : ""
+        }`,
         status: "executing",
         timestamp: createTimestamp(),
-        metadata: { kind: "terminal", step: source === "input" ? "executing" : "receiving", command: trimmed },
+        metadata: {
+          kind: "terminal",
+          step: source === "input" ? "executing" : "receiving",
+          command: trimmed,
+        },
       });
 
       const result = gatewayDispatch("SHELL_EXECUTE", { command: trimmed }, target);
@@ -314,9 +303,6 @@ if (/^cd\s+/i.test(trimmed)) {
 
       return true;
     },
-
-
-
     [appendMessage, gatewayDispatch, isConnected, resolveTarget]
   );
 
@@ -471,7 +457,19 @@ if (/^cd\s+/i.test(trimmed)) {
 
       const autoCommand = extractShellCommand(finalText);
       if (autoCommand) {
-        await runShellCommand(autoCommand, "response");
+        try {
+          await runShellCommand(autoCommand, "response");
+        } catch (shellErr) {
+          console.warn("[agent-chat] shell auto-exec failed:", shellErr);
+          appendMessage({
+            id: `system-${Date.now()}`,
+            role: "system",
+            text: shellErr instanceof Error ? shellErr.message : "Shell auto-exec failed.",
+            status: "warning",
+            timestamp: createTimestamp(),
+            metadata: { kind: "warning", step: "completed" },
+          });
+        }
       }
 
       setConnectionState("ready");
@@ -489,7 +487,11 @@ if (/^cd\s+/i.test(trimmed)) {
       } else {
         updateMessage(assistantId, (message) => ({
           ...message,
-          text: "The agent backend could not complete the request. Please verify your connection and try again.",
+          text:
+            message.text?.trim() ||
+            (error instanceof Error
+              ? `Agent request failed: ${error.message}`
+              : "The agent backend could not complete the request. Please verify your connection and try again."),
           status: "error",
           metadata: { ...message.metadata, kind: "error", step: "completed" },
         }));
