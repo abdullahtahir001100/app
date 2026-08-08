@@ -29,6 +29,7 @@ import {
   Upload,
   Camera,
   Film,
+  Monitor,
   Maximize2,
   Minimize2,
   Info,
