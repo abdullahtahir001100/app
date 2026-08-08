@@ -93,8 +93,25 @@ function registerSecurityMiddleware(app) {
     }));
 
     app.use('/api', validateSameSiteOrigin);
-    app.use(express.json({ limit: '10mb' }));
-    app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+    // Skip body parsers for Next App Router exclusive APIs — Express must not
+    // lock/disturb the request stream before nextHandler reads it.
+    const skipBodyParse = (req) => {
+        const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+        return (
+            pathOnly === '/api/agent/chat' ||
+            pathOnly.startsWith('/api/agent/chat/')
+        );
+    };
+
+    app.use((req, res, next) => {
+        if (skipBodyParse(req)) return next();
+        return express.json({ limit: '10mb' })(req, res, next);
+    });
+    app.use((req, res, next) => {
+        if (skipBodyParse(req)) return next();
+        return express.urlencoded({ extended: true, limit: '10mb' })(req, res, next);
+    });
 
     app.use('/api/auth/login', authLimiter);
     app.use('/api/auth/register', authLimiter);

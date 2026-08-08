@@ -166,6 +166,176 @@ router.get('/download', (req, res) => {
     stream.pipe(res);
 });
 
+function getGeminiApiKey(settings = {}) {
+    const direct = typeof settings.apiKey === 'string' ? settings.apiKey.trim() : '';
+    if (direct) return direct;
+    return (
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
+        ''
+    );
+}
+
+async function generateGeminiChat({ draft, messages, settings, capabilities, context }) {
+    const apiKey = getGeminiApiKey(settings || {});
+    if (!apiKey) {
+        throw new Error('Gemini API key not found.');
+    }
+
+    const model =
+        typeof settings?.model === 'string' && settings.model.trim()
+            ? settings.model.trim()
+            : 'gemini-2.5-flash';
+
+    const history = (Array.isArray(messages) ? messages : [])
+        .slice(-20)
+        .map((m) => ({
+            role: m?.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: String(m?.text || '') }],
+        }))
+        .filter((m) => m.parts[0].text.trim().length > 0);
+
+    const enabledCapabilities = Object.entries(capabilities || {})
+        .filter(([, v]) => Boolean(v))
+        .map(([k]) => k);
+
+    const systemInstruction = `
+You are Zenvora AI, an autonomous Windows execution agent.
+
+MISSION:
+Convert natural language requests into executable Windows terminal commands.
+
+SESSION MEMORY:
+
+Current directory:
+${context?.currentDirectory || 'unknown'}
+
+Last command:
+${context?.lastCommand || 'none'}
+
+Selected item:
+${context?.selectedItem || 'none'}
+
+Last terminal output:
+${context?.lastOutput || 'none'}
+
+RULES:
+
+1. Maintain session memory.
+2. Remember the current working directory.
+3. Remember the previously selected file/folder.
+4. Remember previous command output.
+5. When the user says "it", resolve from selectedItem / currentDirectory / previous result.
+
+FAILURE RECOVERY:
+If previous output contains errors and the user asks to open/retry/continue, generate a corrected command.
+
+Always return ONLY one executable block:
+
+\`\`\`execute
+command_here
+\`\`\`
+
+Do NOT explain. Do NOT write markdown outside execute blocks.
+
+Enabled capabilities:
+${enabledCapabilities.join(', ') || 'default'}
+`.trim();
+
+    const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-goog-api-key': apiKey,
+            },
+            body: JSON.stringify({
+                contents: [
+                    { role: 'user', parts: [{ text: systemInstruction }] },
+                    ...history,
+                    { role: 'user', parts: [{ text: `User request:\n${draft || ''}` }] },
+                ],
+                generationConfig: {
+                    temperature: 0.1,
+                    maxOutputTokens: Number(settings?.maxTokens ?? 2048),
+                    topP: 0.9,
+                    topK: 40,
+                },
+            }),
+        }
+    );
+
+    const raw = await response.text();
+    if (!response.ok) {
+        throw new Error(raw || `Gemini HTTP ${response.status}`);
+    }
+
+    let data;
+    try {
+        data = JSON.parse(raw);
+    } catch {
+        throw new Error('Invalid JSON returned from Gemini.');
+    }
+
+    return (
+        data?.candidates?.[0]?.content?.parts
+            ?.map((p) => p?.text || '')
+            .join('') || ''
+    );
+}
+
+/**
+ * Shell AI chat — Express (not Next) so request body is never double-read
+ * under the custom server (avoids "Response body object should not be disturbed").
+ */
+router.post('/chat', express.json({ limit: '2mb' }), async (req, res) => {
+    try {
+        const body = req.body || {};
+        const text = await generateGeminiChat({
+            draft: typeof body.draft === 'string' ? body.draft : '',
+            messages: Array.isArray(body.messages) ? body.messages : [],
+            settings: typeof body.settings === 'object' && body.settings ? body.settings : {},
+            capabilities:
+                typeof body.capabilities === 'object' && body.capabilities
+                    ? body.capabilities
+                    : {},
+            context: typeof body.context === 'object' && body.context ? body.context : {},
+        });
+
+        res.status(200);
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('X-Accel-Buffering', 'no');
+
+        const words = String(text).match(/\S+\s*/g) || [];
+        let index = 0;
+
+        const pump = () => {
+            if (res.writableEnded || res.destroyed) return;
+            if (index >= words.length) {
+                res.end();
+                return;
+            }
+            res.write(words[index]);
+            index += 1;
+            setTimeout(pump, 15);
+        };
+        pump();
+    } catch (error) {
+        console.error('[AGENT CHAT]', error?.message || error);
+        if (res.headersSent) {
+            try { res.end(); } catch (_) {}
+            return;
+        }
+        return res.status(500).json({
+            success: false,
+            error: error?.message || 'Generation failed',
+        });
+    }
+});
+
 module.exports = router;
 module.exports.getTicket = getTicket;
 module.exports.buildInstallScript = buildInstallScript;
