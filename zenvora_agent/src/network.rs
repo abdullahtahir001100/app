@@ -172,7 +172,7 @@ fn schedule_screen_capture(
     active_index: usize,
     settings: StreamCaptureSettings,
     _write_tx: &mpsc::UnboundedSender<Message>,
-    media_tx: &Option<mpsc::UnboundedSender<Vec<u8>>>,
+    media_tx: &Option<mpsc::Sender<Vec<u8>>>,
     screen_busy: &Arc<AtomicBool>,
 ) {
     if screen_busy
@@ -196,7 +196,7 @@ fn schedule_screen_capture(
         if let Some(jpeg) = jpeg {
             let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
             // Media WS only — never flood /ws/gateway (stalls dashboard heartbeats).
-            let _ = media_tx.as_ref().map(|tx| tx.send(binary));
+            let _ = media_tx.as_ref().map(|tx| tx.try_send(binary));
         }
 
         busy.store(false, Ordering::Release);
@@ -814,7 +814,7 @@ pub async fn run_network_loop(
                                 let _ = state
                                     .camera_media_tx
                                     .as_ref()
-                                    .map(|tx| tx.send(binary));
+                                    .map(|tx| tx.try_send(binary));
                             } else if state.camera.handle_capture_failure() {
                                 state.camera.try_complete_release();
                                 let notice = build_camera_blocked_notice(&state.camera);

@@ -15,8 +15,8 @@ pub struct AgentState {
     pub shell: ShellState,
     pub activity_logger: Option<Arc<ActivityLogger>>,
     /// Dedicated media WS payload senders (raw jpeg/frame bytes before ZV wrap).
-    pub screen_media_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
-    pub camera_media_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    pub screen_media_tx: Option<mpsc::Sender<Vec<u8>>>,
+    pub camera_media_tx: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 impl AgentState {

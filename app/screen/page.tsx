@@ -354,35 +354,48 @@ export default function ScreenPage() {
     sendPointer("REMOTE_MOUSE_WHEEL", e, { delta: Math.round(-e.deltaY) });
   };
 
-  const handleKey = (e: React.KeyboardEvent) => {
+  useEffect(() => {
     if (!controlEnabled || !isStreaming) return;
-    e.preventDefault();
-    const mapped = mapPointerToRemote(
-      (canvasRef.current?.getBoundingClientRect().left || 0) +
-        (canvasRef.current?.width || 0) / 2,
-      (canvasRef.current?.getBoundingClientRect().top || 0) +
-        (canvasRef.current?.height || 0) / 2
-    );
-    const base = mapped || {
-      x: Math.round(telemetry.screenWidth / 2),
-      y: Math.round(telemetry.screenHeight / 2),
-      screen_width: telemetry.screenWidth,
-      screen_height: telemetry.screenHeight,
-    };
 
-    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    const handleWindowKey = (e: KeyboardEvent) => {
+      // Handle key events when streaming and control is enabled
+      e.preventDefault();
+
+      const mapped = mapPointerToRemote(
+        (canvasRef.current?.getBoundingClientRect().left || 0) +
+          (canvasRef.current?.width || 0) / 2,
+        (canvasRef.current?.getBoundingClientRect().top || 0) +
+          (canvasRef.current?.height || 0) / 2
+      );
+      const base = mapped || {
+        x: Math.round(telemetry.screenWidth / 2),
+        y: Math.round(telemetry.screenHeight / 2),
+        screen_width: telemetry.screenWidth,
+        screen_height: telemetry.screenHeight,
+      };
+
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        dispatchControl(e.type === "keydown" ? "REMOTE_KEY_DOWN" : "REMOTE_KEY_UP", {
+          ...base,
+          text: e.key,
+        });
+        return;
+      }
+
       dispatchControl(e.type === "keydown" ? "REMOTE_KEY_DOWN" : "REMOTE_KEY_UP", {
         ...base,
-        text: e.key,
+        code: e.code,
       });
-      return;
-    }
+    };
 
-    dispatchControl(e.type === "keydown" ? "REMOTE_KEY_DOWN" : "REMOTE_KEY_UP", {
-      ...base,
-      code: e.code,
-    });
-  };
+    window.addEventListener("keydown", handleWindowKey);
+    window.addEventListener("keyup", handleWindowKey);
+
+    return () => {
+      window.removeEventListener("keydown", handleWindowKey);
+      window.removeEventListener("keyup", handleWindowKey);
+    };
+  }, [controlEnabled, isStreaming, telemetry, mapPointerToRemote, dispatchControl]);
 
   const handleQualityChange = (quality: StreamQuality) => {
     setStreamQuality(quality);
@@ -562,8 +575,9 @@ export default function ScreenPage() {
               onMouseUp={handleMouseUp}
               onContextMenu={(e) => e.preventDefault()}
               onWheel={handleWheel}
-              onKeyDown={handleKey}
-              onKeyUp={handleKey}
+              onMouseEnter={() => {
+                if (controlEnabled && isStreaming) canvasRef.current?.focus();
+              }}
             />
 
             {!hasLiveFrame && (

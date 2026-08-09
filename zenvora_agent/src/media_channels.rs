@@ -107,7 +107,7 @@ fn resolve_ws_media_url(config: &AgentConfig) -> Option<String> {
 }
 
 pub struct MediaChannel {
-    pub tx: mpsc::UnboundedSender<Vec<u8>>,
+    pub tx: mpsc::Sender<Vec<u8>>,
     pub ack_rx: broadcast::Receiver<Value>,
 }
 
@@ -116,7 +116,7 @@ pub fn spawn_media_channel(
     channel_name: String,
     stop_flag: Option<Arc<AtomicBool>>,
 ) -> MediaChannel {
-    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(1);
     let (ack_tx, ack_rx) = broadcast::channel::<Value>(16);
     let outbound_tx = tx.clone();
 
@@ -133,7 +133,7 @@ async fn run_media_loop(
     config: Arc<AgentConfig>,
     channel_name: String,
     stop_flag: Option<Arc<AtomicBool>>,
-    mut payload_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut payload_rx: mpsc::Receiver<Vec<u8>>,
     ack_tx: broadcast::Sender<Value>,
 ) {
     let mut backoff = 1u64;

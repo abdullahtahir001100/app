@@ -304,12 +304,23 @@ fn capture_stream_jpeg_fast(
     let raw = rgba.as_raw();
     let mut rgb = Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize).saturating_mul(3));
 
+    let mut x_map = Vec::with_capacity(dst_w as usize);
+    for x in 0..dst_w {
+        let src_x = ((x as f32 / scale).floor() as u32).min(src_w.saturating_sub(1));
+        x_map.push(src_x as usize);
+    }
+    let mut y_map = Vec::with_capacity(dst_h as usize);
     for y in 0..dst_h {
         let src_y = ((y as f32 / scale).floor() as u32).min(src_h.saturating_sub(1));
-        let row_base = (src_y as usize).saturating_mul(src_w as usize).saturating_mul(4);
+        y_map.push(src_y as usize);
+    }
+
+    for y in 0..dst_h {
+        let src_y = y_map[y as usize];
+        let row_base = src_y.saturating_mul(src_w as usize).saturating_mul(4);
         for x in 0..dst_w {
-            let src_x = ((x as f32 / scale).floor() as u32).min(src_w.saturating_sub(1));
-            let idx = row_base + (src_x as usize).saturating_mul(4);
+            let src_x = x_map[x as usize];
+            let idx = row_base + src_x.saturating_mul(4);
             rgb.push(raw[idx]);
             rgb.push(raw[idx + 1]);
             rgb.push(raw[idx + 2]);
