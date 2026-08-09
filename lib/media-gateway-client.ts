@@ -155,10 +155,25 @@ export class MediaGatewayClient {
 
     ws.onmessage = (event) => {
       this.lastPongAt = Date.now();
-      if (typeof event.data === "string") return;
+      
+      // Handle string/JSON pong or control packets
+      if (typeof event.data === "string") {
+        try {
+          const packet = JSON.parse(event.data);
+          for (const listener of this.listeners) {
+            listener({ type: "json", packet } as any);
+          }
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      // Handle ArrayBuffer / Blob binary frames (Screen/Camera JPEG/WebP)
       for (const listener of this.listeners) {
         try {
-          listener(event.data as ArrayBuffer | Blob);
+          // Wrap in expected { type: "binary", data } wrapper
+          listener({ type: "binary", data: event.data } as any);
         } catch {
           // ignore
         }

@@ -239,7 +239,13 @@ export default function ScreenPage() {
     setIsStreaming(true);
     setCommandStatus("Starting stream...");
 
-    // Start stream immediately with selected quality and target FPS
+    // 1. Ensure Media WebSocket is connected for binary frames
+    // (Agar aapke pass media gateway connect hook/instance ha)
+    if (typeof window !== "undefined" && (window as any).mediaGatewayClient) {
+      void (window as any).mediaGatewayClient.connect(target, "screen");
+    }
+
+    // 2. Dispatch start command to agent
     dispatchControl(
       "START_SCREEN_STREAM",
       { quality: streamQualityRef.current, target_fps: streamFpsRef.current },
@@ -252,13 +258,11 @@ export default function ScreenPage() {
       // ignore
     }
 
-    // Display metadata in background (does not block video)
     void refreshDevices().then(() => {
       dispatchControl("PROBE_DISPLAYS", {}, target);
       dispatchControl("LIST_DISPLAYS", {}, target);
     });
   }, [dispatchControl, refreshDevices, resolveTarget]);
-
   const stopStream = useCallback(() => {
     dispatchControl("STOP_SCREEN_STREAM", {});
     resetPreview();
