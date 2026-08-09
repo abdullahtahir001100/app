@@ -257,27 +257,31 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                 return;
             }
 
-            // Agent media: ZV framing — must AUTH within 5s or drop (browsers must use ticket).
-            adaptAgentMediaSocket(ws);
-            const parser = new FrameParser();
-            ws.mediaAuthTimer = setTimeout(() => {
-                if (!ws.mediaAuth && !ws.controlAuth && ws.readyState === WebSocket.OPEN) {
-                    try { ws.close(); } catch (_) {}
-                }
-            }, 5000);
-            ws.on('message', (data) => {
-                const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                const frames = parser.push(chunk);
-                for (const frame of frames) {
-                    void onFrame(ws, frame);
-                }
-                if (ws.mediaAuth || ws.controlAuth) {
-                    if (ws.mediaAuthTimer) {
-                        clearTimeout(ws.mediaAuthTimer);
-                        ws.mediaAuthTimer = null;
+                        // Agent media: ZV framing — must AUTH within 5s or drop (browsers must use ticket).
+                adaptAgentMediaSocket(ws);
+                const parser = new FrameParser();
+                ws.mediaAuthTimer = setTimeout(() => {
+                    if (!ws.mediaAuth && !ws.controlAuth && ws.readyState === WebSocket.OPEN) {
+                        try { ws.close(); } catch (_) {}
                     }
-                }
-            });
+                }, 5000);
+                ws.on('message', async (data) => {
+                    const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                    const frames = parser.push(chunk);
+                    
+                    for (const frame of frames) {
+                        // onFrame async authentication karti ha is liye await lagana zaroori ha
+                        await onFrame(ws, frame);
+                    }
+                    
+                    // Auth finish hone ke baad flags check honge aor timer clear hoga
+                    if (ws.mediaAuth || ws.controlAuth) {
+                        if (ws.mediaAuthTimer) {
+                            clearTimeout(ws.mediaAuthTimer);
+                            ws.mediaAuthTimer = null;
+                        }
+                    }
+                });
             ws.on('close', () => {
                 if (ws.mediaAuthTimer) {
                     clearTimeout(ws.mediaAuthTimer);
