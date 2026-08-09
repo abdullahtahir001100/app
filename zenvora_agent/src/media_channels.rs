@@ -116,7 +116,7 @@ pub fn spawn_media_channel(
     channel_name: String,
     stop_flag: Option<Arc<AtomicBool>>,
 ) -> MediaChannel {
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(1);
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(4);
     let (ack_tx, ack_rx) = broadcast::channel::<Value>(16);
     let outbound_tx = tx.clone();
 

@@ -327,8 +327,18 @@ fn capture_stream_jpeg_fast(
         }
     }
 
-    let img = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(dst_w, dst_h, rgb)?;
-    encode_rgb_jpeg(&img, dst_w, quality, imageops::FilterType::Nearest)
+    // Encode directly — the image is already at the target resolution, skip resize_rgb.
+    let mut jpeg_bytes = Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize) / 8);
+    let encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, quality);
+    if encoder
+        .write_image(&rgb, dst_w, dst_h, ExtendedColorType::Rgb8)
+        .is_ok()
+        && !jpeg_bytes.is_empty()
+    {
+        Some(jpeg_bytes)
+    } else {
+        None
+    }
 }
 
 fn capture_screen_jpeg(state: &ScreenState, high_quality: bool) -> Option<Vec<u8>> {

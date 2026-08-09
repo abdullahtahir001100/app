@@ -185,20 +185,30 @@ fn schedule_screen_capture(
     let media_tx = media_tx.clone();
     let busy = Arc::clone(screen_busy);
 
+    // Spawn a non‑blocking task that captures a single JPEG frame and sends it over the media channel.
+    // Regardless of success or failure we must always clear the busy flag so that future frames can fire.
     tokio::spawn(async move {
-        let jpeg = tokio::task::spawn_blocking(move || {
+        // Capture the screen (blocking) on a dedicated thread pool.
+        let jpeg_result = tokio::task::spawn_blocking(move || {
             capture_display_jpeg(active_index, false, settings)
         })
-            .await
-            .ok()
-            .flatten();
+        .await;
 
-        if let Some(jpeg) = jpeg {
+        // If the capture succeeded, send it through the media channel.
+        if let Ok(Some(jpeg)) = jpeg_result {
             let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
-            // Media WS only — never flood /ws/gateway (stalls dashboard heartbeats).
-            let _ = media_tx.as_ref().map(|tx| tx.try_send(binary));
+            if let Some(tx) = media_tx.as_ref() {
+                // Instant non-blocking send. If buffer is full (slow network), drop frame cleanly
+                // so agent Tokio threads NEVER block and heartbeats NEVER timeout.
+                if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(binary) {
+                    // Frame dropped cleanly due to network lag — no disconnection!
+                }
+            } else {
+                eprintln!("[SCREEN] screen_media_tx is None while streaming");
+            }
         }
 
+        // Always clear the busy flag so the next capture can proceed.
         busy.store(false, Ordering::Release);
     });
 }

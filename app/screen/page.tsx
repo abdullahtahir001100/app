@@ -31,25 +31,40 @@ import {
   type MediaTransport,
 } from "@/lib/media-transport";
 
-type StreamQuality = "low" | "medium" | "high" | "ultra";
+type StreamQuality = "saver" | "low" | "medium" | "high" | "ultra";
 
-const QUALITY_OPTIONS: { value: StreamQuality; label: string; hint: string }[] = [
-  { value: "low", label: "Low", hint: "960p · fastest" },
-  { value: "medium", label: "Medium", hint: "1280p · balanced" },
-  { value: "high", label: "High", hint: "1600p · sharp" },
-  { value: "ultra", label: "Ultra", hint: "1920p · best clarity" },
+const QUALITY_OPTIONS: { value: StreamQuality; label: string; hint: string; recommended?: boolean }[] = [
+  { value: "saver", label: "Slow Net ⭐", hint: "640p · 8 FPS (Zero disconnects)", recommended: true },
+  { value: "medium", label: "Balanced", hint: "850p · 12 FPS (Recommended)" },
+  { value: "high", label: "Fast Net", hint: "1100p · 18 FPS (High def)" },
+  { value: "ultra", label: "Ultra / LAN", hint: "1440p · 25 FPS (Full quality)" },
 ];
+
+const FPS_OPTIONS = [5, 8, 12, 15, 20, 30];
 
 function loadSavedQuality(): StreamQuality {
   try {
     const saved = sessionStorage.getItem("zenvora_screen_quality");
-    if (saved === "low" || saved === "medium" || saved === "high" || saved === "ultra") {
+    if (saved === "saver" || saved === "low" || saved === "medium" || saved === "high" || saved === "ultra") {
       return saved;
     }
   } catch {
     // ignore
   }
-  return "medium";
+  return "saver"; // Default to saver mode for maximum stability on slow internet
+}
+
+function loadSavedFps(): number {
+  try {
+    const saved = sessionStorage.getItem("zenvora_screen_fps");
+    if (saved) {
+      const num = parseInt(saved, 10);
+      if (FPS_OPTIONS.includes(num)) return num;
+    }
+  } catch {
+    // ignore
+  }
+  return 8;
 }
 
 export default function ScreenPage() {
@@ -102,8 +117,10 @@ export default function ScreenPage() {
   const [volume, setVolume] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamQuality, setStreamQuality] = useState<StreamQuality>(loadSavedQuality);
+  const [streamFps, setStreamFps] = useState<number>(loadSavedFps);
 
   const streamQualityRef = useRef<StreamQuality>(streamQuality);
+  const streamFpsRef = useRef<number>(streamFps);
 
   const activeDisplayRef = useRef("");
   const moveThrottleRef = useRef(0);
@@ -115,6 +132,10 @@ export default function ScreenPage() {
   useEffect(() => {
     streamQualityRef.current = streamQuality;
   }, [streamQuality]);
+
+  useEffect(() => {
+    streamFpsRef.current = streamFps;
+  }, [streamFps]);
 
   useEffect(() => {
     setMediaTransport(getPreferredMediaTransport());
@@ -218,8 +239,12 @@ export default function ScreenPage() {
     setIsStreaming(true);
     setCommandStatus("Starting stream...");
 
-    // Start stream immediately with selected quality
-    dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current }, target);
+    // Start stream immediately with selected quality and target FPS
+    dispatchControl(
+      "START_SCREEN_STREAM",
+      { quality: streamQualityRef.current, target_fps: streamFpsRef.current },
+      target
+    );
 
     try {
       sessionStorage.setItem("zenvora_screen_streaming", "1");
@@ -406,13 +431,31 @@ export default function ScreenPage() {
       // ignore
     }
 
-    dispatchControl("SET_SCREEN_QUALITY", { quality });
+    dispatchControl("SET_SCREEN_QUALITY", { quality, target_fps: streamFpsRef.current });
     if (isStreaming) {
       resetPreview();
-      dispatchControl("START_SCREEN_STREAM", { quality });
+      dispatchControl("START_SCREEN_STREAM", { quality, target_fps: streamFpsRef.current });
       setCommandStatus(`Quality set to ${quality} — refreshing stream...`);
     } else {
       setCommandStatus(`Quality set to ${quality}.`);
+    }
+  };
+
+  const handleFpsChange = (fps: number) => {
+    setStreamFps(fps);
+    streamFpsRef.current = fps;
+    try {
+      sessionStorage.setItem("zenvora_screen_fps", String(fps));
+    } catch {
+      // ignore
+    }
+
+    dispatchControl("SET_SCREEN_QUALITY", { quality: streamQualityRef.current, target_fps: fps });
+    if (isStreaming) {
+      dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current, target_fps: fps });
+      setCommandStatus(`Stream set to ${fps} FPS.`);
+    } else {
+      setCommandStatus(`Frame rate set to ${fps} FPS.`);
     }
   };
 
@@ -614,7 +657,7 @@ export default function ScreenPage() {
               <Card className="p-4 border border-border bg-card">
                 <div className="flex items-center gap-2 mb-3">
                   <Sparkles className="h-4 w-4 text-muted-foreground" />
-                  <Label className="text-sm font-semibold">Stream Quality</Label>
+                  <Label className="text-sm font-semibold">Network Speed & Quality</Label>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {QUALITY_OPTIONS.map((option) => (
@@ -633,6 +676,35 @@ export default function ScreenPage() {
                     </button>
                   ))}
                 </div>
+              </Card>
+
+              <Card className="p-4 border border-border bg-card">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                    <Label className="text-sm font-semibold">Frame Rate (FPS)</Label>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-emerald-500">{streamFps} FPS</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {FPS_OPTIONS.map((fps) => (
+                    <button
+                      key={fps}
+                      type="button"
+                      onClick={() => handleFpsChange(fps)}
+                      className={`rounded-md border py-1.5 text-center text-xs font-mono transition ${
+                        streamFps === fps
+                          ? "border-foreground bg-foreground text-background font-bold"
+                          : "border-border hover:border-foreground/40 bg-background text-muted-foreground"
+                      }`}
+                    >
+                      {fps} FPS
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2.5 font-mono">
+                  💡 Choose 5-8 FPS for slow/mobile internet to eliminate freezing & disconnects.
+                </p>
               </Card>
 
               <Card className="p-4 border border-border bg-card space-y-4">

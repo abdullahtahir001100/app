@@ -24,12 +24,12 @@ pub struct ScreenState {
 }
 
 pub fn quality_preset(name: &str) -> (u32, u8, u32) {
-    // (max_width, jpeg_quality, target_fps) — favor latency over fidelity
+    // (max_width, jpeg_quality, target_fps) — tailored for real-world internet performance
     match name.to_lowercase().as_str() {
-        "low" => (720, 45, 30),
-        "high" => (1280, 68, 20),
-        "ultra" => (1600, 75, 15),
-        _ => (960, 55, 28), // medium — snappy remote control default
+        "saver" | "low" => (640, 35, 8),   // Super lightweight for slow internet (~0.8 Mbps, zero lag)
+        "high" => (1100, 62, 18),           // Fast connection (~5.5 Mbps)
+        "ultra" => (1440, 72, 25),          // LAN / Ultra connection (~12 Mbps)
+        _ => (850, 48, 12),                 // Medium / Balanced (~2.5 Mbps default)
     }
 }
 
@@ -43,10 +43,10 @@ impl ScreenState {
             volume: 100,
             streaming_active: false,
             detected_displays: Vec::new(),
-            target_fps: 28,
+            target_fps: 12,
             last_sent_text: String::new(),
-            stream_max_width: 960,
-            stream_jpeg_quality: 55,
+            stream_max_width: 850,
+            stream_jpeg_quality: 48,
             stream_quality: "medium".to_string(),
         }
     }
@@ -58,24 +58,37 @@ impl ScreenState {
         self.stream_jpeg_quality = jpeg_quality;
         self.target_fps = target_fps;
         println!(
-            "--> [SCREEN] Quality set to {} ({}px, q{})",
-            self.stream_quality, max_width, jpeg_quality
+            "--> [SCREEN] Quality set to {} ({}px, q{}, {} FPS)",
+            self.stream_quality, max_width, jpeg_quality, target_fps
         );
     }
 
     pub fn apply_quality_from_payload(&mut self, payload: &Value) {
         if let Some(quality) = payload.get("quality").and_then(|v| v.as_str()) {
             self.set_stream_quality(quality);
-            return;
-        }
-        if let Some(level) = payload.get("quality_level").and_then(|v| v.as_u64()) {
+        } else if let Some(level) = payload.get("quality_level").and_then(|v| v.as_u64()) {
             let name = match level {
-                1 => "low",
+                1 => "saver",
                 3 => "high",
                 4 => "ultra",
                 _ => "medium",
             };
             self.set_stream_quality(name);
+        }
+
+        // Custom FPS override if supplied in payload
+        if let Some(fps) = payload
+            .get("target_fps")
+            .or_else(|| payload.get("fps"))
+            .and_then(|v| v.as_u64())
+        {
+            self.target_fps = (fps as u32).clamp(1, 60);
+            println!("--> [SCREEN] Custom target FPS set to {}", self.target_fps);
+        }
+
+        // Custom max width override if supplied in payload
+        if let Some(w) = payload.get("max_width").and_then(|v| v.as_u64()) {
+            self.stream_max_width = (w as u32).clamp(320, 3840);
         }
     }
 
