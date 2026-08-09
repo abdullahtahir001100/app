@@ -123,7 +123,7 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
       const { deviceId, frame } = unwrapDeviceBinaryFrame(buffer);
       const selected = selectedDeviceRef?.current || "";
       if (deviceId && selected && deviceId !== selected) return;
-
+//aa
       if (frame.length < 4) return;
       const frameType = frame[0];
       if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
