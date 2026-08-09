@@ -352,60 +352,115 @@ export function useScreenRemote({
    * BINARY FRAME PROCESSING
    * ============================================================
    */
+  
   const processBinaryPayload = useCallback(
     (payload: ArrayBuffer | Blob) => {
+      // const decodeAndPaint = (buffer: Uint8Array) => {
+        
+      //   if (buffer.length < 4) return;
+
+      //   const { deviceId, frame } = unwrapDeviceBinaryFrame(buffer);
+
+      //   /**
+      //    * Multi-device isolation.
+      //    */
+      //   const selected = selectedDeviceRef?.current || "";
+
+      //   if (deviceId && selected && deviceId !== selected) {
+      //     return;
+      //   }
+
+      //   if (frame.length < 4) {
+      //     return;
+      //   }
+
+      //   /**
+      //    * First byte is frame type.
+      //    */
+      //   const frameType = frame[0];
+
+      //   if (
+      //     frameType !== FRAME_SCREEN_STREAM &&
+      //     frameType !== FRAME_SCREEN_SNAPSHOT
+      //   ) {
+      //     return;
+      //   }
+
+      //   /**
+      //    * Everything after frame type is JPEG data.
+      //    */
+      //   const jpegBytes = frame.subarray(1);
+
+      //   if (jpegBytes.length < 100) {
+      //     return;
+      //   }
+
+      //   /**
+      //    * Wrap JPEG bytes into Blob.
+      //    */
+      //   const jpegBlob = new Blob([jpegBytes], {
+      //     type: "image/jpeg",
+      //   });
+
+      //   /**
+      //    * Latest-frame-only paint pipeline.
+      //    */
+      //   paintFrameRef.current(jpegBlob);
+      // };
+
       const decodeAndPaint = (buffer: Uint8Array) => {
-        if (buffer.length < 4) return;
-
+        console.log("[SCREEN] binary received:", buffer.length);
+      
+        if (buffer.length < 4) {
+          console.log("[SCREEN] buffer too small");
+          return;
+        }
+      
         const { deviceId, frame } = unwrapDeviceBinaryFrame(buffer);
-
-        /**
-         * Multi-device isolation.
-         */
+      
+        console.log("[SCREEN] unwrapped:", {
+          deviceId,
+          frameLength: frame.length,
+          frameType: frame[0],
+        });
+      
         const selected = selectedDeviceRef?.current || "";
-
+      
         if (deviceId && selected && deviceId !== selected) {
+          console.log("[SCREEN] WRONG DEVICE:", {
+            deviceId,
+            selected,
+          });
           return;
         }
-
+      
         if (frame.length < 4) {
+          console.log("[SCREEN] frame too small");
           return;
         }
-
-        /**
-         * First byte is frame type.
-         */
+      
         const frameType = frame[0];
-
+      
         if (
           frameType !== FRAME_SCREEN_STREAM &&
           frameType !== FRAME_SCREEN_SNAPSHOT
         ) {
+          console.log("[SCREEN] ignored frame type:", frameType);
           return;
         }
-
-        /**
-         * Everything after frame type is JPEG data.
-         */
+      
         const jpegBytes = frame.subarray(1);
-
-        if (jpegBytes.length < 100) {
-          return;
-        }
-
-        /**
-         * Wrap JPEG bytes into Blob.
-         */
+      
+        console.log("[SCREEN] JPEG:", jpegBytes.length);
+      
         const jpegBlob = new Blob([jpegBytes], {
           type: "image/jpeg",
         });
-
-        /**
-         * Latest-frame-only paint pipeline.
-         */
+      
+        console.log("[SCREEN] sending to paintFrame");
+      
         paintFrameRef.current(jpegBlob);
       };
-
       /**
        * Blob payload.
        */
