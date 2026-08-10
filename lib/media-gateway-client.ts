@@ -153,33 +153,68 @@ export class MediaGatewayClient {
       }, HEARTBEAT_INTERVAL_MS);
     };
 
+    // ws.onmessage = (event) => {
+
+    //   this.lastPongAt = Date.now();
+    //   if (typeof event.data === "string") return;
+    //   for (const listener of this.listeners) {
+    //     try {
+    //       listener(event.data as ArrayBuffer | Blob);
+    //     } catch {
+    //       // ignore
+    //     }
+    //   }
+    // };
+ 
     ws.onmessage = (event) => {
       this.lastPongAt = Date.now();
-      
-      // Handle string/JSON pong or control packets
+    
+      console.log("[MEDIA] RECEIVED:", {
+        type: typeof event.data,
+        isArrayBuffer: event.data instanceof ArrayBuffer,
+        isBlob: event.data instanceof Blob,
+    
+        byteLength:
+          event.data instanceof ArrayBuffer
+            ? event.data.byteLength
+            : null,
+    
+        blobSize:
+          event.data instanceof Blob
+            ? event.data.size
+            : null,
+      });
+    
       if (typeof event.data === "string") {
-        try {
-          const packet = JSON.parse(event.data);
-          for (const listener of this.listeners) {
-            listener({ type: "json", packet } as any);
-          }
-        } catch {
-          // ignore
-        }
+        console.log("[MEDIA] TEXT:", event.data);
         return;
       }
-
-      // Handle ArrayBuffer / Blob binary frames (Screen/Camera JPEG/WebP)
+    
+      // Empty binary ko ignore karo
+      if (
+        event.data instanceof ArrayBuffer &&
+        event.data.byteLength === 0
+      ) {
+        console.warn("[MEDIA] Empty ArrayBuffer received");
+        return;
+      }
+    
+      if (
+        event.data instanceof Blob &&
+        event.data.size === 0
+      ) {
+        console.warn("[MEDIA] Empty Blob received");
+        return;
+      }
+    
       for (const listener of this.listeners) {
         try {
-          // Wrap in expected { type: "binary", data } wrapper
-          listener({ type: "binary", data: event.data } as any);
-        } catch {
-          // ignore
+          listener(event.data as ArrayBuffer | Blob);
+        } catch (err) {
+          console.warn("[MEDIA] Listener error:", err);
         }
       }
     };
-
     ws.onclose = () => {
       this.connecting = false;
       this.stopHeartbeat();
