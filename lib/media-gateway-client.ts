@@ -173,12 +173,10 @@ export class MediaGatewayClient {
         type: typeof event.data,
         isArrayBuffer: event.data instanceof ArrayBuffer,
         isBlob: event.data instanceof Blob,
-    
         byteLength:
           event.data instanceof ArrayBuffer
             ? event.data.byteLength
             : null,
-    
         blobSize:
           event.data instanceof Blob
             ? event.data.size
@@ -186,32 +184,23 @@ export class MediaGatewayClient {
       });
     
       if (typeof event.data === "string") {
-        console.log("[MEDIA] TEXT:", event.data);
-        return;
-      }
-    
-      // Empty binary ko ignore karo
-      if (
-        event.data instanceof ArrayBuffer &&
-        event.data.byteLength === 0
-      ) {
-        console.warn("[MEDIA] Empty ArrayBuffer received");
-        return;
-      }
-    
-      if (
-        event.data instanceof Blob &&
-        event.data.size === 0
-      ) {
-        console.warn("[MEDIA] Empty Blob received");
+        console.log(
+          "[MEDIA] TEXT:",
+          event.data.slice(0, 500)
+        );
         return;
       }
     
       for (const listener of this.listeners) {
         try {
-          listener(event.data as ArrayBuffer | Blob);
-        } catch (err) {
-          console.warn("[MEDIA] Listener error:", err);
+          listener(
+            event.data as ArrayBuffer | Blob
+          );
+        } catch (error) {
+          console.error(
+            "[MEDIA] listener error:",
+            error
+          );
         }
       }
     };
