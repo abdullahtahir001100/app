@@ -153,57 +153,18 @@ export class MediaGatewayClient {
       }, HEARTBEAT_INTERVAL_MS);
     };
 
-    // ws.onmessage = (event) => {
-
-    //   this.lastPongAt = Date.now();
-    //   if (typeof event.data === "string") return;
-    //   for (const listener of this.listeners) {
-    //     try {
-    //       listener(event.data as ArrayBuffer | Blob);
-    //     } catch {
-    //       // ignore
-    //     }
-    //   }
-    // };
- 
     ws.onmessage = (event) => {
       this.lastPongAt = Date.now();
-    
-      console.log("[MEDIA] RECEIVED:", {
-        type: typeof event.data,
-        isArrayBuffer: event.data instanceof ArrayBuffer,
-        isBlob: event.data instanceof Blob,
-        byteLength:
-          event.data instanceof ArrayBuffer
-            ? event.data.byteLength
-            : null,
-        blobSize:
-          event.data instanceof Blob
-            ? event.data.size
-            : null,
-      });
-    
-      if (typeof event.data === "string") {
-        console.log(
-          "[MEDIA] TEXT:",
-          event.data.slice(0, 500)
-        );
-        return;
-      }
-    
+      if (typeof event.data === "string") return;
       for (const listener of this.listeners) {
         try {
-          listener(
-            event.data as ArrayBuffer | Blob
-          );
-        } catch (error) {
-          console.error(
-            "[MEDIA] listener error:",
-            error
-          );
+          listener(event.data as ArrayBuffer | Blob);
+        } catch {
+          // ignore
         }
       }
     };
+
     ws.onclose = () => {
       this.connecting = false;
       this.stopHeartbeat();

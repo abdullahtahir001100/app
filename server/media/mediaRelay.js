@@ -40,45 +40,12 @@ function unregisterMediaSocket(socket) {
     }
 }
 
-// function handleMediaFrame(socket, frame) {
-//     const auth = socket.mediaAuth;
-//     if (!auth) return;
-
-//     if (frame.msgType === MsgType.MEDIA_FRAME) {
-//         broadcastMediaFrame(auth.deviceId, auth.channel, frame.payload);
-//     }
-// }
 function handleMediaFrame(socket, frame) {
     const auth = socket.mediaAuth;
-
-    console.log('[MEDIA DEBUG] FRAME RECEIVED', {
-        msgType: frame.msgType,
-        seq: String(frame.seq),
-        bytes: frame.payload?.length || 0,
-        deviceId: auth?.deviceId || null,
-        channel: auth?.channel || null,
-        authenticated: !!auth,
-    });
-
-    if (!auth) {
-        console.log('[MEDIA DEBUG] DROP - no mediaAuth');
-        return;
-    }
+    if (!auth) return;
 
     if (frame.msgType === MsgType.MEDIA_FRAME) {
-        console.log('[MEDIA DEBUG] MEDIA_FRAME from Rust', {
-            deviceId: auth.deviceId,
-            channel: auth.channel,
-            bytes: frame.payload?.length || 0,
-        });
-
-        const sent = broadcastMediaFrame(
-            auth.deviceId,
-            auth.channel,
-            frame.payload
-        );
-
-        console.log('[MEDIA DEBUG] sent to dashboards:', sent);
+        broadcastMediaFrame(auth.deviceId, auth.channel, frame.payload);
     }
 }
 
