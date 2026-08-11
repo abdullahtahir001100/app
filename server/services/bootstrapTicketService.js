@@ -98,16 +98,18 @@ function getTicket(code) {
 }
 
 /**
- * Paste into Admin PowerShell (recommended). No irm|iex — that hangs on many PCs.
+ * Paste into Admin PowerShell (recommended).
+ * Prefer curl (has timeouts) — WebClient.DownloadString often hangs with no output.
  */
 function buildBootstrapCommand(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
     return [
+        "Write-Host 'Zenvora: fetching install script...' -ForegroundColor Cyan;",
         "$ProgressPreference='SilentlyContinue';",
         '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;',
-        `iex ((New-Object Net.WebClient).DownloadString('${url}'))`,
-    ].join('');
+        `curl.exe -fsSL --connect-timeout 20 --max-time 60 '${url}' | powershell -NoP -Ep Bypass -`,
+    ].join(' ');
 }
 
 /** From cmd.exe / Run dialog — single-quoted -c so $ vars are not expanded by outer shell. */
@@ -142,6 +144,8 @@ function buildInstallScript(ticket) {
     const scriptUrl = `${ticket.apiBase.replace(/'/g, "''")}/r/${code}`;
 
     return [
+        "Write-Host 'Zenvora bootstrap starting...' -ForegroundColor Cyan",
+        "try {",
         "$ErrorActionPreference = 'Stop'",
         "$ProgressPreference = 'SilentlyContinue'",
         "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch {} }",
@@ -283,6 +287,11 @@ function buildInstallScript(ticket) {
         "Step 6 7 'Agent started — wait for Dashboard online status'",
         "Ok 'Done. Keep Pair Device modal open for live logs.'",
         "Step 7 7 'Complete'",
+        "} catch {",
+        "  Fail ('Bootstrap failed: ' + $_.Exception.Message)",
+        "  Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed",
+        "  throw",
+        "}",
     ].join("\r\n");
 }
 

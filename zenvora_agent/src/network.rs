@@ -580,7 +580,7 @@ pub async fn run_network_loop(
                             false,
                         );
                         let wait_secs = if is_duplicate {
-                            120
+                            45
                         } else if is_retry {
                             2
                         } else {

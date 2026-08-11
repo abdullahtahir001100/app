@@ -211,26 +211,12 @@ export class MediaGatewayClient {
       return;
     }
 
+    // Do NOT abort CONNECTING sockets — abort loops caused code=1006 storms on Railway.
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
-    this.clearHandshakeTimer();
-    this.handshakeTimer = setTimeout(() => {
-      if (ws.readyState !== WebSocket.OPEN && this.ws === ws) {
-        console.warn(
-          `[MEDIA-DEBUG] handshake timeout device=${this.deviceId} channel=${this.channel}`
-        );
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-      }
-    }, HANDSHAKE_TIMEOUT_MS);
-
     ws.onopen = () => {
       if (this.ws !== ws) return;
-      this.clearHandshakeTimer();
       this.connecting = false;
       this.reconnectAttempt = 0;
       this.lastPongAt = Date.now();

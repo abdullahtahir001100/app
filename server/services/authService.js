@@ -42,7 +42,9 @@ function signWsTicket(user) {
             purpose: 'ws'
         },
         getJwtSecret(),
-        { expiresIn: '2m' }
+        // 2m was too short under reconnect storms → expired ticket → pending →
+        // "dashboard authentication required".
+        { expiresIn: '15m' }
     );
 }
 

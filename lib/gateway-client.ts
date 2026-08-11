@@ -350,8 +350,8 @@ class GatewayClient {
 
   private getFreshCachedTicket(): string | null {
     if (!this.cachedWsTicket) return null;
-    // Tickets are short-lived; reuse for ~45s to skip HTTP on reconnect storms.
-    if (Date.now() - this.cachedWsTicketAt > 45_000) {
+    // Tickets last 15m server-side; reuse ~10m client-side.
+    if (Date.now() - this.cachedWsTicketAt > 10 * 60_000) {
       this.cachedWsTicket = null;
       return null;
     }
@@ -412,7 +412,6 @@ class GatewayClient {
     this.ws = ws;
     let lastPongAt = Date.now();
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    let opened = false;
 
     const stopHeartbeat = () => {
       if (heartbeatTimer) {
@@ -421,22 +420,9 @@ class GatewayClient {
       }
     };
 
-    // Prod TLS/proxy handshakes often exceed 4s — aborting early causes
-    // "WebSocket is closed before the connection is established".
-    const handshakeTimer = setTimeout(() => {
-      if (!opened && ws.readyState !== WebSocket.OPEN && this.ws === ws) {
-        console.warn("[GATEWAY] handshake timeout — retrying");
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-      }
-    }, 20_000);
+    // Do NOT abort CONNECTING sockets — that caused "closed before established" loops on Railway.
 
     ws.onopen = () => {
-      opened = true;
-      clearTimeout(handshakeTimer);
       this.connecting = false;
       this.reconnectAttempt = 0;
       lastPongAt = Date.now();
@@ -503,6 +489,9 @@ class GatewayClient {
           } catch {
             // ignore
           }
+          // Immediately reconnect with a fresh ticket (don't wait full backoff).
+          this.reconnectAttempt = 0;
+          setTimeout(() => this.ensureConnected(), 300);
           return;
         }
 
@@ -600,7 +589,6 @@ class GatewayClient {
     };
 
     ws.onclose = () => {
-      clearTimeout(handshakeTimer);
       stopHeartbeat();
       this.connecting = false;
       if (this.ws === ws) this.ws = null;

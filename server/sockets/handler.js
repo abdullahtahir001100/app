@@ -664,18 +664,19 @@ async function handleSocketMessage(ws, message) {
                     ? activeConnections.get(connectionKey)
                     : null;
 
-            // Never kick a healthy live agent. Replace only true zombies / dead sockets.
-            // (Age-only replace caused reconnect races: CLOSING old + new connect → replace storm.)
+            // Prefer healthy OPEN agent. Silent >35s = zombie (missed heartbeats) → replace.
+            // Holding zombies for 90s blocked fresh installs with endless drop-duplicate.
             if (previousAgent && previousAgent !== ws && !previousAgent.superseded) {
                 const ready = previousAgent.readyState;
                 const lastAlive = Number(
                     previousAgent.lastAliveAt || previousAgent.registeredAt || 0
                 );
                 const silentMs = Date.now() - lastAlive;
+                const ageMs = Date.now() - Number(previousAgent.registeredAt || 0);
 
-                if (ready === 1 && silentMs < 90_000) {
+                if (ready === 1 && silentMs < 35_000) {
                     console.warn(
-                        `[GW-DEBUG] drop duplicate agent device=${deviceOrPanelId} existingAge=${Date.now() - Number(previousAgent.registeredAt || 0)}ms silent=${silentMs}ms`
+                        `[GW-DEBUG] drop duplicate agent device=${deviceOrPanelId} existingAge=${ageMs}ms silent=${silentMs}ms`
                     );
                     try {
                         ws.send(JSON.stringify({
@@ -684,12 +685,19 @@ async function handleSocketMessage(ws, message) {
                             message: 'agent already connected — stop extra ZenvoraAgent processes/services',
                         }));
                     } catch (_) {}
-                    try { ws.close(); } catch (_) {}
+                    // Let duplicate ack flush before close (avoids agent treating it as network error).
+                    setTimeout(() => {
+                        try { ws.close(); } catch (_) {}
+                    }, 150);
                     return;
                 }
 
-                // Old socket is mid-close while the same agent reconnects — don't replace-fight.
-                if (ready === 2 /* CLOSING */) {
+                if (ready === 1 && silentMs >= 35_000) {
+                    console.warn(
+                        `[GW-DEBUG] replace silent zombie device=${deviceOrPanelId} silent=${silentMs}ms`
+                    );
+                    // fall through to replace
+                } else if (ready === 2 /* CLOSING */) {
                     console.warn(
                         `[GW-DEBUG] defer agent reconnect device=${deviceOrPanelId} (previous CLOSING)`
                     );
@@ -700,7 +708,9 @@ async function handleSocketMessage(ws, message) {
                             message: 'previous session closing — retry shortly',
                         }));
                     } catch (_) {}
-                    try { ws.close(); } catch (_) {}
+                    setTimeout(() => {
+                        try { ws.close(); } catch (_) {}
+                    }, 150);
                     return;
                 }
             }

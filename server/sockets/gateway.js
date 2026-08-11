@@ -53,6 +53,7 @@ function authenticateGatewayRequest(req) {
     const tokenFromCookie = cookies[AUTH_COOKIE] || null;
     const tokenFromQuery = tokenFromUrl(req);
     const token = tokenFromQuery || tokenFromHeader || tokenFromCookie;
+    const pathOnly = String(req.url || '').split('?')[0];
 
     if (token) {
         const ticketUser = verifyWsTicket(token);
@@ -67,6 +68,16 @@ function authenticateGatewayRequest(req) {
                     role: user.role,
                     name: user.name,
                 },
+            };
+        }
+        // Browser sent a token but it is expired/invalid.
+        // NEVER fall through to pending — that causes "dashboard authentication required".
+        if (tokenFromQuery || pathOnly === '/ws/media') {
+            return {
+                ok: false,
+                kind: 'reject',
+                reason: 'invalid_or_expired_ticket',
+                ip: clientIp(req),
             };
         }
     }
