@@ -99,7 +99,8 @@ function getTicket(code) {
 
 /**
  * Paste into Admin PowerShell (recommended).
- * Same-session iex — do NOT pipe into a nested powershell (hides output / hangs).
+ * Multi-fallback fetch: curl -4, curl, Invoke-WebRequest, WebClient.
+ * Exit 28 is usually IPv6/firewall — force IPv4 first.
  */
 function buildBootstrapCommand(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
@@ -108,14 +109,41 @@ function buildBootstrapCommand(apiBase, code) {
         "Write-Host 'Zenvora: fetching install script...' -ForegroundColor Cyan;",
         "$ProgressPreference='SilentlyContinue';",
         '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;',
-        `$__zv = curl.exe -fsSL --connect-timeout 20 --max-time 60 '${url}';`,
-        'if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($__zv)) { Write-Host "Fetch failed (curl exit $LASTEXITCODE). Check network / code." -ForegroundColor Red; return };',
+        "try { [Net.ServicePointManager]::Expect100Continue = $false } catch {};",
+        `$__url = '${url}';`,
+        '$__zv = $null;',
+        'if (Get-Command curl.exe -ErrorAction SilentlyContinue) {',
+        '  Write-Host "Trying curl IPv4..." -ForegroundColor DarkCyan;',
+        '  $__zv = & curl.exe -4 -fsSL --connect-timeout 45 --max-time 120 --retry 2 --retry-delay 2 $__url 2>$null;',
+        '  if ($LASTEXITCODE -ne 0) { Write-Host "curl -4 failed (exit $LASTEXITCODE)" -ForegroundColor Yellow; $__zv = $null }',
+        '};',
+        'if ([string]::IsNullOrWhiteSpace($__zv) -and (Get-Command curl.exe -ErrorAction SilentlyContinue)) {',
+        '  Write-Host "Trying curl..." -ForegroundColor DarkCyan;',
+        '  $__zv = & curl.exe -fsSL --connect-timeout 45 --max-time 120 --retry 2 --retry-delay 2 $__url 2>$null;',
+        '  if ($LASTEXITCODE -ne 0) { Write-Host "curl failed (exit $LASTEXITCODE)" -ForegroundColor Yellow; $__zv = $null }',
+        '};',
+        'if ([string]::IsNullOrWhiteSpace($__zv)) {',
+        '  Write-Host "Trying Invoke-WebRequest..." -ForegroundColor DarkCyan;',
+        '  try { $__zv = (Invoke-WebRequest -Uri $__url -UseBasicParsing -TimeoutSec 90).Content } catch { Write-Host ("IWR failed: " + $_.Exception.Message) -ForegroundColor Yellow; $__zv = $null }',
+        '};',
+        'if ([string]::IsNullOrWhiteSpace($__zv)) {',
+        '  Write-Host "Trying WebClient..." -ForegroundColor DarkCyan;',
+        '  try { $__zv = (New-Object Net.WebClient).DownloadString($__url) } catch { Write-Host ("WebClient failed: " + $_.Exception.Message) -ForegroundColor Yellow; $__zv = $null }',
+        '};',
+        'if ([string]::IsNullOrWhiteSpace($__zv)) {',
+        '  Write-Host "Fetch failed — this PC cannot reach the server." -ForegroundColor Red;',
+        '  Write-Host "Open this URL in the SAME PC browser:" -ForegroundColor Yellow;',
+        '  Write-Host $__url -ForegroundColor Yellow;',
+        '  Write-Host "Also try: https://zenvora.abdullahtahir.me/api/health" -ForegroundColor Yellow;',
+        '  Write-Host "If browser also fails: DNS/firewall/ISP — try mobile hotspot." -ForegroundColor Yellow;',
+        '  return',
+        '};',
         'Write-Host "Zenvora: running installer..." -ForegroundColor Cyan;',
         'Invoke-Expression $__zv',
     ].join(' ');
 }
 
-/** From cmd.exe / Run dialog — single-quoted -c so $ vars are not expanded by outer shell. */
+/** From cmd.exe / Run dialog. */
 function buildBootstrapCommandCmd(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
@@ -123,17 +151,20 @@ function buildBootstrapCommandCmd(apiBase, code) {
         `Write-Host ''Zenvora: fetching...'' -ForegroundColor Cyan;` +
         `$ProgressPreference=''SilentlyContinue'';` +
         `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;` +
-        `$__zv = curl.exe -fsSL --connect-timeout 20 --max-time 60 ''${url}'';` +
-        `if ($LASTEXITCODE -ne 0) { Write-Host ''Fetch failed'' -ForegroundColor Red; return };` +
+        `$__url=''${url}'';` +
+        `$__zv=$null;` +
+        `if (Get-Command curl.exe -EA SilentlyContinue) { $__zv = curl.exe -4 -fsSL --connect-timeout 45 --max-time 120 $__url 2>$null };` +
+        `if ([string]::IsNullOrWhiteSpace($__zv)) { try { $__zv = (New-Object Net.WebClient).DownloadString($__url) } catch {} };` +
+        `if ([string]::IsNullOrWhiteSpace($__zv)) { Write-Host ''Fetch failed'' -ForegroundColor Red; return };` +
         `Invoke-Expression $__zv`;
     return `powershell -NoP -Ep Bypass -c '${inner}'`;
 }
 
-/** Win10+ curl one-liner (cmd / Run). Nested powershell OK here because parent is cmd. */
+/** Win10+ curl one-liner (cmd). Force IPv4. */
 function buildBootstrapCommandCurl(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
-    return `curl.exe -fsSL --connect-timeout 20 --max-time 60 "${url}" | powershell -NoP -Ep Bypass -`;
+    return `curl.exe -4 -fsSL --connect-timeout 45 --max-time 120 --retry 2 "${url}" | powershell -NoP -Ep Bypass -`;
 }
 
 /**
@@ -212,15 +243,24 @@ function buildInstallScript(ticket) {
         "  $tmp = $dest + '.part'",
         "  if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }",
         "  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue",
+        "  $okDl = $false",
         "  if ($curl) {",
-        "    & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 -A 'ZenvoraBootstrap/2.0' -o $tmp $url",
-        "    if ($LASTEXITCODE -ne 0) { throw \"curl exit $LASTEXITCODE\" }",
-        "  } else {",
+        "    Write-Host 'Download via curl IPv4...' -ForegroundColor DarkCyan",
+        "    & curl.exe -4 -L --fail --retry 3 --retry-delay 2 --connect-timeout 45 --max-time 300 -A 'ZenvoraBootstrap/2.0' -o $tmp $url",
+        "    if ($LASTEXITCODE -eq 0) { $okDl = $true } else { Warn ('curl -4 exit ' + $LASTEXITCODE) }",
+        "  }",
+        "  if (-not $okDl -and $curl) {",
+        "    Write-Host 'Download via curl...' -ForegroundColor DarkCyan",
+        "    & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 45 --max-time 300 -A 'ZenvoraBootstrap/2.0' -o $tmp $url",
+        "    if ($LASTEXITCODE -eq 0) { $okDl = $true } else { Warn ('curl exit ' + $LASTEXITCODE) }",
+        "  }",
+        "  if (-not $okDl) {",
+        "    Write-Host 'Download via WebRequest...' -ForegroundColor DarkCyan",
         "    $req = [Net.HttpWebRequest]::Create($url)",
         "    $req.Method = 'GET'",
         "    $req.UserAgent = 'ZenvoraBootstrap/2.0'",
-        "    $req.Timeout = 180000",
-        "    $req.ReadWriteTimeout = 180000",
+        "    $req.Timeout = 300000",
+        "    $req.ReadWriteTimeout = 300000",
         "    $req.KeepAlive = $false",
         "    $resp = $req.GetResponse()",
         "    try {",
@@ -231,6 +271,7 @@ function buildInstallScript(ticket) {
         "        while (($n = $src.Read($buf, 0, $buf.Length)) -gt 0) { $fs.Write($buf, 0, $n) }",
         "      } finally { $fs.Close() }",
         "    } finally { $resp.Close() }",
+        "    $okDl = $true",
         "  }",
         "  if (-not (Test-Path $tmp) -or ((Get-Item $tmp).Length -lt 500000)) { throw 'Downloaded file too small or missing' }",
         "  Move-Item -Force $tmp $dest",
