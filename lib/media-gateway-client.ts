@@ -6,9 +6,11 @@
  */
 
 type MediaListener = (data: ArrayBuffer | Blob) => void;
+type MediaStateListener = (state: "connecting" | "open" | "closed" | "error") => void;
 
 const HEARTBEAT_INTERVAL_MS = 25_000;
-const HEARTBEAT_TIMEOUT_MS = 75_000;
+/** Only close if truly idle — frames + pongs both count as alive. */
+const HEARTBEAT_TIMEOUT_MS = 120_000;
 
 function nextBackoff(attempt: number): number {
   const steps = [1000, 2000, 5000, 10000, 20000, 30000];
@@ -18,6 +20,7 @@ function nextBackoff(attempt: number): number {
 export class MediaGatewayClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<MediaListener>();
+  private stateListeners = new Set<MediaStateListener>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -26,10 +29,38 @@ export class MediaGatewayClient {
   private channel = "";
   private closedByUser = false;
   private connecting = false;
+  private openWaiters: Array<{
+    resolve: (ok: boolean) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
 
   subscribe(listener: MediaListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onState(listener: MediaStateListener): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /** Wait until /ws/media is OPEN (or timeout). */
+  waitUntilOpen(timeoutMs = 12_000): Promise<boolean> {
+    if (this.isOpen()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.openWaiters = this.openWaiters.filter((w) => w.resolve !== resolve);
+        resolve(this.isOpen());
+      }, timeoutMs);
+      this.openWaiters.push({ resolve, timer });
+      if (!this.connecting && !this.isOpen()) {
+        void this.open();
+      }
+    });
   }
 
   async connect(deviceId: string, channel: string) {
@@ -46,26 +77,53 @@ export class MediaGatewayClient {
       this.reconnectTimer = null;
     }
     this.stopHeartbeat();
+    this.failOpenWaiters(false);
     try {
       this.ws?.close();
     } catch {
       // ignore
     }
     this.ws = null;
+    this.emitState("closed");
+  }
+
+  private emitState(state: "connecting" | "open" | "closed" | "error") {
+    for (const listener of this.stateListeners) {
+      try {
+        listener(state);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  private resolveOpenWaiters(ok: boolean) {
+    const waiters = this.openWaiters.splice(0);
+    for (const w of waiters) {
+      clearTimeout(w.timer);
+      w.resolve(ok);
+    }
+  }
+
+  private failOpenWaiters(ok: boolean) {
+    this.resolveOpenWaiters(ok);
   }
 
   private async fetchTicket(): Promise<string | null> {
     try {
-      // Must match server: GET /api/auth/ws-ticket (POST also supported).
       const res = await fetch("/api/auth/ws-ticket", {
         method: "GET",
         credentials: "include",
         cache: "no-store",
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.warn(`[MEDIA-DEBUG] ws-ticket HTTP ${res.status}`);
+        return null;
+      }
       const data = await res.json().catch(() => ({}));
       return typeof data?.ticket === "string" ? data.ticket : null;
-    } catch {
+    } catch (err) {
+      console.warn("[MEDIA-DEBUG] ws-ticket fetch failed", err);
       return null;
     }
   }
@@ -100,10 +158,13 @@ export class MediaGatewayClient {
     }
 
     this.connecting = true;
+    this.emitState("connecting");
     const ticket = await this.fetchTicket();
     if (!ticket) {
       console.warn("[MEDIA-DEBUG] ws-ticket missing — not opening /ws/media without auth");
       this.connecting = false;
+      this.emitState("error");
+      this.failOpenWaiters(false);
       this.scheduleReconnect();
       return;
     }
@@ -113,8 +174,11 @@ export class MediaGatewayClient {
     let ws: WebSocket;
     try {
       ws = new WebSocket(url);
-    } catch {
+    } catch (err) {
+      console.warn("[MEDIA-DEBUG] WebSocket construct failed", err);
       this.connecting = false;
+      this.emitState("error");
+      this.failOpenWaiters(false);
       this.scheduleReconnect();
       return;
     }
@@ -127,6 +191,8 @@ export class MediaGatewayClient {
       this.reconnectAttempt = 0;
       this.lastPongAt = Date.now();
       console.log(`[MEDIA-DEBUG] browser media open device=${this.deviceId} channel=${this.channel}`);
+      this.emitState("open");
+      this.resolveOpenWaiters(true);
       this.stopHeartbeat();
       this.heartbeatTimer = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) {
@@ -134,6 +200,9 @@ export class MediaGatewayClient {
           return;
         }
         if (Date.now() - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+          console.warn(
+            `[MEDIA-DEBUG] heartbeat timeout device=${this.deviceId} channel=${this.channel} idleMs=${Date.now() - this.lastPongAt}`
+          );
           this.stopHeartbeat();
           try {
             ws.close();
@@ -157,7 +226,10 @@ export class MediaGatewayClient {
 
     ws.onmessage = (event) => {
       this.lastPongAt = Date.now();
-      if (typeof event.data === "string") return;
+      if (typeof event.data === "string") {
+        // media_ping / dashboard_pong — keep-alive only
+        return;
+      }
       for (const listener of this.listeners) {
         try {
           listener(event.data as ArrayBuffer | Blob);
@@ -167,16 +239,23 @@ export class MediaGatewayClient {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.connecting = false;
       this.stopHeartbeat();
       if (this.ws === ws) this.ws = null;
+      console.warn(
+        `[MEDIA-DEBUG] media closed device=${this.deviceId} channel=${this.channel} code=${ev.code} reason=${ev.reason || "n/a"}`
+      );
+      this.emitState("closed");
+      this.failOpenWaiters(false);
       if (!this.closedByUser && this.listeners.size > 0) {
         this.scheduleReconnect();
       }
     };
 
     ws.onerror = () => {
+      console.warn(`[MEDIA-DEBUG] media error device=${this.deviceId} channel=${this.channel}`);
+      this.emitState("error");
       // onclose handles reconnect
     };
   }

@@ -96,6 +96,9 @@ export default function ScreenPage() {
     setActiveDisplay,
     resetPreview,
     mapPointerToRemote,
+    mediaReady,
+    mediaStatus,
+    ensureMediaReady,
   } = useScreenRemote({
     selectedDeviceRef,
     mediaDeviceId: selectedDevice || undefined,
@@ -192,11 +195,29 @@ export default function ScreenPage() {
       return;
     }
     if (!agentOnline) {
+      // Don't thrash reconnect — media issues must not mark agent offline.
       setCommandStatus("Agent offline — waiting for device...");
       return;
     }
+    if (isStreaming && !hasLiveFrame) {
+      setCommandStatus(
+        mediaReady
+          ? "Waiting for agent stream…"
+          : mediaStatus || "Connecting media socket…"
+      );
+      return;
+    }
     setCommandStatus(`Ready — ${selectedDevice || "agent"} online`);
-  }, [isConnected, agentOnline, selectedDevice, ensureConnected]);
+  }, [
+    isConnected,
+    agentOnline,
+    selectedDevice,
+    ensureConnected,
+    isStreaming,
+    hasLiveFrame,
+    mediaReady,
+    mediaStatus,
+  ]);
 
   const dispatchControl = useCallback(
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
@@ -237,20 +258,25 @@ export default function ScreenPage() {
 
     selectedDeviceRef.current = target;
     setIsStreaming(true);
-    setCommandStatus("Starting stream...");
+    setCommandStatus("Connecting media socket…");
 
-    // 1. Ensure Media WebSocket is connected for binary frames
-    // (Agar aapke pass media gateway connect hook/instance ha)
-    if (typeof window !== "undefined" && (window as any).mediaGatewayClient) {
-      void (window as any).mediaGatewayClient.connect(target, "screen");
+    const mediaOk = await ensureMediaReady(12_000);
+    if (!mediaOk) {
+      setCommandStatus("Media socket not ready — retry Start (check /api/auth/ws-ticket)");
+      // Still try start so agent prepares frames for when media reconnects.
+    } else {
+      setCommandStatus("Media ready — starting agent stream…");
     }
 
-    // 2. Dispatch start command to agent
-    dispatchControl(
+    const started = dispatchControl(
       "START_SCREEN_STREAM",
       { quality: streamQualityRef.current, target_fps: streamFpsRef.current },
       target
     );
+    if (!started) {
+      setCommandStatus("Could not send START_SCREEN_STREAM — gateway/agent offline");
+      return;
+    }
 
     try {
       sessionStorage.setItem("zenvora_screen_streaming", "1");
@@ -258,11 +284,10 @@ export default function ScreenPage() {
       // ignore
     }
 
-    void refreshDevices().then(() => {
-      dispatchControl("PROBE_DISPLAYS", {}, target);
-      dispatchControl("LIST_DISPLAYS", {}, target);
-    });
-  }, [dispatchControl, refreshDevices, resolveTarget]);
+    setCommandStatus("Waiting for agent stream…");
+    dispatchControl("PROBE_DISPLAYS", {}, target);
+    dispatchControl("LIST_DISPLAYS", {}, target);
+  }, [dispatchControl, ensureMediaReady, resolveTarget]);
   const stopStream = useCallback(() => {
     dispatchControl("STOP_SCREEN_STREAM", {});
     resetPreview();

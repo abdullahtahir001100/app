@@ -53,12 +53,18 @@ export default function DashboardPage() {
       gatewayDevices.map((device) => ({
         id: device.value,
         name: device.label || device.value,
-        model: device.platform || device.role || "Unknown",
+        model: device.platform && device.platform !== "unknown" ? device.platform : "",
         status: device.status === "online" ? ("online" as const) : ("offline" as const),
         battery: typeof device.battery === "number" ? device.battery : null,
         storage: typeof device.storage === "number" ? device.storage : null,
-        lastSeen: device.lastSeen ? new Date(device.lastSeen).toLocaleString() : "now",
-        network: device.localIp ? "LAN" : device.publicIp ? "WAN" : "Unknown",
+        lastSeen: device.lastSeen ? new Date(device.lastSeen).toLocaleString() : "—",
+        network: device.localIp
+          ? "LAN"
+          : device.publicIp
+            ? "WAN"
+            : device.network
+              ? device.network
+              : "",
         role: device.role || "AGENT",
         platform: device.platform,
         localIp: device.localIp,
@@ -666,7 +672,8 @@ export default function DashboardPage() {
                           <div>
                             <h3 className="font-semibold text-lg">{device.name}</h3>
                             <p className="text-sm text-muted-foreground">
-                              {device.model} · {device.role}
+                              {device.model ? `${device.model} · ${device.role}` : device.role}
+
                             </p>
                           </div>
                           <div className="ml-auto flex items-center gap-2">
@@ -697,13 +704,13 @@ export default function DashboardPage() {
                                         : device.battery > 20
                                           ? "bg-orange-600"
                                           : "bg-red-600"
-                                      : "bg-gray-400"
+                                      : "bg-transparent"
                                     }`}
                                   style={{ width: `${typeof device.battery === "number" ? device.battery : 0}%` }}
                                 />
                               </div>
                               <span className="text-sm font-mono">
-                                {typeof device.battery === "number" ? `${device.battery}%` : "N/A"}
+                                {typeof device.battery === "number" ? `${device.battery}%` : "—"}
                               </span>
                             </div>
                           </div>
@@ -718,7 +725,7 @@ export default function DashboardPage() {
                                 />
                               </div>
                               <span className="text-sm font-mono">
-                                {typeof device.storage === "number" ? `${device.storage}%` : "N/A"}
+                                {typeof device.storage === "number" ? `${device.storage}%` : "—"}
                               </span>
                             </div>
                           </div>
@@ -727,7 +734,7 @@ export default function DashboardPage() {
                             <p className="text-xs text-muted-foreground mb-1">Network</p>
                             <div className="flex items-center gap-1.5">
                               <Wifi className="w-4 h-4" />
-                              <span className="text-sm font-mono">{device.network}</span>
+                              <span className="text-sm font-mono">{device.network || "—"}</span>
                             </div>
                           </div>
 

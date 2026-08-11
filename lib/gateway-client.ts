@@ -511,12 +511,64 @@ class GatewayClient {
         if (packet.type === "device_status_update" && typeof packet.deviceId === "string") {
           const deviceId = String(packet.deviceId);
           const status = packet.status === "online" ? "online" : "offline";
-          this.devices = this.devices.map((d) =>
-            d.value === deviceId ? { ...d, status } : d
-          );
-          this.fullDevices = this.fullDevices.map((d) =>
-            d.deviceId === deviceId ? { ...d, status } : d
-          );
+          const patchOption = (d: DeviceOption): DeviceOption => {
+            if (d.value !== deviceId) return d;
+            const next: DeviceOption = { ...d, status };
+            if (typeof packet.battery === "number") next.battery = packet.battery;
+            if (typeof packet.storage === "number") next.storage = packet.storage;
+            if (typeof packet.localIp === "string" && packet.localIp) next.localIp = packet.localIp;
+            if (typeof packet.publicIp === "string" && packet.publicIp) next.publicIp = packet.publicIp;
+            if (typeof packet.network === "string" && packet.network) next.network = packet.network;
+            if (typeof packet.platform === "string" && packet.platform && packet.platform !== "unknown") {
+              next.platform = packet.platform;
+            }
+            if (typeof packet.hostname === "string" && packet.hostname) {
+              next.hostname = packet.hostname;
+              next.label = packet.hostname;
+            }
+            if (typeof packet.username === "string" && packet.username) next.username = packet.username;
+            if (typeof packet.lastSeen === "string" && packet.lastSeen) next.lastSeen = packet.lastSeen;
+            return next;
+          };
+          const patchRecord = (d: DeviceRecord): DeviceRecord => {
+            if (d.deviceId !== deviceId) return d;
+            return {
+              ...d,
+              status,
+              ...(typeof packet.battery === "number" ? { battery: packet.battery } : {}),
+              ...(typeof packet.storage === "number" ? { storage: packet.storage } : {}),
+              ...(typeof packet.localIp === "string" && packet.localIp
+                ? { localIp: packet.localIp }
+                : {}),
+              ...(typeof packet.publicIp === "string" && packet.publicIp
+                ? { publicIp: packet.publicIp }
+                : {}),
+              ...(typeof packet.network === "string" && packet.network
+                ? { network: packet.network }
+                : {}),
+              ...(typeof packet.platform === "string" && packet.platform
+                ? { platform: packet.platform as DeviceRecord["platform"] }
+                : {}),
+              ...(typeof packet.hostname === "string" && packet.hostname
+                ? { hostname: packet.hostname }
+                : {}),
+              ...(typeof packet.username === "string" && packet.username
+                ? { username: packet.username }
+                : {}),
+              ...(typeof packet.lastSeen === "string" && packet.lastSeen
+                ? { lastSeen: packet.lastSeen }
+                : {}),
+            };
+          };
+          this.devices = this.devices.map(patchOption);
+          this.fullDevices = this.fullDevices.map(patchRecord);
+          // If agent was live-only (not in list yet), add a stub with whatever we have.
+          if (!this.devices.some((d) => d.value === deviceId)) {
+            const record = normalizeDeviceRecord({ ...packet, deviceId, status });
+            this.devices = [toDeviceOption(record), ...this.devices];
+            this.fullDevices = [record, ...this.fullDevices];
+          }
+          writeDeviceCache(this.devices, this.fullDevices);
           this.emit({ type: "devices", devices: this.devices });
         }
 

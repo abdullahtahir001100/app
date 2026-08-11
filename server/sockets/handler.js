@@ -191,11 +191,11 @@ async function getDeviceOptions(userId = null, opts = {}) {
             label: device.hostname || deviceId,
             role: isLive ? 'AGENT' : 'DEVICE',
             status: isLive ? 'online' : 'offline',
-            platform: device.platform || 'unknown',
+            platform: device.platform && device.platform !== 'unknown' ? device.platform : '',
             localIp: device.localIp || '',
             publicIp: device.publicIp || '',
-            battery: device.battery ?? null,
-            storage: device.storage ?? null,
+            battery: typeof device.battery === 'number' ? device.battery : null,
+            storage: typeof device.storage === 'number' ? device.storage : null,
             lastSeen: device.lastSeen ? new Date(device.lastSeen).toISOString() : null,
             network: device.network || '',
             hostname: device.hostname || '',
@@ -996,24 +996,29 @@ function handleDeviceStatusUpdate(ws, packet, activeConnections) {
     const lastSeen = packet.timestamp ? new Date(Number(packet.timestamp) * 1000) : new Date();
 
     const update = {
-        status, platform, localIp, publicIp, battery, storage, network,
+        status, platform, localIp, publicIp, network,
         latitude, longitude, country, region, city, isp, timezone,
         hostname, username, osVersion, architecture, cpu, ram, lastSeen,
     };
+    // Only persist metrics when agent actually measured them (never wipe with null).
+    if (typeof battery === 'number') update.battery = battery;
+    if (typeof storage === 'number') update.storage = storage;
     if (ownerUserId) update.userId = ownerUserId;
 
     // Debounce Mongo — never block WS for status floods.
     pendingMetricsDb.set(deviceId, { update, ownerUserId });
     if (!metricsDbFlushTimer) {
-        metricsDbFlushTimer = setTimeout(() => { void flushPendingMetricsDb(); }, 30000);
+        metricsDbFlushTimer = setTimeout(() => { void flushPendingMetricsDb(); }, 5000);
     }
 
     if (hostname && ws.authContext) ws.authContext.hostname = hostname;
     if (ownerUserId) rememberOwnership(ownerUserId, deviceId);
 
+    // Always push metric patches to owner dashboards (throttle floods only).
+    if (!ownerUserId) return;
     const now = Date.now();
     const lastPush = lastMetricsPushAt.get(deviceId) || 0;
-    if (!ownerUserId || now - lastPush < 5000) return;
+    if (now - lastPush < 2000) return;
     lastMetricsPushAt.set(deviceId, now);
 
     sendToOwnerDashboards(activeConnections, ownerUserId, {

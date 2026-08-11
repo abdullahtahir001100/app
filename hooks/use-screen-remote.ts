@@ -53,6 +53,9 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
   const [hasLiveFrame, setHasLiveFrame] = useState(false);
   const [measuredFps, setMeasuredFps] = useState("0");
   const [frameCount, setFrameCount] = useState(0);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [mediaStatus, setMediaStatus] = useState("Media idle");
+  const mediaClientRef = useRef<MediaGatewayClient | null>(null);
   const [telemetry, setTelemetry] = useState<ScreenTelemetry>({
     resolution: "---",
     screenWidth: 1920,
@@ -252,17 +255,45 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
   }, []);
 
   useEffect(() => {
-    if (!mediaDeviceId) return;
+    if (!mediaDeviceId) {
+      setMediaReady(false);
+      return;
+    }
     const client = new MediaGatewayClient();
+    mediaClientRef.current = client;
     const unsub = client.subscribe((data) => {
       processBinaryRef.current(data);
+    });
+    const unsubState = client.onState((state) => {
+      setMediaReady(state === "open");
+      if (state === "open") setMediaStatus("Media socket connected");
+      else if (state === "connecting") setMediaStatus("Connecting media socket…");
+      else if (state === "error") setMediaStatus("Media ticket/auth failed — retrying…");
+      else if (state === "closed") setMediaStatus("Media socket closed — reconnecting…");
     });
     void client.connect(mediaDeviceId, "screen");
     return () => {
       unsub();
+      unsubState();
       client.disconnect();
+      if (mediaClientRef.current === client) mediaClientRef.current = null;
+      setMediaReady(false);
     };
   }, [mediaDeviceId]);
+
+  const ensureMediaReady = useCallback(async (timeoutMs = 12_000) => {
+    const client = mediaClientRef.current;
+    if (!client) return false;
+    if (client.isOpen()) {
+      setMediaReady(true);
+      return true;
+    }
+    setMediaStatus("Waiting for media socket…");
+    const ok = await client.waitUntilOpen(timeoutMs);
+    setMediaReady(ok);
+    if (!ok) setMediaStatus("Media socket not ready — check /ws/media ticket");
+    return ok;
+  }, []);
 
   return {
     canvasRef,
@@ -276,5 +307,8 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
     setActiveDisplay,
     resetPreview,
     mapPointerToRemote,
+    mediaReady,
+    mediaStatus,
+    ensureMediaReady,
   };
 }
