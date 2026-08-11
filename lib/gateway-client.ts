@@ -708,28 +708,27 @@ class GatewayClient {
     const sender = typeof packet.senderAgentId === "string" ? packet.senderAgentId : "";
 
     if (isCameraPacket && typeof metrics?.streaming_active === "boolean") {
-      this.cameraStreaming = metrics.streaming_active;
-      if (sender) this.cameraStreamingAgentId = sender;
-      try {
-        sessionStorage.setItem(
-          "zenvora_camera_streaming",
-          metrics.streaming_active ? "1" : "0"
-        );
-      } catch {
-        // ignore storage errors
+      // Only promote ON — transient false during reconnect must not clear intent.
+      if (metrics.streaming_active === true) {
+        this.cameraStreaming = true;
+        if (sender) this.cameraStreamingAgentId = sender;
+        try {
+          sessionStorage.setItem("zenvora_camera_streaming", "1");
+        } catch {
+          // ignore storage errors
+        }
       }
     }
 
     if (isScreenPacket && typeof metrics?.streaming_active === "boolean") {
-      this.screenStreaming = metrics.streaming_active;
-      if (sender) this.screenStreamingAgentId = sender;
-      try {
-        sessionStorage.setItem(
-          "zenvora_screen_streaming",
-          metrics.streaming_active ? "1" : "0"
-        );
-      } catch {
-        // ignore storage errors
+      if (metrics.streaming_active === true) {
+        this.screenStreaming = true;
+        if (sender) this.screenStreamingAgentId = sender;
+        try {
+          sessionStorage.setItem("zenvora_screen_streaming", "1");
+        } catch {
+          // ignore storage errors
+        }
       }
     }
 

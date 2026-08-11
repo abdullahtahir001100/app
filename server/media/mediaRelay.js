@@ -55,8 +55,10 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
     const envelope = wrapBinaryForDevice(deviceId, payloadBuf);
 
     let sent = 0;
+    let considered = 0;
     for (const [key, client] of registry.entries()) {
         if (!key.startsWith('DASHBOARD_')) continue;
+        considered += 1;
         const uid = dashboardUserId(client).trim();
         if (!uid) continue;
 
@@ -85,6 +87,11 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
             }
             sent += 1;
         } catch (_) {}
+    }
+    if (sent === 0) {
+        console.log(
+            `[MEDIA-DEBUG] frame dropped device=${deviceId} channel=${channel} owner=${ownerId || 'none'} dashboards=${considered}`
+        );
     }
     return sent;
 }

@@ -5,8 +5,8 @@ use std::time::Duration;
 use nokhwa::{
     pixel_format::RgbFormat,
     utils::{
-        ApiBackend, CameraIndex, CameraInfo, ControlValueSetter, KnownCameraControl,
-        RequestedFormat, RequestedFormatType,
+        ApiBackend, CameraFormat, CameraIndex, CameraInfo, ControlValueSetter, FrameFormat,
+        KnownCameraControl, RequestedFormat, RequestedFormatType, Resolution,
     },
     query, Camera,
 };
@@ -44,6 +44,7 @@ enum WorkerMsg {
     OpenStream {
         reply: SyncSender<bool>,
     },
+    #[allow(dead_code)]
     StopStream {
         reply: SyncSender<()>,
     },
@@ -55,11 +56,13 @@ enum WorkerMsg {
     Format {
         reply: SyncSender<Option<CameraFormatInfo>>,
     },
+    #[allow(dead_code)]
     IsOpen {
         reply: SyncSender<bool>,
     },
 }
 
+#[derive(Clone)]
 pub struct CameraWorker {
     tx: Sender<WorkerMsg>,
 }
@@ -108,6 +111,7 @@ impl CameraWorker {
             .unwrap_or(false)
     }
 
+    #[allow(dead_code)]
     pub fn stop_stream(&self) {
         let _ = self.call(|reply| WorkerMsg::StopStream { reply });
     }
@@ -124,6 +128,7 @@ impl CameraWorker {
         self.call(|reply| WorkerMsg::Format { reply }).flatten()
     }
 
+    #[allow(dead_code)]
     pub fn is_open(&self) -> bool {
         self.call(|reply| WorkerMsg::IsOpen { reply })
             .unwrap_or(false)
@@ -201,8 +206,12 @@ fn format_from_camera(cam: &Camera) -> CameraFormatInfo {
 fn open_camera(inner: &mut WorkerInner, device_index: CameraIndex) -> Result<CameraFormatInfo, String> {
     release_camera(inner);
 
-    let requested =
-        RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+    // Prefer modest capture size — AbsoluteHighestFrameRate often opens 1080p+ and
+    // saturates encode after a few hundred live frames.
+    let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(
+        CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 15),
+    ));
+
 
     let mut cam = Camera::new(device_index, requested).map_err(|err| err.to_string())?;
     cam.open_stream()

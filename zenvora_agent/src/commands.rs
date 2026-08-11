@@ -1,7 +1,10 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use image::{codecs::jpeg::JpegEncoder, ExtendedColorType, ImageBuffer, ImageEncoder, Rgb};
+use image::{
+    codecs::jpeg::JpegEncoder, imageops::FilterType, ExtendedColorType, ImageBuffer, ImageEncoder,
+    Rgb,
+};
 
 use crate::system::{CameraState, SwitchResult};
 
@@ -367,7 +370,11 @@ pub fn capture_stream_frame(state: &CameraState) -> Option<StreamFrame> {
 }
 
 pub fn capture_jpeg_bytes(state: &CameraState) -> Option<Vec<u8>> {
-    let captured = state.capture_rgb_frame()?;
+    capture_jpeg_from_worker(&state.clone_worker())
+}
+
+pub fn capture_jpeg_from_worker(worker: &crate::camera_worker::CameraWorker) -> Option<Vec<u8>> {
+    let captured = worker.capture_rgb()?;
 
     let img_buf = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
         captured.width,
@@ -391,19 +398,8 @@ fn resize_rgb_buffer(img_buf: &ImageBuffer<Rgb<u8>, Vec<u8>>, max_width: u32) ->
 
     let new_width = max_width;
     let new_height = ((height as f32) * (max_width as f32 / width as f32)).max(1.0) as u32;
-    let mut resized = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(new_width, new_height);
-
-    for y in 0..new_height {
-        for x in 0..new_width {
-            let src_x = (x as f32 * width as f32 / new_width as f32) as u32;
-            let src_y = (y as f32 * height as f32 / new_height as f32) as u32;
-            if let Some(pixel) = img_buf.get_pixel_checked(src_x, src_y) {
-                resized.put_pixel(x, y, *pixel);
-            }
-        }
-    }
-
-    resized
+    // Native resize — the old per-pixel loop stalled the agent after a few hundred frames.
+    image::imageops::resize(img_buf, new_width, new_height, FilterType::Triangle)
 }
 
 fn resize_and_encode_jpeg(img_buf: &ImageBuffer<Rgb<u8>, Vec<u8>>, max_width: u32) -> Vec<u8> {

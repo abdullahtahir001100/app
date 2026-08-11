@@ -257,14 +257,20 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                 return;
             }
 
-            // Agent media: ZV framing — must AUTH within 5s or drop (browsers must use ticket).
+            // Agent media: ZV framing — must start AUTH quickly; verify may take longer (bcrypt/Mongo).
             adaptAgentMediaSocket(ws);
             const parser = new FrameParser();
             ws.mediaAuthTimer = setTimeout(() => {
-                if (!ws.mediaAuth && !ws.controlAuth && ws.readyState === WebSocket.OPEN) {
+                if (
+                    !ws.mediaAuth &&
+                    !ws.controlAuth &&
+                    !ws.mediaAuthPending &&
+                    ws.readyState === WebSocket.OPEN
+                ) {
+                    console.warn('[MEDIA-DEBUG] agent media auth idle timeout — closing socket');
                     try { ws.close(); } catch (_) {}
                 }
-            }, 5000);
+            }, 20000);
             ws.on('message', (data) => {
                 const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
                 const frames = parser.push(chunk);

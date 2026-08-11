@@ -23,8 +23,8 @@ function parseAllowedOrigins() {
         return [
             'http://localhost:3000',
             'http://127.0.0.1:3000',
-            'https://localhost:3000',
-            'https://zenvora.abdullahtahir.me',
+            'http://localhost:3000',
+            'http://localhost:3000',
             'https://app.javehandmade.store',
         ];
     }

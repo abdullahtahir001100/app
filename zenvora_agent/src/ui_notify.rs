@@ -51,6 +51,7 @@ pub fn show_blocking_error(title: &str, message: &str) {
     run_message_box(title, message, "Error", true);
 }
 
+#[allow(dead_code)]
 pub fn show_blocking_warning(title: &str, message: &str) {
     eprintln!("--> [{}] {}", title, message);
     run_message_box(title, message, "Warning", true);

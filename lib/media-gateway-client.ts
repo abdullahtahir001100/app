@@ -102,12 +102,13 @@ export class MediaGatewayClient {
     this.connecting = true;
     const ticket = await this.fetchTicket();
     if (!ticket) {
-      console.warn("[MEDIA] ws-ticket missing — not opening /ws/media without auth");
+      console.warn("[MEDIA-DEBUG] ws-ticket missing — not opening /ws/media without auth");
       this.connecting = false;
       this.scheduleReconnect();
       return;
     }
     const url = this.mediaUrl(ticket);
+    console.log(`[MEDIA-DEBUG] connecting device=${this.deviceId} channel=${this.channel}`);
 
     let ws: WebSocket;
     try {
@@ -125,6 +126,7 @@ export class MediaGatewayClient {
       this.connecting = false;
       this.reconnectAttempt = 0;
       this.lastPongAt = Date.now();
+      console.log(`[MEDIA-DEBUG] browser media open device=${this.deviceId} channel=${this.channel}`);
       this.stopHeartbeat();
       this.heartbeatTimer = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) {

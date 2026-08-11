@@ -57,6 +57,7 @@ impl MsgType {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum EventKind {
     BrowserHistory = 1,
     AppHistory = 2,
@@ -72,7 +73,9 @@ pub enum EventKind {
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub msg_type: MsgType,
+    #[allow(dead_code)]
     pub flags: u8,
+    #[allow(dead_code)]
     pub seq: u64,
     pub payload: Vec<u8>,
 }

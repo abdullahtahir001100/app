@@ -6,6 +6,7 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { 
   Search, 
   Filter, 
@@ -96,6 +97,66 @@ export default function AdminUsersPage() {
 
     return matchesRole && matchesSearch;
   });
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+
+        <main className="flex-1 lg:ml-64 overflow-auto">
+          <div className="p-6 lg:p-12">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
+              <div>
+                <Skeleton className="h-12 w-72 mb-3" />
+                <Skeleton className="h-5 w-96" />
+              </div>
+              <Skeleton className="h-11 w-48 rounded-lg" />
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-4 mb-8 mt-8">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-32 rounded-lg" />
+            </div>
+
+            <div className="flex gap-2 mb-8 flex-wrap">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} className="h-9 w-24 rounded-full" />
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Card key={index} className="p-4 border border-border bg-card">
+                  <div className="flex items-center justify-between gap-4 flex-wrap sm:flex-nowrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3">
+                        <Skeleton className="h-10 w-10 rounded-full" />
+                        <div className="space-y-2 flex-1">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-48" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="hidden md:flex items-center gap-8 w-full sm:w-auto mt-4 sm:mt-0">
+                      <div className="space-y-2">
+                        <Skeleton className="h-3 w-16" />
+                        <Skeleton className="h-4 w-12" />
+                      </div>
+                      <div className="space-y-2">
+                        <Skeleton className="h-3 w-16" />
+                        <Skeleton className="h-4 w-20" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-8 w-24 rounded-full" />
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

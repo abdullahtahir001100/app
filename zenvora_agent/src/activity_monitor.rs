@@ -515,7 +515,7 @@ fn get_clipboard_content_summary() -> Option<(String, usize)> {
         if OpenClipboard(HWND(std::ptr::null_mut())).is_ok() {
             let data = GetClipboardData(CF_TEXT.0.into()).ok()?;
             let size = GlobalSize(HGLOBAL(data.0));
-            CloseClipboard();
+            let _ = CloseClipboard();
             if size > 0 {
                 return Some(("text".to_string(), size));
             }
@@ -676,7 +676,7 @@ fn enumerate_process_names() -> Vec<String> {
                     }
                 }
             }
-            CloseHandle(snapshot);
+            let _ = CloseHandle(snapshot);
         }
     }
     names

@@ -378,13 +378,41 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
     return { credential: doc, agentToken };
 }
 
+/** Avoid repeated bcrypt/Mongo on gateway+control+camera+screen auth storms. */
+const agentTokenCache = new Map(); // key -> { cred, expiresAt }
+const AGENT_TOKEN_CACHE_TTL_MS = 60_000;
+
+function agentTokenCacheKey(deviceId, agentToken) {
+    return `${String(deviceId || '').trim()}::${String(agentToken || '')}`;
+}
+
 async function verifyAgentToken(deviceId, agentToken) {
-    const cred = await AgentCredential.findOne({ deviceId: String(deviceId || '').trim() })
-        .maxTimeMS(5000)
+    const cleanDeviceId = String(deviceId || '').trim();
+    const cleanToken = String(agentToken || '');
+    if (!cleanDeviceId || !cleanToken) return null;
+
+    const cacheKey = agentTokenCacheKey(cleanDeviceId, cleanToken);
+    const cached = agentTokenCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.cred;
+    }
+
+    const cred = await AgentCredential.findOne({ deviceId: cleanDeviceId })
+        .maxTimeMS(4000)
         .lean();
-    if (!cred || !agentToken || !cred.tokenHash) return null;
-    const ok = await bcrypt.compare(String(agentToken), cred.tokenHash);
+    if (!cred || !cred.tokenHash) return null;
+    const ok = await bcrypt.compare(cleanToken, cred.tokenHash);
     if (!ok) return null;
+
+    agentTokenCache.set(cacheKey, {
+        cred,
+        expiresAt: Date.now() + AGENT_TOKEN_CACHE_TTL_MS,
+    });
+    // Bound cache size for long-running servers.
+    if (agentTokenCache.size > 200) {
+        const oldest = agentTokenCache.keys().next().value;
+        if (oldest) agentTokenCache.delete(oldest);
+    }
 
     // Fire-and-forget lastConnectedAt update so WS upgrade is not blocked.
     AgentCredential.updateOne(
@@ -470,12 +498,22 @@ async function pairAgent(body) {
         userId: { $ne: user._id },
     }).catch(() => {});
 
+    const rawGw =
+        process.env.ZENVORA_GATEWAY_URL ||
+        process.env.NEXT_PUBLIC_GATEWAY_URL ||
+        '';
+    let gatewayUrl = rawGw || 'ws://localhost:3000/ws/gateway';
+    // Prefer scheme that matches app URL when possible.
+    const appUrl = String(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_API_URL || '');
+    if (appUrl.startsWith('http://') && gatewayUrl.startsWith('wss://')) {
+        gatewayUrl = gatewayUrl.replace(/^wss:\/\//i, 'ws://');
+    } else if (appUrl.startsWith('https://') && gatewayUrl.startsWith('ws://')) {
+        gatewayUrl = gatewayUrl.replace(/^ws:\/\//i, 'wss://');
+    }
+
     return {
         agentToken,
-        gatewayUrl:
-            process.env.ZENVORA_GATEWAY_URL ||
-            process.env.NEXT_PUBLIC_GATEWAY_URL ||
-            'wss://zenvora.abdullahtahir.me/ws/gateway'
+        gatewayUrl,
     };
 }
 async function userOwnsDevice(userId, deviceId) {

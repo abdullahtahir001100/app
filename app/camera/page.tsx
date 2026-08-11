@@ -73,14 +73,7 @@ export default function CameraPage() {
   const [detectedCameras, setDetectedCameras] = useState<DetectedCamera[]>([]);
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
-  const [isCameraOn, setIsCameraOn] = useState(() => {
-    if (gatewayClient.isCameraStreaming()) return true;
-    try {
-      return sessionStorage.getItem("zenvora_camera_streaming") === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [isCameraOn, setIsCameraOn] = useState(false);
   const [zoom, setZoom] = useState(1.0);
   const [flashEnabled, setFlashEnabled] = useState(false);
 
@@ -130,18 +123,6 @@ export default function CameraPage() {
   useEffect(() => {
     activeCameraRef.current = activeCamera;
   }, [activeCamera]);
-
-  useEffect(() => {
-    try {
-      if (gatewayClient.isCameraStreaming()) {
-        setIsCameraOn(true);
-      } else if (sessionStorage.getItem("zenvora_camera_streaming") === "1") {
-        setIsCameraOn(true);
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
 
   useEffect(() => {
     if (!isConnected) return;
@@ -467,17 +448,7 @@ export default function CameraPage() {
             setActiveCamera(String(metrics.lens_active));
           }
 
-          if (typeof metrics.streaming_active === "boolean") {
-            setIsCameraOn(metrics.streaming_active);
-            try {
-              sessionStorage.setItem(
-                "zenvora_camera_streaming",
-                metrics.streaming_active ? "1" : "0"
-              );
-            } catch {
-              // ignore storage errors
-            }
-          }
+          // Never auto-toggle local ON from telemetry — only user Start/Stop buttons.
 
           setTelemetry({
             resolution: (metrics.resolution as string) || "N/A",
@@ -490,8 +461,7 @@ export default function CameraPage() {
           if (
             metrics.camera_blocked ||
             data.camera_blocked ||
-            data.status === "CAMERA_BLOCKED" ||
-            data.action === "STREAM_LOST"
+            data.status === "CAMERA_BLOCKED"
           ) {
             setIsCameraOn(false);
             resetLivePreview();
@@ -506,6 +476,11 @@ export default function CameraPage() {
                   data.message ||
                   "Camera is in use by another app on this PC. Close Camera app and try again."
               )
+            );
+          } else if (data.action === "STREAM_LOST") {
+            // Transient stream gap (motion lag / reconnect) — keep UI ON; agent will resume frames.
+            setCommandStatus(
+              String(data.message || "Stream interrupted — waiting for frames…")
             );
           } else if (data.has_binary_frame && framesReceivedRef.current === 0) {
             setCommandStatus("Agent sent frame metadata. Waiting for binary paint...");
@@ -524,9 +499,7 @@ export default function CameraPage() {
             if (typeof data.message === "string" && data.message) {
               setCommandStatus(data.message);
             }
-            if (typeof metrics.streaming_active === "boolean" && !metrics.streaming_active) {
-              setIsCameraOn(false);
-            }
+            // Keep local ON intent; agent may briefly report streaming_active=false while opening the lens.
           }
 
           setFlashEnabled(metrics.gpio_flash_pin === "HIGH");

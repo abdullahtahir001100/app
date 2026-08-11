@@ -60,17 +60,24 @@ async function handleAuth(socket, seq, payload) {
         return false;
     }
 
+    // Mark auth-in-progress so /ws/media 5s idle timer does not kill the socket mid-bcrypt.
+    socket.mediaAuthPending = true;
+
     let credential = null;
     try {
         credential = await Promise.race([
             verifyAgentToken(deviceId, token),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
         ]);
-    } catch (_) {
+    } catch (err) {
+        console.warn(`[MEDIA-DEBUG] auth timeout/error device=${deviceId} ${err?.message || err}`);
         credential = null;
+    } finally {
+        socket.mediaAuthPending = false;
     }
 
     if (!credential?.userId) {
+        console.warn(`[MEDIA-DEBUG] AUTH_FAIL device=${deviceId} channel=${channel}`);
         sendFrame(socket, encodeJsonFrame(MsgType.AUTH_FAIL, seq, { message: 'auth failed' }));
         return false;
     }

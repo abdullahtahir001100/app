@@ -74,12 +74,19 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
 
     const host = `${req.protocol}://${req.get('host')}`;
     const apiBase = String(req.body?.apiBase || host).replace(/\/$/, '');
-    const gatewayUrl = String(
+    const defaultWsScheme = apiBase.startsWith('https://') ? 'wss' : 'ws';
+    let gatewayUrl = String(
         req.body?.gatewayUrl
         || process.env.NEXT_PUBLIC_GATEWAY_URL
         || process.env.ZENVORA_GATEWAY_URL
-        || `wss://${req.get('host')}/ws/gateway`
+        || `${defaultWsScheme}://${req.get('host')}/ws/gateway`
     );
+    // Local/http installs must not get wss:// (TLS will hang the handshake).
+    if (apiBase.startsWith('http://') && gatewayUrl.startsWith('wss://')) {
+        gatewayUrl = gatewayUrl.replace(/^wss:\/\//i, 'ws://');
+    } else if (apiBase.startsWith('https://') && gatewayUrl.startsWith('ws://')) {
+        gatewayUrl = gatewayUrl.replace(/^ws:\/\//i, 'wss://');
+    }
     const downloadUrl = String(
         req.body?.downloadUrl
         || process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL

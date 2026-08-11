@@ -492,7 +492,12 @@ async function handleSocketMessage(ws, message) {
     try {
         const packet = JSON.parse(raw.toString('utf8'));
 
+        if (ws.connectionKey && (ws.connectionKey.startsWith('AGENT_') || ws.connectionKey.startsWith('DEVICE_'))) {
+            ws.lastAliveAt = Date.now();
+        }
+
         if (packet.type === 'dashboard_ping' || packet.type === 'agent_ping') {
+            ws.lastAliveAt = Date.now();
             ws.send(JSON.stringify({
                 type: packet.type === 'agent_ping' ? 'agent_pong' : 'dashboard_pong',
                 status: 'ok'
@@ -576,14 +581,18 @@ async function handleSocketMessage(ws, message) {
                         credential = await Promise.race([
                             verifyAgentToken(deviceOrPanelId, token),
                             new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error('auth timeout')), 2000)
+                                setTimeout(() => reject(new Error('auth timeout')), 15000)
                             )
                         ]);
-                    } catch (_) {
+                    } catch (err) {
+                        console.warn(
+                            `[GW-DEBUG] agent auth failed device=${deviceOrPanelId} err=${err?.message || err}`
+                        );
                         credential = null;
                     }
 
                     if (!credential) {
+                        console.warn(`[GW-DEBUG] auth_failed invalid credentials device=${deviceOrPanelId}`);
                         ws.send(JSON.stringify({
                             type: 'sys_ack',
                             status: 'auth_failed',
@@ -648,16 +657,69 @@ async function handleSocketMessage(ws, message) {
                     ? `INSTALL_${ws.authContext?.userId || deviceOrPanelId || Date.now()}`
                     : `${role}_${deviceOrPanelId}`;
 
-            // If an agent reconnects, drop the stale socket for the same device key.
-            if ((role === 'AGENT' || role === 'DEVICE') && activeConnections.has(connectionKey)) {
-                const prev = activeConnections.get(connectionKey);
-                if (prev && prev !== ws) {
-                    try { prev.close(); } catch (_) {}
+            // Keep the previous agent visible until the new socket is registered.
+            // Close AFTER replace so handleSocketClose won't mark the device offline.
+            const previousAgent =
+                (role === 'AGENT' || role === 'DEVICE') && activeConnections.has(connectionKey)
+                    ? activeConnections.get(connectionKey)
+                    : null;
+
+            // Never kick a healthy live agent. Replace only true zombies / dead sockets.
+            // (Age-only replace caused reconnect races: CLOSING old + new connect → replace storm.)
+            if (previousAgent && previousAgent !== ws && !previousAgent.superseded) {
+                const ready = previousAgent.readyState;
+                const lastAlive = Number(
+                    previousAgent.lastAliveAt || previousAgent.registeredAt || 0
+                );
+                const silentMs = Date.now() - lastAlive;
+
+                if (ready === 1 && silentMs < 90_000) {
+                    console.warn(
+                        `[GW-DEBUG] drop duplicate agent device=${deviceOrPanelId} existingAge=${Date.now() - Number(previousAgent.registeredAt || 0)}ms silent=${silentMs}ms`
+                    );
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'sys_ack',
+                            status: 'duplicate',
+                            message: 'agent already connected — stop extra ZenvoraAgent processes/services',
+                        }));
+                    } catch (_) {}
+                    try { ws.close(); } catch (_) {}
+                    return;
+                }
+
+                // Old socket is mid-close while the same agent reconnects — don't replace-fight.
+                if (ready === 2 /* CLOSING */) {
+                    console.warn(
+                        `[GW-DEBUG] defer agent reconnect device=${deviceOrPanelId} (previous CLOSING)`
+                    );
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'sys_ack',
+                            status: 'retry',
+                            message: 'previous session closing — retry shortly',
+                        }));
+                    } catch (_) {}
+                    try { ws.close(); } catch (_) {}
+                    return;
                 }
             }
 
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
+            ws.registeredAt = Date.now();
+            ws.lastAliveAt = Date.now();
+
+            if (previousAgent && previousAgent !== ws) {
+                previousAgent.superseded = true;
+                previousAgent.connectionKey = null;
+                console.log(
+                    `[GW-DEBUG] replace agent socket device=${deviceOrPanelId} prev→new (no offline flap)`
+                );
+                try {
+                    if (previousAgent.readyState === 1) previousAgent.close();
+                } catch (_) {}
+            }
 
             const userIdForList = ws.authContext?.kind === 'user'
                 ? ws.authContext.user?.id
@@ -668,6 +730,9 @@ async function handleSocketMessage(ws, message) {
             if (role === 'AGENT' || role === 'DEVICE') {
                 clearOwnershipForDevice(deviceOrPanelId);
                 rememberOwnership(userIdForList, deviceOrPanelId);
+                console.log(
+                    `[GW-DEBUG] agent registered device=${deviceOrPanelId} user=${userIdForList || 'none'} live=${getLiveDeviceOptions(userIdForList).length}`
+                );
             }
 
             if (role === 'INSTALL') {
@@ -1088,6 +1153,7 @@ function broadcastAudioBinaryFrame(frameBuffer, activeConnections, sourceWs = nu
 }
 
 function handleSocketBinary(ws, message) {
+ 
     if (message.length < 2) return;
 
     const frameType = message[0];
@@ -1120,10 +1186,16 @@ function handleSocketBinary(ws, message) {
 }
 
 function handleSocketClose(ws) {
+    if (ws?.superseded) {
+        console.log('[GW-DEBUG] ignore close for superseded agent socket');
+        return;
+    }
     if (!ws.connectionKey) return;
 
     const current = activeConnections.get(ws.connectionKey);
     if (current !== ws) {
+        // A newer socket already owns this device — keep it online.
+        console.log(`[GW-DEBUG] ignore stale close key=${ws.connectionKey}`);
         return;
     }
 
@@ -1134,15 +1206,26 @@ function handleSocketClose(ws) {
         : '';
 
     activeConnections.delete(key);
+    console.log(`[GW-DEBUG] socket closed key=${key}`);
 
     if (wasAgent && deviceId) {
         const ownerUserId = extractOwnerUserId(ws);
-        const filter = ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId };
-        void Device.updateOne(
-            filter,
-            { $set: { status: 'offline', lastSeen: new Date() } }
-        ).catch(() => {});
-        if (ownerUserId) pushLiveDeviceSnapshot(ownerUserId);
+        // Debounce offline: only mark offline if still no live socket after grace.
+        const graceMs = 8000;
+        setTimeout(() => {
+            const live = activeConnections.get(key);
+            if (live && live.readyState === 1) {
+                console.log(`[GW-DEBUG] skip offline device=${deviceId} (reconnected within grace)`);
+                return;
+            }
+            const filter = ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId };
+            console.log(`[GW-DEBUG] mark offline device=${deviceId}`);
+            void Device.updateOne(
+                filter,
+                { $set: { status: 'offline', lastSeen: new Date() } }
+            ).catch(() => {});
+            if (ownerUserId) pushLiveDeviceSnapshot(ownerUserId);
+        }, graceMs);
         return;
     }
 

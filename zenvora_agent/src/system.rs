@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use nokhwa::utils::{ControlValueSetter, KnownCameraControl};
@@ -16,7 +17,7 @@ pub struct CameraState {
     pub streaming_active: bool,
     worker: CameraWorker,
     pub detected_devices: Vec<nokhwa::utils::CameraInfo>,
-    pub capture_in_flight: AtomicBool,
+    pub capture_in_flight: Arc<AtomicBool>,
     pub capture_fail_streak: u32,
     pub blocked_by_external_app: bool,
     pub status_message: Option<String>,
@@ -30,6 +31,7 @@ pub enum SwitchResult {
     AlreadyActive,
     NoDevices,
     InvalidIndex { requested: usize, available: usize },
+    #[allow(dead_code)]
     OpenFailed { index: usize },
     OpenFailedRestored { requested: usize },
     InUseByOtherApp { index: usize },
@@ -53,7 +55,7 @@ impl CameraState {
             streaming_active: false,
             worker: CameraWorker::spawn(),
             detected_devices: Vec::new(),
-            capture_in_flight: AtomicBool::new(false),
+            capture_in_flight: Arc::new(AtomicBool::new(false)),
             capture_fail_streak: 0,
             blocked_by_external_app: false,
             status_message: None,
@@ -64,6 +66,10 @@ impl CameraState {
 
     pub fn camera_is_open(&self) -> bool {
         self.camera_open.load(Ordering::Acquire)
+    }
+
+    pub fn clone_worker(&self) -> CameraWorker {
+        self.worker.clone()
     }
 
     pub fn set_brightness_control(&self, value: u32) {
@@ -118,14 +124,19 @@ impl CameraState {
         println!("[RUST AGENT] Camera blocked — releasing hardware for other app.");
     }
 
+    /// Transient capture misses (motion / driver lag) must NOT kill the stream.
+    /// Only skip the frame; external-app blocking comes from open failures only.
     pub fn handle_capture_failure(&mut self) -> bool {
         if !self.streaming_active {
             return false;
         }
-        self.capture_fail_streak += 1;
-        if self.capture_fail_streak > 150 {
-            self.mark_blocked_by_external_app();
-            return true;
+        self.capture_fail_streak = self.capture_fail_streak.saturating_add(1);
+        // Soft warning only — never auto STOP / STREAM_LOST from dropped frames.
+        if self.capture_fail_streak == 60 || self.capture_fail_streak % 300 == 0 {
+            println!(
+                "[RUST AGENT] Camera frame miss streak={} (keeping stream alive)",
+                self.capture_fail_streak
+            );
         }
         false
     }

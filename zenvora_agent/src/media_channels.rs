@@ -97,13 +97,18 @@ fn resolve_ws_media_url(config: &AgentConfig) -> Option<String> {
     if base.is_empty() {
         return None;
     }
-    if base.contains("/ws/gateway") {
-        return Some(base.replace("/ws/gateway", "/ws/media"));
+    let mut media = if base.contains("/ws/gateway") {
+        base.replace("/ws/gateway", "/ws/media")
+    } else if base.ends_with('/') {
+        format!("{base}ws/media")
+    } else {
+        format!("{base}/ws/media")
+    };
+    // Local plain HTTP gateways cannot speak TLS — never use wss://localhost.
+    if media.contains("://localhost") || media.contains("://127.0.0.1") {
+        media = media.replacen("wss://", "ws://", 1);
     }
-    if base.ends_with('/') {
-        return Some(format!("{base}ws/media"));
-    }
-    Some(format!("{base}/ws/media"))
+    Some(media)
 }
 
 pub struct MediaChannel {
@@ -116,7 +121,7 @@ pub fn spawn_media_channel(
     channel_name: String,
     stop_flag: Option<Arc<AtomicBool>>,
 ) -> MediaChannel {
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(4);
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(32);
     let (ack_tx, ack_rx) = broadcast::channel::<Value>(16);
     let outbound_tx = tx.clone();
 

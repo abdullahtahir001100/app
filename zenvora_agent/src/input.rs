@@ -8,6 +8,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 
 #[derive(Debug)]
 pub enum InputError {
+    #[allow(dead_code)]
     UnsupportedPlatform,
     SendFailed,
     InvalidPayload(String),

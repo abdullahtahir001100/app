@@ -316,9 +316,7 @@ export default function ScreenPage() {
 
         if (typeof metrics.brightness === "number") setBrightness(metrics.brightness);
         if (typeof metrics.volume === "number") setVolume(metrics.volume);
-        if (typeof metrics.streaming_active === "boolean") {
-          setIsStreaming(metrics.streaming_active);
-        }
+        // Do not auto-toggle local streaming from telemetry — user Start/Stop only.
         if (typeof metrics.stream_quality === "string") {
           const q = metrics.stream_quality as StreamQuality;
           if (QUALITY_OPTIONS.some((o) => o.value === q)) {

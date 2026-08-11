@@ -4,7 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, Copy, Check, Loader2 } from "lucide-react";
+import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, Copy, Check, Loader2, ChevronDown, Terminal, DownloadCloud } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,7 +26,15 @@ export default function DashboardPage() {
   const { devices: gatewayDevices, devicesLoading, refreshDevices, dispatch, ensureConnected, subscribe } = useGateway();
   const router = useRouter();
   const [showPairModal, setShowPairModal] = useState(false);
+  const [openPlatformMenu, setOpenPlatformMenu] = useState(false);
+  const [openWindowsMenu, setOpenWindowsMenu] = useState(false);
+  const [openAndroidMenu, setOpenAndroidMenu] = useState(false);
+  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
+  const [selectedAndroidVersion, setSelectedAndroidVersion] = useState<number | null>(null);
+  const [windowsCliInlineOpen, setWindowsCliInlineOpen] = useState(false);
+  const [cliPanelMode, setCliPanelMode] = useState<"command" | "logs">("command");
   const [pairingToken, setPairingToken] = useState<string | null>(null);
+  
   const [pairingUserId, setPairingUserId] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [openControlMenu, setOpenControlMenu] = useState<string | null>(null);
@@ -70,7 +78,7 @@ export default function DashboardPage() {
   }, [refreshDevices]);
 
   useEffect(() => {
-    if (!showPairModal) return;
+    if (!showPairModal && !windowsCliInlineOpen) return;
     ensureConnected();
     setInstallLive(true);
 
@@ -110,7 +118,7 @@ export default function DashboardPage() {
       clearInterval(poll);
       setInstallLive(false);
     };
-  }, [showPairModal, subscribe, ensureConnected, installSessionId]);
+  }, [showPairModal, windowsCliInlineOpen, subscribe, ensureConnected, installSessionId]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -119,33 +127,53 @@ export default function DashboardPage() {
   const loadSession = async () => {
     try {
       const response = await fetch("/api/auth/session", { credentials: "include" });
-      if (!response.ok) return;
+      if (!response.ok) return null;
       const payload = await response.json();
       if (payload.success && payload.user) {
-        setPairingToken(payload.user.pairingToken || null);
-        setPairingUserId(payload.user.pairingUserId || null);
+        const token = payload.user.pairingToken || null;
+        const userId = payload.user.pairingUserId || null;
+        setPairingToken(token);
+        setPairingUserId(userId);
+        return { token, userId } as { token: string | null; userId: string | null };
       }
     } catch {
       // ignore
     }
+    return null;
   };
 
   const onlineCount = devices.filter((device) => device.status === "online").length;
   const totalCount = devices.length;
   const averageBattery = Math.round(
     devices.filter((device) => typeof device.battery === "number").reduce((sum, device) => sum + (device.battery || 0), 0) /
-      Math.max(1, devices.filter((device) => typeof device.battery === "number").length)
+    Math.max(1, devices.filter((device) => typeof device.battery === "number").length)
   );
 
   const apiBase = (
     process.env.NEXT_PUBLIC_API_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
-    (typeof window !== "undefined" ? window.location.origin : "https://zenvora.abdullahtahir.me")
+    (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000")
   ).replace(/\/$/, "");
-  const gatewayUrl =
-    process.env.NEXT_PUBLIC_GATEWAY_URL ||
-    process.env.ZENVORA_GATEWAY_URL ||
-    "wss://zenvora.abdullahtahir.me/ws/gateway";
+  const gatewayUrl = (() => {
+    const configured =
+      process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.ZENVORA_GATEWAY_URL || "";
+    if (configured) {
+      if (apiBase.startsWith("http://") && configured.startsWith("wss://")) {
+        return configured.replace(/^wss:\/\//i, "ws://");
+      }
+      if (apiBase.startsWith("https://") && configured.startsWith("ws://")) {
+        return configured.replace(/^ws:\/\//i, "wss://");
+      }
+      return configured;
+    }
+    try {
+      const u = new URL(apiBase);
+      const scheme = u.protocol === "https:" ? "wss" : "ws";
+      return `${scheme}://${u.host}/ws/gateway`;
+    } catch {
+      return "ws://localhost:3000/ws/gateway";
+    }
+  })();
   const agentDownloadUrl =
     process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL || `${apiBase}/api/agent/download`;
 
@@ -184,10 +212,10 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    if (!showPairModal || !pairingToken || !pairingUserId) return;
+    if ((!showPairModal && !windowsCliInlineOpen) || !pairingToken || !pairingUserId) return;
     void refreshBootstrapCommand(pairingToken, pairingUserId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPairModal, pairingToken, pairingUserId]);
+  }, [showPairModal, windowsCliInlineOpen, pairingToken, pairingUserId]);
 
   const copyInstallCommand = async () => {
     try {
@@ -220,10 +248,11 @@ export default function DashboardPage() {
     setOpenMenu(null);
     const result = dispatch("RESTART_AGENT", {}, deviceId);
     if (!result.ok) {
+      const reason = (result as any).reason;
       toast.error(
-        result.reason === "offline"
+        reason === "offline"
           ? "Gateway disconnected"
-          : result.reason === "agent-offline"
+          : reason === "agent-offline"
             ? "Agent is offline"
             : "Could not restart agent"
       );
@@ -253,16 +282,288 @@ export default function DashboardPage() {
                   Monitor and manage your connected Android devices
                 </p>
               </div>
-              <Button
-                onClick={() => {
-                  setShowPairModal(true);
-                  void loadSession();
-                }}
-                className="bg-foreground hover:bg-foreground/90 text-background px-6 h-12 rounded-full inline-flex items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Pair Device
-              </Button>
+              <div className="relative">
+                <button
+                  className="bg-foreground hover:bg-foreground/90 text-background px-4 h-12 rounded-full inline-flex items-center gap-2 focus:outline-none"
+                  onClick={() => setOpenPlatformMenu((s) => !s)}
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Pair Device</span>
+                  <ChevronDown className="w-4 h-4 ml-1" />
+                </button>
+
+                {openPlatformMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-card border border-border rounded-lg shadow-lg z-50">
+                    <div className="py-1">
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setSelectedPlatform(null);
+                          setShowPairModal(true);
+                          void loadSession();
+                        }}
+                      >
+                        <span>Open full Pair modal</span>
+                        <span className="text-xs text-muted-foreground">Large</span>
+                      </button>
+                      <div className="border-t border-border" />
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setOpenWindowsMenu(true);
+                        }}
+                      >
+                        <span>Windows</span>
+                        <span className="text-xs text-muted-foreground">CLI / GUI</span>
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setSelectedPlatform("mac");
+                          setShowPairModal(true);
+                          void loadSession();
+                        }}
+                      >
+                        <span>macOS</span>
+                        <span className="text-xs text-muted-foreground">Open</span>
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setSelectedPlatform("linux");
+                          setShowPairModal(true);
+                          void loadSession();
+                        }}
+                      >
+                        <span>Linux</span>
+                        <span className="text-xs text-muted-foreground">Open</span>
+                      </button>
+                      <div className="border-t border-border" />
+                      <div className="px-3 py-1 text-xs text-muted-foreground">Mobile</div>
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setOpenAndroidMenu(true);
+                        }}
+                      >
+                        <span>Android</span>
+                        <span className="text-xs text-muted-foreground">v8–v16</span>
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setSelectedPlatform("ios");
+                          setShowPairModal(true);
+                          void loadSession();
+                        }}
+                      >
+                        <span>iOS</span>
+                        <span className="text-xs text-muted-foreground">Open</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {openWindowsMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-card border border-border rounded-lg shadow-lg z-50">
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-t-lg"
+                      onClick={async () => {
+                        setOpenWindowsMenu(false);
+                        setCliPanelMode("command");
+                        setWindowsCliInlineOpen(true);
+                        const session = await loadSession();
+                        const token = session?.token || pairingToken;
+                        const userId = session?.userId || pairingUserId;
+                        if (token && userId) {
+                          await refreshBootstrapCommand(token, userId);
+                        }
+                      }}
+                    >
+                      <Terminal className="w-4 h-4" />
+                      CLI
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-b-lg"
+                      onClick={() => {
+                        setOpenWindowsMenu(false);
+                        setSelectedPlatform("windows");
+                        setShowPairModal(true);
+                        void loadSession();
+                      }}
+                    >
+                      <Laptop className="w-4 h-4" />
+                      GUI
+                    </button>
+                  </div>
+                )}
+
+                {openAndroidMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-48 bg-card border border-border rounded-lg shadow-lg z-50">
+                    <div className="px-2 py-1 text-xs text-muted-foreground">Android versions</div>
+                    <div className="max-h-40 overflow-auto">
+                      {Array.from({ length: 9 }).map((_, i) => {
+                        const ver = 8 + i;
+                        return (
+                          <button
+                            key={ver}
+                            className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2"
+                            onClick={() => {
+                              setOpenAndroidMenu(false);
+                              setSelectedPlatform("android");
+                              setSelectedAndroidVersion(ver);
+                              setShowPairModal(true);
+                              void loadSession();
+                            }}
+                          >
+                            <Smartphone className="w-4 h-4" />
+                            Android {ver}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {windowsCliInlineOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-[min(92vw,28rem)] bg-card border border-border rounded-xl shadow-xl z-50 p-4">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <div className="text-sm font-semibold">Windows — CLI</div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Admin PowerShell · keep open for live logs
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground text-sm px-1"
+                        onClick={() => {
+                          setWindowsCliInlineOpen(false);
+                          setCliPanelMode("command");
+                        }}
+                        aria-label="Close"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {cliPanelMode === "command" ? (
+                      <>
+                        <pre className="whitespace-pre-wrap break-all text-sm font-mono leading-5 max-h-36 overflow-auto rounded-lg border border-border p-3 bg-muted/30">
+                          {bootstrapLoading ? "Creating short code…" : installCommand}
+                        </pre>
+                        <div className="mt-3 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 text-xs border border-border rounded-md hover:bg-accent/10 disabled:opacity-50"
+                            disabled={bootstrapLoading || !pairingToken}
+                            onClick={() => {
+                              if (pairingToken && pairingUserId) {
+                                void refreshBootstrapCommand(pairingToken, pairingUserId);
+                              }
+                            }}
+                          >
+                            Refresh
+                          </button>
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 text-xs bg-foreground text-background rounded-md disabled:opacity-50 inline-flex items-center gap-1.5"
+                            disabled={bootstrapLoading || !bootstrapCode}
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(installCommand);
+                                setCopiedCmd(true);
+                                setTimeout(() => setCopiedCmd(false), 2000);
+                                setCliPanelMode("logs");
+                                toast.success("Command copied — watching live logs");
+                              } catch {
+                                toast.error("Could not copy command");
+                              }
+                            }}
+                          >
+                            {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            {copiedCmd ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-xs font-medium text-muted-foreground inline-flex items-center gap-1.5">
+                            {installLive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                            Live install logs
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              className="px-2 py-1 text-[11px] border border-border rounded hover:bg-accent/10 inline-flex items-center gap-1"
+                              onClick={() => setCliPanelMode("command")}
+                              title="View command"
+                            >
+                              <Eye className="w-3 h-3" />
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              className="px-2 py-1 text-[11px] border border-border rounded hover:bg-accent/10 inline-flex items-center gap-1 disabled:opacity-50"
+                              disabled={bootstrapLoading || !pairingToken}
+                              onClick={() => {
+                                if (pairingToken && pairingUserId) {
+                                  void refreshBootstrapCommand(pairingToken, pairingUserId);
+                                }
+                                setCliPanelMode("command");
+                              }}
+                              title="Refresh command"
+                            >
+                              <RotateCcw className={`w-3 h-3 ${bootstrapLoading ? "animate-spin" : ""}`} />
+                              Refresh
+                            </button>
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-muted/20 p-3 h-52 overflow-auto font-mono text-[11px] leading-5 text-muted-foreground">
+                          {installLogs.length === 0 ? (
+                            <p>Waiting for agent… run the copied command on the PC.</p>
+                          ) : (
+                            installLogs.map((log, idx) => {
+                              const tag =
+                                log.state === "ok"
+                                  ? "[OK]"
+                                  : log.state === "fail"
+                                    ? "[FAIL]"
+                                    : log.state === "warn"
+                                      ? "[WARN]"
+                                      : "[..]";
+                              const color =
+                                log.state === "ok"
+                                  ? "text-foreground"
+                                  : log.state === "fail"
+                                    ? "text-rose-600"
+                                    : log.state === "warn"
+                                      ? "text-amber-500"
+                                      : "text-muted-foreground";
+                              return (
+                                <div key={`${log.at || idx}-${idx}`} className={color}>
+                                  {tag}{" "}
+                                  {log.step && log.total ? `(${log.step}/${log.total}) ` : ""}
+                                  {log.message}
+                                  {log.hostname ? `  · ${log.hostname}` : ""}
+                                </div>
+                              );
+                            })
+                          )}
+                          <div ref={logsEndRef} />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -370,16 +671,14 @@ export default function DashboardPage() {
                           </div>
                           <div className="ml-auto flex items-center gap-2">
                             <div
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono ${
-                                device.status === "online"
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono ${device.status === "online"
                                   ? "bg-green-500/20 text-green-700"
                                   : "bg-gray-500/20 text-gray-700"
-                              }`}
+                                }`}
                             >
                               <span
-                                className={`w-2 h-2 rounded-full ${
-                                  device.status === "online" ? "bg-green-600" : "bg-gray-600"
-                                }`}
+                                className={`w-2 h-2 rounded-full ${device.status === "online" ? "bg-green-600" : "bg-gray-600"
+                                  }`}
                               />
                               {device.status === "online" ? "Online" : "Offline"}
                             </div>
@@ -392,15 +691,14 @@ export default function DashboardPage() {
                             <div className="flex items-center gap-2">
                               <div className="flex-1 bg-border rounded-full h-2">
                                 <div
-                                  className={`h-full rounded-full ${
-                                    typeof device.battery === "number"
+                                  className={`h-full rounded-full ${typeof device.battery === "number"
                                       ? device.battery > 50
                                         ? "bg-green-600"
                                         : device.battery > 20
                                           ? "bg-orange-600"
                                           : "bg-red-600"
                                       : "bg-gray-400"
-                                  }`}
+                                    }`}
                                   style={{ width: `${typeof device.battery === "number" ? device.battery : 0}%` }}
                                 />
                               </div>
@@ -565,7 +863,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <Dialog open={showPairModal} onOpenChange={setShowPairModal}>
+        <Dialog open={showPairModal} onOpenChange={(v) => { setShowPairModal(v); if (!v) { setSelectedPlatform(null); setSelectedAndroidVersion(null); } }}>
           <DialogContent
             showCloseButton={false}
             className="w-[min(95vw,1200px)] max-w-[1200px] h-[90vh] overflow-hidden rounded-[1.5rem] border border-border bg-background shadow-2xl"
@@ -582,170 +880,197 @@ export default function DashboardPage() {
               <DialogTitle>Pair Device ON Zenvora Agent</DialogTitle>
               <DialogDescription className="mt-3 text-sm text-muted-foreground max-w-2xl">
                 Copy the short command, run it as Admin, and <strong className="text-foreground">keep this modal open</strong>.
-                Live install logs appear in the black console at the bottom of this dialog.
+                Live install logs appear in the console area below.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="flex flex-col ">
-              <div className="px-8 ">
-                <div className="">
-                  <h3 className="text-xl font-semibold mb-4">Terms and Conditions</h3>
-                  <div className="space-y-4 text-sm leading-7 text-muted-foreground">
-                    <p>This is the Android Software Development Kit License Agreement.</p>
-                    <div>
-                      <h4 className="font-semibold text-foreground">1. Introduction</h4>
-                      <p>
-                        The Android Software Development Kit is licensed to you subject to the terms of this agreement. The
-                        agreement forms a legally binding contract between you and Google in relation to your use of the SDK.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-foreground">2. Accepting this License Agreement</h4>
-                      <p>
-                        To use the SDK, you must first agree to the license agreement. By using the SDK, you acknowledge that
-                        you accept these terms and agree to comply with them.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-foreground">3. SDK License from Google</h4>
-                      <p>
-                        Google grants you a limited, worldwide, non-exclusive license to use the SDK solely to develop
-                        applications for compatible implementations of Android.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-foreground">4. Use of the SDK by You</h4>
-                      <p>
-                        You agree to use the SDK only for permitted purposes and in compliance with applicable laws, privacy
-                        expectations, and Google’s policies.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-foreground">5. Privacy and Information</h4>
-                      <p>
-                        Google may collect usage statistics and other information to improve the SDK. Any such data collection
-                        is managed under Google’s privacy policy.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-foreground">6. General Legal Terms</h4>
-                      <p>
-                        The agreement is governed by the laws of the State of California, and you agree to submit to the
-                        exclusive jurisdiction of courts located in Santa Clara County, California.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-6 space-y-4">
+            {/* Content */}
+            {['android', 'mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
+              <div className="px-8 py-12 text-center">
+                <h3 className="text-2xl font-semibold mb-4">Coming soon</h3>
+                <p className="text-muted-foreground">Pairing for {selectedPlatform}{selectedAndroidVersion ? ` (Android ${selectedAndroidVersion})` : ''} is coming soon. Check back later or use the gateway installer.</p>
+              </div>
+            ) : (
+              <div className="flex flex-col ">
+                <div className="px-8 ">
                   <div className="">
-                    <h3 className="text-xl font-semibold mb-4">User Tokens</h3>
-                    <div className="space-y-4 gap-8 flex flex-wrap">
+                    <h3 className="text-xl font-semibold mb-4">Terms and Conditions</h3>
+                    <div className="space-y-4 text-sm leading-7 text-muted-foreground">
+                      <p>This is the Android Software Development Kit License Agreement.</p>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair Token</p>
-                        <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
+                        <h4 className="font-semibold text-foreground">1. Introduction</h4>
+                        <p>
+                          The Android Software Development Kit is licensed to you subject to the terms of this agreement. The
+                          agreement forms a legally binding contract between you and Google in relation to your use of the SDK.
+                        </p>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair User ID</p>
-                        <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                        <h4 className="font-semibold text-foreground">2. Accepting this License Agreement</h4>
+                        <p>
+                          To use the SDK, you must first agree to the license agreement. By using the SDK, you acknowledge that
+                          you accept these terms and agree to comply with them.
+                        </p>
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-foreground">3. SDK License from Google</h4>
+                        <p>
+                          Google grants you a limited, worldwide, non-exclusive license to use the SDK solely to develop
+                          applications for compatible implementations of Android.
+                        </p>
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-foreground">4. Use of the SDK by You</h4>
+                        <p>
+                          You agree to use the SDK only for permitted purposes and in compliance with applicable laws, privacy
+                          expectations, and Google’s policies.
+                        </p>
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-foreground">5. Privacy and Information</h4>
+                        <p>
+                          Google may collect usage statistics and other information to improve the SDK. Any such data collection
+                          is managed under Google’s privacy policy.
+                        </p>
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-foreground">6. General Legal Terms</h4>
+                        <p>
+                          The agreement is governed by the laws of the State of California, and you agree to submit to the
+                          exclusive jurisdiction of courts located in Santa Clara County, California.
+                        </p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="pt-2">
-                    <h3 className="text-xl font-semibold mb-2">Short install command</h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Run in <strong className="text-foreground">Admin PowerShell</strong> (Win 10 / 11 best;
-                      Win 8.1 / 7 need .NET 4.5+). Uses a timeout-safe download — not{" "}
-                      <code className="text-xs">irm | iex</code> (that hangs on many PCs).
-                      Keep this modal open for live logs.
-                      {bootstrapCode ? (
-                        <span className="ml-2 font-mono text-foreground">code={bootstrapCode}</span>
-                      ) : null}
-                    </p>
-                    <div className="rounded-xl border border-border bg-muted/40 p-3">
-                      <pre className="whitespace-pre-wrap break-all text-sm font-mono leading-5 max-h-28 overflow-auto">
-                        {bootstrapLoading ? "Creating short code…" : installCommand}
-                      </pre>
-                      <div className="mt-3 flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={bootstrapLoading || !pairingToken}
-                          onClick={() => {
-                            if (pairingToken && pairingUserId) void refreshBootstrapCommand(pairingToken, pairingUserId);
-                          }}
-                          className="gap-2"
-                        >
-                          Refresh code
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void copyInstallCommand()}
-                          disabled={bootstrapLoading || !bootstrapCode}
-                          className="gap-2"
-                        >
-                          {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                          {copiedCmd ? "Copied" : "Copy command"}
-                        </Button>
+                  <div className="pt-6 space-y-4">
+                    <div className="">
+                      <h3 className="text-xl font-semibold mb-4">User Tokens</h3>
+                      <div className="space-y-4 gap-8 flex flex-wrap">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair Token</p>
+                          <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair User ID</p>
+                          <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="pt-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-xl font-semibold">Live install logs</h3>
-                      <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
-                        {installLive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                        {installLive ? "Listening…" : "Idle"}
-                        <span className="font-mono opacity-70">{installSessionId}</span>
-                      </span>
-                    </div>
-                    <div className="rounded-xl border border-border bg-black/90 text-green-400 p-3 h-48 overflow-auto font-mono text-xs leading-5">
-                      {installLogs.length === 0 ? (
-                        <p className="text-green-700/80">Waiting for agent… copy the command and run it on the PC.</p>
-                      ) : (
-                        installLogs.map((log, idx) => {
-                          const tag =
-                            log.state === "ok"
-                              ? "[OK]"
-                              : log.state === "fail"
-                                ? "[FAIL]"
-                                : log.state === "warn"
-                                  ? "[WARN]"
-                                  : "[..]";
-                          const color =
-                            log.state === "ok"
-                              ? "text-emerald-400"
-                              : log.state === "fail"
-                                ? "text-rose-400"
-                                : log.state === "warn"
-                                  ? "text-amber-300"
-                                  : "text-green-400";
-                          return (
-                            <div key={`${log.at || idx}-${idx}`} className={color}>
-                              {tag}{" "}
-                              {log.step && log.total ? `(${log.step}/${log.total}) ` : ""}
-                              {log.message}
-                              {log.hostname ? `  · ${log.hostname}` : ""}
+                    {/* Short install command and logs are shown only when not opening a GUI-specific platform modal */}
+                    {selectedPlatform === null && (
+                      <>
+                        <div className="pt-2">
+                          <h3 className="text-xl font-semibold mb-2">Short install command</h3>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Run in <strong className="text-foreground">Admin PowerShell</strong> (Win 10 / 11 best;
+                            Win 8.1 / 7 need .NET 4.5+). Uses a timeout-safe download — not{' '}
+                            <code className="text-xs">irm | iex</code> (that hangs on many PCs).
+                            Keep this modal open for live logs.
+                            {bootstrapCode ? (
+                              <span className="ml-2 font-mono text-foreground">code={bootstrapCode}</span>
+                            ) : null}
+                          </p>
+                          <div className="rounded-xl border border-border bg-muted/40 p-3">
+                            <pre className="whitespace-pre-wrap break-all text-sm font-mono leading-5 max-h-28 overflow-auto">
+                              {bootstrapLoading ? "Creating short code…" : installCommand}
+                            </pre>
+                            <div className="mt-3 flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={bootstrapLoading || !pairingToken}
+                                onClick={() => {
+                                  if (pairingToken && pairingUserId) void refreshBootstrapCommand(pairingToken, pairingUserId);
+                                }}
+                                className="gap-2"
+                              >
+                                Refresh code
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void copyInstallCommand()}
+                                disabled={bootstrapLoading || !bootstrapCode}
+                                className="gap-2"
+                              >
+                                {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                {copiedCmd ? "Copied" : "Copy command"}
+                              </Button>
                             </div>
-                          );
-                        })
-                      )}
-                      <div ref={logsEndRef} />
-                    </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-xl font-semibold">Live install logs</h3>
+                            <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
+                              {installLive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                              {installLive ? "Listening…" : "Idle"}
+                              <span className="font-mono opacity-70">{installSessionId}</span>
+                            </span>
+                          </div>
+                          <div className="rounded-xl border border-border bg-card text-muted-foreground p-3 h-48 overflow-auto font-mono text-xs leading-5">
+                            {installLogs.length === 0 ? (
+                              <p className="text-muted-foreground">Waiting for agent… copy the command and run it on the PC.</p>
+                            ) : (
+                              installLogs.map((log, idx) => {
+                                const tag =
+                                  log.state === "ok"
+                                    ? "[OK]"
+                                    : log.state === "fail"
+                                      ? "[FAIL]"
+                                      : log.state === "warn"
+                                        ? "[WARN]"
+                                        : "[..]";
+                                const color =
+                                  log.state === "ok"
+                                    ? "text-foreground"
+                                    : log.state === "fail"
+                                      ? "text-rose-600"
+                                      : log.state === "warn"
+                                        ? "text-amber-500"
+                                        : "text-muted-foreground";
+                                return (
+                                  <div key={`${log.at || idx}-${idx}`} className={color}>
+                                    {tag}{" "}
+                                    {log.step && log.total ? `(${log.step}/${log.total}) ` : ""}
+                                    {log.message}
+                                    {log.hostname ? `  · ${log.hostname}` : ""}
+                                  </div>
+                                );
+                              })
+                            )}
+                            <div ref={logsEndRef} />
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
+            )}
 
-              <div className="border-t border-border px-8 py-5 bg-background">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-muted-foreground">ZenvoraAgent.exe · headless provision + service install</p>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <Button variant="outline" onClick={() => setShowPairModal(false)}>
-                      Close
+            <div className="border-t border-border px-8 py-5 bg-background">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">ZenvoraAgent.exe · headless provision + service install</p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <Button variant="outline" onClick={() => setShowPairModal(false)}>
+                    Close
+                  </Button>
+                  {selectedPlatform === "android" && selectedAndroidVersion ? (
+                    <Button className="bg-foreground text-background hover:bg-foreground/90" disabled>
+                      <DownloadCloud className="w-4 h-4 mr-2" />
+                      Coming soon
                     </Button>
+                  ) : selectedPlatform === "windows" ? (
+                    <a href={agentDownloadUrl} target="_blank" rel="noreferrer">
+                      <Button className="bg-foreground text-background hover:bg-foreground/90">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download exe
+                      </Button>
+                    </a>
+                  ) : (
                     <Button
                       className="bg-foreground text-background hover:bg-foreground/90"
                       disabled={bootstrapLoading || !bootstrapCode}
@@ -753,13 +1078,15 @@ export default function DashboardPage() {
                     >
                       Copy Short Command
                     </Button>
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
           </DialogContent>
         </Dialog>
-      </main>
-    </div>
+
+      
+    </main>
+    </div >
   );
 }

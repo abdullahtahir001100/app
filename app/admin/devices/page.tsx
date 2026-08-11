@@ -6,6 +6,7 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { 
   Search, 
   Filter, 
@@ -79,6 +80,62 @@ export default function AdminDevicesPage() {
   const totalDevices = devices.length;
   const onlineDevices = devices.filter(d => d.status === "online").length;
   const offlineDevices = devices.filter(d => d.status === "offline").length;
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+
+        <main className="flex-1 lg:ml-64 overflow-auto">
+          <div className="p-6 lg:p-12">
+            <Skeleton className="h-12 w-72 mb-3" />
+            <Skeleton className="h-5 w-96 mb-8" />
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Card key={index} className="p-4 border border-border bg-card">
+                  <Skeleton className="h-3 w-24 mb-2" />
+                  <Skeleton className="h-8 w-16" />
+                </Card>
+              ))}
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-4 mb-8">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-32 rounded-lg" />
+            </div>
+
+            <div className="flex gap-2 mb-8 flex-wrap">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <Skeleton key={index} className="h-9 w-24 rounded-full" />
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Card key={index} className="p-4 border border-border bg-card">
+                  <div className="flex items-start gap-4">
+                    <Skeleton className="h-12 w-12 rounded-lg" />
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Skeleton className="h-5 w-36" />
+                        <Skeleton className="h-7 w-20 rounded-full" />
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                        {Array.from({ length: 5 }).map((_, cardIndex) => (
+                          <Skeleton key={cardIndex} className="h-10 w-full rounded-md" />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

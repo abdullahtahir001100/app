@@ -34,8 +34,7 @@ use crate::activity_monitor;
 use crate::agent::AgentState;
 use crate::connection_status;
 use crate::commands::{
-    build_binary_frame, build_camera_blocked_notice, capture_stream_frame, CommandResponse,
-    IncomingPacket,
+    build_binary_frame, CommandResponse, IncomingPacket,
 };
 use crate::config::AgentConfig;
 use crate::router::dispatch_command;
@@ -213,6 +212,38 @@ fn schedule_screen_capture(
     });
 }
 
+/// Camera capture MUST NOT run on the gateway select loop — JPEG encode blocks
+/// heartbeats and causes reconnect → stream off when the lens moves quickly.
+fn schedule_camera_capture(
+    worker: crate::camera_worker::CameraWorker,
+    media_tx: Option<mpsc::Sender<Vec<u8>>>,
+    camera_busy: Arc<AtomicBool>,
+    capture_in_flight: Arc<AtomicBool>,
+) {
+    tokio::spawn(async move {
+        let jpeg_result = timeout(
+            Duration::from_secs(3),
+            tokio::task::spawn_blocking(move || crate::commands::capture_jpeg_from_worker(&worker)),
+        )
+        .await;
+
+        match jpeg_result {
+            Ok(Ok(Some(jpeg))) => {
+                let binary = build_binary_frame(jpeg, crate::commands::FRAME_STREAM);
+                if let Some(tx) = media_tx.as_ref() {
+                    let _ = tx.try_send(binary);
+                }
+            }
+            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => {
+                // Dropped / timed-out frame — never leave busy flags stuck.
+            }
+        }
+
+        capture_in_flight.store(false, Ordering::Release);
+        camera_busy.store(false, Ordering::Release);
+    });
+}
+
 fn get_hostname() -> String {
     hostname::get()
         .unwrap_or_default()
@@ -325,10 +356,15 @@ async fn wait_for_network_ready(max_wait_secs: u64) -> bool {
 
 fn build_gateway_url(config: &AgentConfig) -> Result<Url, String> {
     // Allow runtime override without re-pairing (e.g. local testing).
-    let gateway = std::env::var("ZENVORA_GATEWAY_URL")
+    let mut gateway = std::env::var("ZENVORA_GATEWAY_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| config.gateway_url.clone());
+
+    // Local plain HTTP servers cannot terminate TLS.
+    if gateway.contains("://localhost") || gateway.contains("://127.0.0.1") {
+        gateway = gateway.replacen("wss://", "ws://", 1);
+    }
 
     // Do NOT put agentToken in the URL.
     // Railway/proxy can hang or truncate long query strings during WebSocket upgrade.
@@ -362,6 +398,18 @@ async fn wait_for_gateway_ack(
                         let status = packet.get("status").and_then(|v| v.as_str());
                         if packet_type == Some("sys_ack") && status == Some("ready") {
                             return Ok(());
+                        }
+                        if packet_type == Some("sys_ack") && status == Some("duplicate") {
+                            // Another agent process already owns this device — back off hard.
+                            return Err(ConnectFailure::Network(
+                                "Another ZenvoraAgent is already connected for this device. Stop the Windows service or extra console agent."
+                                    .into(),
+                            ));
+                        }
+                        if packet_type == Some("sys_ack") && status == Some("retry") {
+                            return Err(ConnectFailure::Network(
+                                "previous session closing — retry shortly".into(),
+                            ));
                         }
                         if packet_type == Some("sys_ack")
                             && matches!(status, Some("auth_failed") | Some("auth_timeout"))
@@ -503,6 +551,14 @@ pub async fn run_network_loop(
                     }
                     Err(failure) => {
                         let is_auth = matches!(failure, ConnectFailure::Auth);
+                        let is_duplicate = matches!(
+                            &failure,
+                            ConnectFailure::Network(msg) if msg.contains("already connected")
+                        );
+                        let is_retry = matches!(
+                            &failure,
+                            ConnectFailure::Network(msg) if msg.contains("retry shortly")
+                        );
                         let message = match failure {
                             ConnectFailure::HandshakeTimeout => {
                                 "Gateway did not confirm registration in time.".to_string()
@@ -523,7 +579,14 @@ pub async fn run_network_loop(
                             &message,
                             false,
                         );
-                        sleep(Duration::from_secs(5)).await;
+                        let wait_secs = if is_duplicate {
+                            120
+                        } else if is_retry {
+                            2
+                        } else {
+                            5
+                        };
+                        sleep(Duration::from_secs(wait_secs)).await;
                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                         continue;
                     }
@@ -759,24 +822,19 @@ pub async fn run_network_loop(
                                     last_alive = Instant::now();
                                 }
                                 Some(Ok(Message::Close(_))) => {
-                                    state.screen.streaming_active = false;
-                                    state.camera.request_stop_and_release();
+                                    // Do not kill camera/screen intent on gateway close — reconnect resumes.
                                     state.audio.stop_streaming();
                                     invalidate_monitor_cache();
                                     println!("--> [NETWORK] Gateway closed connection.");
                                     break;
                                 }
                                 Some(Err(e)) => {
-                                    state.screen.streaming_active = false;
-                                    state.camera.request_stop_and_release();
                                     state.audio.stop_streaming();
                                     invalidate_monitor_cache();
                                     eprintln!("--> [NETWORK] Socket transmission failure: {}", e);
                                     break;
                                 }
                                 None => {
-                                    state.screen.streaming_active = false;
-                                    state.camera.request_stop_and_release();
                                     state.audio.stop_streaming();
                                     invalidate_monitor_cache();
                                     println!("--> [NETWORK] WebSocket stream ended.");
@@ -816,30 +874,20 @@ pub async fn run_network_loop(
                             }
 
                             state.camera.capture_in_flight.store(true, Ordering::Release);
-
-                            if let Some(frame) = capture_stream_frame(&state.camera) {
-                                state.camera.capture_fail_streak = 0;
-                                let binary = build_binary_frame(frame.payload, frame.kind);
-                                // Media WS only — never flood gateway.
-                                let _ = state
-                                    .camera_media_tx
-                                    .as_ref()
-                                    .map(|tx| tx.try_send(binary));
-                            } else if state.camera.handle_capture_failure() {
-                                state.camera.try_complete_release();
-                                let notice = build_camera_blocked_notice(&state.camera);
-                                let _ = write_tx.send(Message::Text(notice.to_string()));
-                            }
-
-                            state.camera.capture_in_flight.store(false, Ordering::Release);
-                            camera_busy.store(false, Ordering::Release);
-                            state.camera.try_complete_release();
+                            schedule_camera_capture(
+                                state.camera.clone_worker(),
+                                state.camera_media_tx.clone(),
+                                Arc::clone(&camera_busy),
+                                Arc::clone(&state.camera.capture_in_flight),
+                            );
                         }
                     }
                 }
 
                 writer_task.abort();
                 state.audio.stop_streaming();
+                // Keep camera/screen streaming_active across brief gateway flaps so
+                // live frame counters (300→1000+) survive reconnect without user re-click.
                 invalidate_monitor_cache();
                 if session_started.elapsed() >= Duration::from_secs(STABLE_SESSION_SECS) {
                     reconnect_attempt = 0;

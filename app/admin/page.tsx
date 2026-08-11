@@ -6,6 +6,7 @@ import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { 
   Users, 
   Smartphone, 
@@ -24,6 +25,7 @@ export default function AdminPage() {
     credentials: 0,
   });
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
 
   // Authenticate and fetch stats
   useEffect(() => {
@@ -51,6 +53,8 @@ export default function AdminPage() {
         setStats(data.stats || {});
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        if (active) setIsLoading(false);
       }
     })();
     return () => {
@@ -133,6 +137,85 @@ export default function AdminPage() {
     { label: "Inactive Users", value: 245, percentage: 20 },
     { label: "Suspended Users", value: 97, percentage: 8 },
   ];
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+
+        <main className="flex-1 lg:ml-64 overflow-auto">
+          <div className="p-6 lg:p-12">
+            <Skeleton className="h-12 w-72 mb-3" />
+            <Skeleton className="h-5 w-96 mb-8" />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Card key={index} className="p-6 border border-border bg-card h-full">
+                  <div className="flex items-start justify-between mb-4">
+                    <Skeleton className="h-12 w-12 rounded-lg" />
+                    <Skeleton className="h-7 w-20 rounded-full" />
+                  </div>
+                  <Skeleton className="h-4 w-24 mb-2" />
+                  <Skeleton className="h-8 w-20" />
+                </Card>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+              <div className="lg:col-span-2">
+                <Card className="p-6 border border-border bg-card h-full">
+                  <div className="flex items-center justify-between mb-6">
+                    <Skeleton className="h-6 w-40" />
+                    <Skeleton className="h-10 w-24 rounded-lg" />
+                  </div>
+                  <div className="space-y-4">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div key={index} className="flex items-start justify-between pb-4 border-b border-border last:border-0 last:pb-0">
+                        <div className="space-y-2 flex-1">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-44" />
+                        </div>
+                        <div className="space-y-2 text-right">
+                          <Skeleton className="h-6 w-24 ml-auto rounded-full" />
+                          <Skeleton className="h-3 w-20 ml-auto" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+
+              <div>
+                <Card className="p-6 border border-border bg-card h-full">
+                  <Skeleton className="h-6 w-32 mb-6" />
+                  <div className="space-y-6">
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <div key={index} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Skeleton className="h-4 w-28" />
+                          <Skeleton className="h-4 w-8" />
+                        </div>
+                        <Skeleton className="h-2 w-full rounded-full" />
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            </div>
+
+            <Card className="p-6 border border-border bg-card">
+              <Skeleton className="h-6 w-40 mb-6" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton key={index} className="h-10 w-full rounded-lg" />
+                ))}
+              </div>
+            </Card>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

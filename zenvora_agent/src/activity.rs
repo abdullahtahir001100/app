@@ -23,6 +23,7 @@ pub struct ActivityLogger {
     hostname: String,
 }
 
+#[allow(dead_code)]
 impl ActivityLogger {
     pub fn init_activity_logger(
         write_tx: UnboundedSender<Message>,

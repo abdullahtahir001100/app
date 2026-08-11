@@ -1,5 +1,4 @@
 use serde_json::json;
-use crate::notifications::NotificationCapture;
 use crate::browser_history::BrowserHistoryCollector;
 use crate::app_history::AppHistoryCollector;
 
