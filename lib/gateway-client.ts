@@ -265,29 +265,30 @@ class GatewayClient {
     if (typeof window === "undefined" || this.lifecycleBound) return;
     this.lifecycleBound = true;
 
-    window.addEventListener("online", () => {
+    const resumeIfDead = () => {
+      const state = this.ws?.readyState;
+      // Never abort a CONNECTING handshake — that causes
+      // "WebSocket is closed before the connection is established".
+      if (state === WebSocket.OPEN || state === WebSocket.CONNECTING || this.connecting) {
+        return;
+      }
       this.ws = null;
-      this.connecting = false;
       this.ensureConnected();
+    };
+
+    window.addEventListener("online", () => {
+      resumeIfDead();
       void this.refreshDevices({ force: true });
     });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible") return;
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.ws = null;
-        this.connecting = false;
-        this.ensureConnected();
-      }
+      resumeIfDead();
       void this.refreshDevices({ force: true });
     });
 
     window.addEventListener("focus", () => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.ws = null;
-        this.connecting = false;
-        this.ensureConnected();
-      }
+      resumeIfDead();
     });
   }
 
@@ -359,6 +360,11 @@ class GatewayClient {
 
   private async connect() {
     if (typeof window === "undefined") return;
+    // Single-flight: never open a second socket while one is connecting/open.
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+    if (this.connecting) return;
 
     this.connecting = true;
     const generation = ++this.connectGeneration;
@@ -375,9 +381,18 @@ class GatewayClient {
     let ticket: string | null = this.getFreshCachedTicket();
     if (!ticket) {
       ticket = await this.fetchWsTicket();
-      if (generation !== this.connectGeneration) return;
+      if (generation !== this.connectGeneration) {
+        this.connecting = false;
+        return;
+      }
     }
     this.preferTicket = Boolean(ticket);
+
+    // Re-check after await — another caller may have connected.
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      this.connecting = false;
+      return;
+    }
 
     const gatewayUrl = ticket
       ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(ticket)}`
@@ -406,16 +421,18 @@ class GatewayClient {
       }
     };
 
-    // Abort slow handshakes fast — stalled upgrades must not sit for seconds.
+    // Prod TLS/proxy handshakes often exceed 4s — aborting early causes
+    // "WebSocket is closed before the connection is established".
     const handshakeTimer = setTimeout(() => {
-      if (!opened && ws.readyState !== WebSocket.OPEN) {
+      if (!opened && ws.readyState !== WebSocket.OPEN && this.ws === ws) {
+        console.warn("[GATEWAY] handshake timeout — retrying");
         try {
           ws.close();
         } catch {
           // ignore
         }
       }
-    }, 4000);
+    }, 20_000);
 
     ws.onopen = () => {
       opened = true;

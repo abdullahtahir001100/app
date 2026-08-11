@@ -27,26 +27,20 @@ function adaptWsSocket(ws) {
 function initWsControlGateway(server) {
     const wss = new WebSocket.Server({ noServer: true });
 
-    const prevListeners = server.listeners('upgrade').slice();
-    server.removeAllListeners('upgrade');
-
+    // Append a dedicated listener — do NOT removeAllListeners (that races with /ws/gateway + /ws/media).
     server.on('upgrade', (req, socket, head) => {
         const pathOnly = String(req.url || '').split('?')[0];
-        if (pathOnly === '/ws/control') {
-            socket.setTimeout(20000);
-            try {
-                wss.handleUpgrade(req, socket, head, (ws) => {
-                    wss.emit('connection', ws, req);
-                });
-            } catch (_) {
-                try { socket.destroy(); } catch (__) {}
-            }
+        if (pathOnly !== '/ws/control') {
             return;
         }
 
-        // Re-dispatch to previously registered upgrade handlers (gateway + Next).
-        for (const listener of prevListeners) {
-            listener.call(server, req, socket, head);
+        socket.setTimeout(0);
+        try {
+            wss.handleUpgrade(req, socket, head, (ws) => {
+                wss.emit('connection', ws, req);
+            });
+        } catch (_) {
+            try { socket.destroy(); } catch (__) {}
         }
     });
 

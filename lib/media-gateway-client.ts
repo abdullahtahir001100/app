@@ -11,9 +11,10 @@ type MediaStateListener = (state: "connecting" | "open" | "closed" | "error") =>
 const HEARTBEAT_INTERVAL_MS = 25_000;
 /** Only close if truly idle — frames + pongs both count as alive. */
 const HEARTBEAT_TIMEOUT_MS = 120_000;
+const HANDSHAKE_TIMEOUT_MS = 20_000;
 
 function nextBackoff(attempt: number): number {
-  const steps = [1000, 2000, 5000, 10000, 20000, 30000];
+  const steps = [2000, 4000, 8000, 15000, 30000, 45000];
   return steps[Math.min(Math.max(attempt - 1, 0), steps.length - 1)];
 }
 
@@ -24,11 +25,13 @@ export class MediaGatewayClient {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPongAt = 0;
   private deviceId = "";
   private channel = "";
   private closedByUser = false;
   private connecting = false;
+  private connectGeneration = 0;
   private openWaiters: Array<{
     resolve: (ok: boolean) => void;
     timer: ReturnType<typeof setTimeout>;
@@ -49,7 +52,7 @@ export class MediaGatewayClient {
   }
 
   /** Wait until /ws/media is OPEN (or timeout). */
-  waitUntilOpen(timeoutMs = 12_000): Promise<boolean> {
+  waitUntilOpen(timeoutMs = 15_000): Promise<boolean> {
     if (this.isOpen()) return Promise.resolve(true);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -72,11 +75,13 @@ export class MediaGatewayClient {
 
   disconnect() {
     this.closedByUser = true;
+    this.connectGeneration += 1;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this.stopHeartbeat();
+    this.clearHandshakeTimer();
     this.failOpenWaiters(false);
     try {
       this.ws?.close();
@@ -84,6 +89,7 @@ export class MediaGatewayClient {
       // ignore
     }
     this.ws = null;
+    this.connecting = false;
     this.emitState("closed");
   }
 
@@ -107,6 +113,13 @@ export class MediaGatewayClient {
 
   private failOpenWaiters(ok: boolean) {
     this.resolveOpenWaiters(ok);
+  }
+
+  private clearHandshakeTimer() {
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
   }
 
   private async fetchTicket(): Promise<string | null> {
@@ -134,6 +147,7 @@ export class MediaGatewayClient {
       typeof process !== "undefined" && process.env.NEXT_PUBLIC_MEDIA_URL
         ? String(process.env.NEXT_PUBLIC_MEDIA_URL).trim()
         : "";
+    // Prefer same-origin /ws/media so reverse-proxy WS rules apply consistently.
     const base =
       configured || `${protocol}//${window.location.host}/ws/media`;
     const params = new URLSearchParams();
@@ -152,14 +166,22 @@ export class MediaGatewayClient {
   }
 
   private async open() {
-    if (typeof window === "undefined" || this.connecting) return;
+    if (typeof window === "undefined") return;
+    if (this.closedByUser) return;
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
+    if (this.connecting) return;
 
     this.connecting = true;
+    const generation = ++this.connectGeneration;
     this.emitState("connecting");
+
     const ticket = await this.fetchTicket();
+    if (generation !== this.connectGeneration) {
+      this.connecting = false;
+      return;
+    }
     if (!ticket) {
       console.warn("[MEDIA-DEBUG] ws-ticket missing — not opening /ws/media without auth");
       this.connecting = false;
@@ -168,6 +190,12 @@ export class MediaGatewayClient {
       this.scheduleReconnect();
       return;
     }
+
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      this.connecting = false;
+      return;
+    }
+
     const url = this.mediaUrl(ticket);
     console.log(`[MEDIA-DEBUG] connecting device=${this.deviceId} channel=${this.channel}`);
 
@@ -186,7 +214,23 @@ export class MediaGatewayClient {
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
+    this.clearHandshakeTimer();
+    this.handshakeTimer = setTimeout(() => {
+      if (ws.readyState !== WebSocket.OPEN && this.ws === ws) {
+        console.warn(
+          `[MEDIA-DEBUG] handshake timeout device=${this.deviceId} channel=${this.channel}`
+        );
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+    }, HANDSHAKE_TIMEOUT_MS);
+
     ws.onopen = () => {
+      if (this.ws !== ws) return;
+      this.clearHandshakeTimer();
       this.connecting = false;
       this.reconnectAttempt = 0;
       this.lastPongAt = Date.now();
@@ -227,7 +271,6 @@ export class MediaGatewayClient {
     ws.onmessage = (event) => {
       this.lastPongAt = Date.now();
       if (typeof event.data === "string") {
-        // media_ping / dashboard_pong — keep-alive only
         return;
       }
       for (const listener of this.listeners) {
@@ -240,9 +283,10 @@ export class MediaGatewayClient {
     };
 
     ws.onclose = (ev) => {
-      this.connecting = false;
-      this.stopHeartbeat();
       if (this.ws === ws) this.ws = null;
+      this.connecting = false;
+      this.clearHandshakeTimer();
+      this.stopHeartbeat();
       console.warn(
         `[MEDIA-DEBUG] media closed device=${this.deviceId} channel=${this.channel} code=${ev.code} reason=${ev.reason || "n/a"}`
       );
@@ -256,7 +300,6 @@ export class MediaGatewayClient {
     ws.onerror = () => {
       console.warn(`[MEDIA-DEBUG] media error device=${this.deviceId} channel=${this.channel}`);
       this.emitState("error");
-      // onclose handles reconnect
     };
   }
 
@@ -265,6 +308,9 @@ export class MediaGatewayClient {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectAttempt += 1;
     const delay = nextBackoff(this.reconnectAttempt);
+    console.log(
+      `[MEDIA-DEBUG] reconnect in ${delay}ms attempt=${this.reconnectAttempt} device=${this.deviceId}`
+    );
     this.reconnectTimer = setTimeout(() => {
       void this.open();
     }, delay);

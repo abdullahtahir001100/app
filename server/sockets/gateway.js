@@ -142,6 +142,8 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         const pathOnly = urlObj.pathname;
 
         if (pathOnly !== '/ws/gateway' && pathOnly !== '/ws/media') {
+            // Leave /ws/control for the control gateway listener; everything else → Next.
+            if (pathOnly === '/ws/control') return;
             if (typeof nextUpgradeHandler === 'function') {
                 nextUpgradeHandler(req, socket, head);
             } else {
