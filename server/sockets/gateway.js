@@ -236,6 +236,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
 
     wss.on('connection', (ws, req) => {
         ws.upgradeReq = req;
+        console.log(`[GATEWAY-DEBUG] wss connection event path=${ws.isMediaSocket ? '/ws/media' : '/ws/gateway'} kind=${ws.authContext?.kind || 'unknown'} connectionKey=${ws.connectionKey || 'none'}`);
 
         // Dedicated media path
         if (ws.isMediaSocket) {
