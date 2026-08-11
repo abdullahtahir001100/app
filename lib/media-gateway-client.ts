@@ -8,10 +8,9 @@
 type MediaListener = (data: ArrayBuffer | Blob) => void;
 type MediaStateListener = (state: "connecting" | "open" | "closed" | "error") => void;
 
-const HEARTBEAT_INTERVAL_MS = 25_000;
-/** Only close if truly idle — frames + pongs both count as alive. */
-const HEARTBEAT_TIMEOUT_MS = 120_000;
-const HANDSHAKE_TIMEOUT_MS = 20_000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
+/** Frames + pongs keep alive; only drop after long total silence. */
+const HEARTBEAT_TIMEOUT_MS = 5 * 60_000;
 
 function nextBackoff(attempt: number): number {
   const steps = [2000, 4000, 8000, 15000, 30000, 45000];
@@ -231,11 +230,11 @@ export class MediaGatewayClient {
         }
         if (Date.now() - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
           console.warn(
-            `[MEDIA-DEBUG] heartbeat timeout device=${this.deviceId} channel=${this.channel} idleMs=${Date.now() - this.lastPongAt}`
+            `[MEDIA-DEBUG] idle ${Math.round((Date.now() - this.lastPongAt) / 1000)}s — soft reconnect device=${this.deviceId}`
           );
           this.stopHeartbeat();
           try {
-            ws.close();
+            ws.close(4000, "idle-timeout");
           } catch {
             // ignore
           }
@@ -245,11 +244,6 @@ export class MediaGatewayClient {
           ws.send(JSON.stringify({ type: "media_ping" }));
         } catch {
           this.stopHeartbeat();
-          try {
-            ws.close();
-          } catch {
-            // ignore
-          }
         }
       }, HEARTBEAT_INTERVAL_MS);
     };

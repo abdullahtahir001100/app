@@ -47,10 +47,12 @@ const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
 const CONNECT_TIMEOUT_SECS: u64 = 45;
 const NETWORK_WAIT_SECS: u64 = 15;
-const HEARTBEAT_INTERVAL_SECS: u64 = 25;
-const HEARTBEAT_TIMEOUT_SECS: u64 = 75;
+const HEARTBEAT_INTERVAL_SECS: u64 = 20;
+/// Long timeout — Railway/proxy stalls must not tear down a healthy session.
+const HEARTBEAT_TIMEOUT_SECS: u64 = 300;
 const MAX_BACKOFF_SECS: u64 = 30;
-const SLEEP_JUMP_SECS: u64 = 90;
+/// Only treat as sleep/resume when gap is extreme (laptop lid, etc.).
+const SLEEP_JUMP_SECS: u64 = 300;
 /// Only used for install UI "failed" status — agent keeps reconnecting forever.
 const FINAL_FAIL_AFTER_ATTEMPTS: u32 = 8;
 /// After a stable session, reset backoff so brief blips don't look like hard failure.
@@ -729,10 +731,11 @@ pub async fn run_network_loop(
 
                             if since_last_tick > Duration::from_secs(SLEEP_JUMP_SECS) {
                                 eprintln!(
-                                    "--> [NETWORK] System resume/sleep detected ({}s gap). Reconnecting...",
+                                    "--> [NETWORK] System resume/sleep gap ({}s). Keeping gateway session alive.",
                                     since_last_tick.as_secs()
                                 );
-                                break;
+                                last_alive = Instant::now();
+                                // Do not break — persistence over flap.
                             }
 
                             if last_alive.elapsed() > Duration::from_secs(HEARTBEAT_TIMEOUT_SECS) {

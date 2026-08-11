@@ -54,8 +54,9 @@ type GatewayListener = (event: GatewayEvent) => void;
 const DEVICE_CACHE_PREFIX = "zenvora_device_registry:";
 const DEVICE_CACHE_LEGACY_KEY = "zenvora_device_registry";
 const DEVICE_CACHE_TTL_MS = 12_000;
-const HEARTBEAT_INTERVAL_MS = 25_000;
-const HEARTBEAT_TIMEOUT_MS = 75_000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
+/** Only treat as dead after long silence — never flap on brief proxy stalls. */
+const HEARTBEAT_TIMEOUT_MS = 5 * 60_000;
 const CACHE_USER_KEY = "zenvora_cache_user_id";
 
 function deviceCacheKey(userId: string | null | undefined) {
@@ -267,8 +268,7 @@ class GatewayClient {
 
     const resumeIfDead = () => {
       const state = this.ws?.readyState;
-      // Never abort a CONNECTING handshake — that causes
-      // "WebSocket is closed before the connection is established".
+      // Never abort OPEN/CONNECTING — persistence first.
       if (state === WebSocket.OPEN || state === WebSocket.CONNECTING || this.connecting) {
         return;
       }
@@ -281,13 +281,15 @@ class GatewayClient {
       void this.refreshDevices({ force: true });
     });
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "visible") return;
-      resumeIfDead();
-      void this.refreshDevices({ force: true });
+    // BFCache (back/forward) kills WS — resume only when actually dead.
+    window.addEventListener("pageshow", (ev) => {
+      const persisted = Boolean((ev as PageTransitionEvent).persisted);
+      if (persisted) resumeIfDead();
     });
 
-    window.addEventListener("focus", () => {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      // Visible again: reconnect ONLY if socket died; never close a live one.
       resumeIfDead();
     });
   }
@@ -444,17 +446,26 @@ class GatewayClient {
           return;
         }
 
+        // Soft keep-alive: ping often, but only drop after 5 minutes of total silence.
         if (Date.now() - lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+          console.warn(
+            `[GATEWAY] no traffic for ${Math.round((Date.now() - lastPongAt) / 1000)}s — soft reconnect`
+          );
           stopHeartbeat();
-          ws.close();
+          // Mark dead without racing a second connect while CLOSE is in-flight.
+          try {
+            ws.close(4000, "idle-timeout");
+          } catch {
+            // ignore
+          }
           return;
         }
 
         try {
           ws.send(JSON.stringify({ type: "dashboard_ping" }));
         } catch {
+          // Send failure means socket is already dead — onclose will reconnect.
           stopHeartbeat();
-          ws.close();
         }
       }, HEARTBEAT_INTERVAL_MS);
     };
@@ -593,20 +604,28 @@ class GatewayClient {
       this.connecting = false;
       if (this.ws === ws) this.ws = null;
       this.emit({ type: "disconnected" });
-      if (this.listeners.size > 0) {
-        this.scheduleReconnect();
-      }
+      // Singleton must stay alive across React remounts / BFCache — always resume.
+      this.scheduleReconnect();
     };
   }
 
   private scheduleReconnect() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    // Already open/connecting — nothing to do.
+    if (
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CONNECTING ||
+      this.connecting
+    ) {
+      return;
+    }
     this.reconnectAttempt += 1;
-    // 1s → 2s → 5s → 10s → 20s → 30s
-    const steps = [1000, 2000, 5000, 10000, 20000, 30000];
+    // Gentle backoff: 1s → 2s → 5s → 10s → 20s (cap) — never spam.
+    const steps = [1000, 2000, 5000, 10000, 20000];
     const delay = steps[Math.min(this.reconnectAttempt - 1, steps.length - 1)];
     this.reconnectTimer = setTimeout(() => {
-      void this.connect();
+      this.reconnectTimer = null;
+      this.ensureConnected();
     }, delay);
   }
 

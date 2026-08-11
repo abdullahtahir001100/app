@@ -300,18 +300,32 @@ export default function ScreenPage() {
     setCommandStatus("Remote desktop stopped.");
   }, [dispatchControl, resetPreview]);
 
-  // On enter: stop any stale agent stream. Never auto-start. Stop again on leave.
+  // If media socket comes back while user still wants stream, nudge agent once.
+  const wasMediaReadyRef = useRef(false);
   useEffect(() => {
-    dispatchControl("STOP_SCREEN_STREAM", {});
-    setIsStreaming(false);
-    resetPreview();
-    try {
-      sessionStorage.setItem("zenvora_screen_streaming", "0");
-    } catch {
-      // ignore
+    if (!isStreaming || !agentOnline || !selectedDevice) return;
+    if (mediaReady && !wasMediaReadyRef.current) {
+      dispatchControl(
+        "START_SCREEN_STREAM",
+        { quality: streamQualityRef.current, target_fps: streamFpsRef.current },
+        selectedDevice
+      );
+      setCommandStatus("Media reconnected — resuming stream…");
     }
+    wasMediaReadyRef.current = mediaReady;
+  }, [mediaReady, isStreaming, agentOnline, selectedDevice, dispatchControl]);
+
+  // Leave page: stop stream only if user had it ON.
+  useEffect(() => {
     return () => {
-      dispatchControl("STOP_SCREEN_STREAM", {});
+      try {
+        if (sessionStorage.getItem("zenvora_screen_streaming") === "1") {
+          dispatchControl("STOP_SCREEN_STREAM", {});
+          sessionStorage.setItem("zenvora_screen_streaming", "0");
+        }
+      } catch {
+        // ignore
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

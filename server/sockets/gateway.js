@@ -338,7 +338,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                     } catch (_) {}
                     ws.close();
                 }
-            }, 10000);
+            }, 30000);
         }
 
         ws.on('message', (message) => {
