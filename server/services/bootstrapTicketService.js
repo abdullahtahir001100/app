@@ -99,7 +99,7 @@ function getTicket(code) {
 
 /**
  * Paste into Admin PowerShell (recommended).
- * Prefer curl (has timeouts) — WebClient.DownloadString often hangs with no output.
+ * Same-session iex — do NOT pipe into a nested powershell (hides output / hangs).
  */
 function buildBootstrapCommand(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
@@ -108,7 +108,10 @@ function buildBootstrapCommand(apiBase, code) {
         "Write-Host 'Zenvora: fetching install script...' -ForegroundColor Cyan;",
         "$ProgressPreference='SilentlyContinue';",
         '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;',
-        `curl.exe -fsSL --connect-timeout 20 --max-time 60 '${url}' | powershell -NoP -Ep Bypass -`,
+        `$__zv = curl.exe -fsSL --connect-timeout 20 --max-time 60 '${url}';`,
+        'if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($__zv)) { Write-Host "Fetch failed (curl exit $LASTEXITCODE). Check network / code." -ForegroundColor Red; return };',
+        'Write-Host "Zenvora: running installer..." -ForegroundColor Cyan;',
+        'Invoke-Expression $__zv',
     ].join(' ');
 }
 
@@ -117,17 +120,20 @@ function buildBootstrapCommandCmd(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
     const inner =
+        `Write-Host ''Zenvora: fetching...'' -ForegroundColor Cyan;` +
         `$ProgressPreference=''SilentlyContinue'';` +
         `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;` +
-        `iex ((New-Object Net.WebClient).DownloadString(''${url}''))`;
+        `$__zv = curl.exe -fsSL --connect-timeout 20 --max-time 60 ''${url}'';` +
+        `if ($LASTEXITCODE -ne 0) { Write-Host ''Fetch failed'' -ForegroundColor Red; return };` +
+        `Invoke-Expression $__zv`;
     return `powershell -NoP -Ep Bypass -c '${inner}'`;
 }
 
-/** Win10+ curl fallback when WebClient/proxy hangs. */
+/** Win10+ curl one-liner (cmd / Run). Nested powershell OK here because parent is cmd. */
 function buildBootstrapCommandCurl(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
-    return `curl.exe -fsSL --connect-timeout 15 --max-time 45 "${url}" | powershell -NoP -Ep Bypass -`;
+    return `curl.exe -fsSL --connect-timeout 20 --max-time 60 "${url}" | powershell -NoP -Ep Bypass -`;
 }
 
 /**
