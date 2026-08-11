@@ -76,6 +76,7 @@ function authenticateGatewayRequest(req) {
 }
 
 function rejectUpgrade(socket, statusCode, message) {
+    console.warn(`[GATEWAY-DEBUG] rejectUpgrade status=${statusCode} message=${message}`);
     try {
         socket.write(
             `HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
@@ -158,6 +159,8 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             try { socket.destroy(); } catch (_) {}
         });
 
+        console.log(`[GATEWAY-DEBUG] upgrade request path=${pathOnly} url=${String(req.url)} host=${String(req.headers.host)}`);
+
         let auth;
         try {
             auth = authenticateGatewayRequest(req);
@@ -167,6 +170,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                 url: pathOnly,
                 message: error?.message || String(error),
             });
+            console.warn(`[GATEWAY-DEBUG] auth error path=${pathOnly} message=${String(error?.message || error)}`);
             rejectUpgrade(socket, 503, 'Service Unavailable');
             return;
         }
@@ -208,6 +212,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                         deviceId: urlObj.searchParams.get('deviceId') || '',
                     };
                 }
+                console.log(`[GATEWAY-DEBUG] handleUpgrade OK path=${pathOnly} kind=${auth.kind} deviceId=${ws.mediaSubscription?.deviceId || ''} channel=${ws.mediaSubscription?.channel || ''}`);
                 liveLogBus.push({
                     channel: 'ws',
                     level: 'info',
@@ -235,14 +240,17 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         // Dedicated media path
         if (ws.isMediaSocket) {
             if (ws.authContext?.kind === 'user') {
+                console.log(`[GATEWAY-DEBUG] media dashboard client connected deviceId=${ws.mediaSubscription?.deviceId || ''} channel=${ws.mediaSubscription?.channel || ''}`);
                 registerDashboardMediaClient(ws, ws.authContext, ws.mediaSubscription || {});
                 ws.on('close', () => {
                     const registry = getConnectionRegistry();
                     if (ws.connectionKey) registry.delete(ws.connectionKey);
+                    console.log(`[GATEWAY-DEBUG] media dashboard client closed connectionKey=${ws.connectionKey || 'unknown'}`);
                 });
                 ws.on('error', () => {
                     const registry = getConnectionRegistry();
                     if (ws.connectionKey) registry.delete(ws.connectionKey);
+                    console.warn(`[GATEWAY-DEBUG] media dashboard client error connectionKey=${ws.connectionKey || 'unknown'}`);
                 });
                 // Keepalive: ignore client text pings
                 ws.on('message', (message) => {
@@ -291,6 +299,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                     clearTimeout(ws.mediaAuthTimer);
                     ws.mediaAuthTimer = null;
                 }
+                console.warn('[MEDIA-DEBUG] agent media socket closed before auth');
                 onSocketClose(ws);
             });
             ws.on('error', () => {
@@ -298,6 +307,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
                     clearTimeout(ws.mediaAuthTimer);
                     ws.mediaAuthTimer = null;
                 }
+                console.warn('[MEDIA-DEBUG] agent media socket error before auth');
                 onSocketClose(ws);
             });
             return;
