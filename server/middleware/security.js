@@ -21,10 +21,10 @@ function parseAllowedOrigins() {
     const configured = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '';
     if (!configured || configured === '*') {
         return [
-            'http://localhost:3000',
+            'https://zenvora.abdullahtahir.me',
             'http://127.0.0.1:3000',
-            'http://localhost:3000',
-            'http://localhost:3000',
+            'https://zenvora.abdullahtahir.me',
+            'https://zenvora.abdullahtahir.me',
             'https://app.javehandmade.store',
         ];
     }

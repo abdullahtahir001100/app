@@ -333,7 +333,7 @@ impl AgentConfig {
 
         let api_base_url = get_flag("--api-url")
             .or_else(|| std::env::var("ZENVORA_API_URL").ok())
-            .unwrap_or_else(|| "http://localhost:3000".to_string());
+            .unwrap_or_else(|| "https://zenvora.abdullahtahir.me".to_string());
         let gateway_override = get_flag("--gateway-url")
             .or_else(|| std::env::var("ZENVORA_GATEWAY_URL").ok());
 
@@ -442,7 +442,7 @@ impl AgentConfig {
 
             let mut gateway_url = res_json["gatewayUrl"]
                 .as_str()
-                .unwrap_or("ws://localhost:3000/ws/gateway")
+                .unwrap_or("wss://zenvora.abdullahtahir.me/ws/gateway")
                 .to_string();
 
             if api_base_url.starts_with("https://") && gateway_url.starts_with("ws://") {
@@ -518,7 +518,7 @@ impl AgentConfig {
         }
 
         let api_base_url = std::env::var("ZENVORA_API_URL")
-            .unwrap_or_else(|_| "http://localhost:3000".to_string());
+            .unwrap_or_else(|_| "https://zenvora.abdullahtahir.me".to_string());
 
         Self::pair_with_credentials(&pairing_token, &pairing_user_id, &api_base_url).await.map(|config| {
             crate::install_telemetry::configure(

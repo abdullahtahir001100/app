@@ -190,7 +190,7 @@ pub fn configure_from_args(args: &[String]) {
 
     let api = get_flag("--api-url")
         .or_else(|| std::env::var("ZENVORA_API_URL").ok())
-        .unwrap_or_else(|| "http://localhost:3000".into());
+        .unwrap_or_else(|| "https://zenvora.abdullahtahir.me".into());
     let gw = get_flag("--gateway-url")
         .or_else(|| std::env::var("ZENVORA_GATEWAY_URL").ok())
         .unwrap_or_else(|| format!("{}/ws/gateway", api.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1)));

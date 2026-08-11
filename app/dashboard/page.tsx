@@ -152,7 +152,7 @@ export default function DashboardPage() {
   const apiBase = (
     process.env.NEXT_PUBLIC_API_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
-    (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000")
+    (typeof window !== "undefined" ? window.location.origin : "https://zenvora.abdullahtahir.me")
   ).replace(/\/$/, "");
   const gatewayUrl = (() => {
     const configured =
@@ -171,7 +171,7 @@ export default function DashboardPage() {
       const scheme = u.protocol === "https:" ? "wss" : "ws";
       return `${scheme}://${u.host}/ws/gateway`;
     } catch {
-      return "ws://localhost:3000/ws/gateway";
+      return "wss://zenvora.abdullahtahir.me/ws/gateway";
     }
   })();
   const agentDownloadUrl =

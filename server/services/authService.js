@@ -502,7 +502,7 @@ async function pairAgent(body) {
         process.env.ZENVORA_GATEWAY_URL ||
         process.env.NEXT_PUBLIC_GATEWAY_URL ||
         '';
-    let gatewayUrl = rawGw || 'ws://localhost:3000/ws/gateway';
+    let gatewayUrl = rawGw || 'wss://zenvora.abdullahtahir.me/ws/gateway';
     // Prefer scheme that matches app URL when possible.
     const appUrl = String(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_API_URL || '');
     if (appUrl.startsWith('http://') && gatewayUrl.startsWith('wss://')) {
