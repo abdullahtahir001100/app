@@ -5,9 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
 import { AuthLayout } from "@/components/auth-layout";
 import { ShieldCheck } from "lucide-react";
+import { alertFromApi, alertMsg, Z } from "@/lib/messages";
 
 export default function VerifyOTPPage() {
   return (
@@ -60,7 +60,7 @@ function VerifyOTPPageContent() {
     event.preventDefault();
     const code = otp.join("");
     if (code.length < 6) {
-      toast.error("Please enter the complete 6-digit verification code.");
+      alertMsg(Z.INVALID_OTP);
       return;
     }
 
@@ -73,12 +73,13 @@ function VerifyOTPPageContent() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Verification failed");
+        alertFromApi(data, Z.VERIFY_FAILED);
+        return;
       }
-      toast.success("Verification successful! Credentials unlocked.");
+      alertMsg(Z.VERIFIED);
       router.push("/login");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Verification failed");
+      alertMsg(Z.VERIFY_FAILED, err instanceof Error ? err.message : undefined);
     } finally {
       setLoading(false);
     }
@@ -93,11 +94,12 @@ function VerifyOTPPageContent() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Failed to resend OTP");
+        alertFromApi(data, Z.OTP_RESEND_FAILED);
+        return;
       }
-      toast.success("A new 6-digit code has been dispatched to your email.");
+      alertMsg(Z.OTP_RESENT);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to resend OTP");
+      alertMsg(Z.OTP_RESEND_FAILED, err instanceof Error ? err.message : undefined);
     }
   };
 

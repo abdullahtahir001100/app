@@ -15,22 +15,20 @@ const {
     pairAgent
 } = require('../services/authService');
 const { attachUser, extractToken } = require('../middleware/auth');
+const { jsonMsg, Z } = require('../utils/messages');
 
 const router = express.Router();
 
 router.post('/agent/pair', async (req, res) => {
     try {
-        const result = await pairAgent(req.body || {});
+        const result = await pairAgent(req.body || {}, req);
         return res.status(200).json({
             success: true,
             agentToken: result.agentToken,
             gatewayUrl: result.gatewayUrl
         });
     } catch (error) {
-        return res.status(error.status || 500).json({
-            success: false,
-            message: error.message || 'Pairing process failed.'
-        });
+        return jsonMsg(res, error.status || 500, Z.PAIR_FAILED, error.message);
     }
 });
 
@@ -42,6 +40,8 @@ router.post('/register', async (req, res) => {
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
         return res.status(200).json({
             success: true,
+            code: 202,
+            message: '[ZENVORA-202] Account created',
             user: {
                 id: String(user._id),
                 email: user.email,
@@ -52,10 +52,7 @@ router.post('/register', async (req, res) => {
             }
         });
     } catch (error) {
-        return res.status(error.status || 500).json({
-            success: false,
-            message: error.message || 'Registration failed.'
-        });
+        return jsonMsg(res, error.status || 500, Z.REGISTER_FAILED, error.message);
     }
 });
 
@@ -67,6 +64,8 @@ router.post('/login', async (req, res) => {
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
         return res.status(200).json({
             success: true,
+            code: 201,
+            message: '[ZENVORA-201] Signed in successfully',
             user: {
                 id: String(user._id),
                 email: user.email,
@@ -77,10 +76,7 @@ router.post('/login', async (req, res) => {
             }
         });
     } catch (error) {
-        return res.status(error.status || 500).json({
-            success: false,
-            message: error.message || 'Login failed.'
-        });
+        return jsonMsg(res, error.status || 500, Z.AUTH_FAILED, error.message);
     }
 });
 

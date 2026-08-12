@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { alertMsg, Z } from "@/lib/messages";
 import { useGateway } from "@/hooks/use-gateway";
 import {
   FRAME_FILE_BINARY,
@@ -25,6 +26,15 @@ import type {
 } from "@/lib/file-manager/types";
 import { parseApiResponse } from "@/lib/parse-api-response";
 
+function fileErr(detail?: unknown) {
+  const d =
+    detail instanceof Error
+      ? detail.message
+      : typeof detail === "string"
+        ? detail
+        : undefined;
+  return alertMsg(Z.FILE_FAILED, d);
+}
 const MEDIA_CLOUD_ROOTS: QuickRoot[] = [
   { label: "Screenshots / Camera", path: "/Screenshots/Camera", kind: "folder" },
   { label: "Screenshots / Screen", path: "/Screenshots/Screen", kind: "folder" },
@@ -172,7 +182,7 @@ export function useFileAgent() {
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
       const target = targetOverride || selectedDeviceRef.current || resolveTarget(devices[0]?.value);
       if (!target) {
-        toast.error("No live Rust agent. Run: cd zenvora_agent && cargo run");
+        alertMsg(Z.NO_AGENT);
         return { ok: false as const };
       }
       if (!selectedDeviceRef.current) {
@@ -188,7 +198,7 @@ export function useFileAgent() {
     async (action: string, payload: Record<string, unknown> = {}) => {
       const target = selectedDeviceRef.current || resolveTarget(devices[0]?.value);
       if (!target) {
-        toast.error("No live Rust agent. Run: cd zenvora_agent && cargo run");
+        alertMsg(Z.NO_AGENT);
         throw new Error("no-agent");
       }
       if (!selectedDeviceRef.current) {
@@ -256,7 +266,7 @@ export function useFileAgent() {
         applyList(result);
         if (packet.message) toast.success(String(packet.message));
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "List failed");
+        fileErr(err);
       } finally {
         setLoading(false);
       }
@@ -276,10 +286,10 @@ export function useFileAgent() {
       if (data.success && Array.isArray(data.folders)) {
         setCloudFolderOptions(data.folders);
       } else if (data.message) {
-        toast.error(data.message);
+        fileErr(data.message);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load cloud folders");
+      fileErr(err);
     }
   }, []);
 
@@ -291,7 +301,7 @@ export function useFileAgent() {
     async (folder = "/") => {
       const deviceId = resolveDeviceId();
       if (!deviceId) {
-        toast.error("Select a live agent device first");
+        alertMsg(Z.SELECT_DEVICE);
         return;
       }
       setLoading(true);
@@ -313,7 +323,7 @@ export function useFileAgent() {
         setCloudBackups(data.items || []);
         setSelectedPaths([]);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not load cloud folder");
+        fileErr(err);
       } finally {
         setLoading(false);
       }
@@ -324,7 +334,7 @@ export function useFileAgent() {
   const browseTrash = useCallback(async () => {
     const deviceId = resolveDeviceId();
     if (!deviceId) {
-      toast.error("Select a live agent device first");
+      alertMsg(Z.SELECT_DEVICE);
       return;
     }
     setLoading(true);
@@ -342,7 +352,7 @@ export function useFileAgent() {
       setCloudItems(data.items || []);
       setSelectedPaths([]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load trash");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -377,7 +387,7 @@ export function useFileAgent() {
       setSelectedPaths([]);
       toast.success(browseSurface === "trash" ? "Deleted" : "Moved to trash");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -395,7 +405,7 @@ export function useFileAgent() {
       setSelectedPaths([]);
       toast.success("Restored from trash");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Restore failed");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -413,7 +423,7 @@ export function useFileAgent() {
       setSelectedPaths([]);
       toast.success("Permanently deleted");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Permanent delete failed");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -470,7 +480,7 @@ export function useFileAgent() {
   const initExplorer = useCallback(async () => {
     const target = selectedDeviceRef.current || devices[0]?.value;
     if (!target) {
-      toast.error("No live Rust agent. Run: cd zenvora_agent && cargo run");
+      alertMsg(Z.NO_AGENT);
       return;
     }
     if (initInFlightRef.current) return;
@@ -502,7 +512,7 @@ export function useFileAgent() {
       await refreshVirtualFiles();
       toast.success("Filesystem loaded");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load filesystem");
+      fileErr(err);
     } finally {
       initInFlightRef.current = false;
       setLoading(false);
@@ -530,7 +540,7 @@ export function useFileAgent() {
     if (err) {
       initInFlightRef.current = false;
       setLoading(false);
-      toast.error(err);
+      fileErr(err);
       return;
     }
 
@@ -661,7 +671,7 @@ export function useFileAgent() {
       if (packet.type === "sys_error") {
         initInFlightRef.current = false;
         setLoading(false);
-        toast.error(String(packet.message || "Operation failed"));
+        fileErr(String(packet.message || "Operation failed"));
         return;
       }
 
@@ -750,7 +760,7 @@ export function useFileAgent() {
       if (isTextFile(entry.name)) {
         setLoading(true);
         void exec("FILE_READ_TEXT", { path: entry.path })
-          .catch((err) => toast.error(err instanceof Error ? err.message : "Read failed"))
+          .catch((err) => fileErr(err))
           .finally(() => setLoading(false));
       } else {
         setPreviewText("");
@@ -769,7 +779,7 @@ export function useFileAgent() {
               pendingDownloadRef.current = { name: String(fr.name || entry.name) };
             }
           })
-          .catch((err) => toast.error(err instanceof Error ? err.message : "Download failed"))
+          .catch((err) => fileErr(err))
           .finally(() => setLoading(false));
       }
     },
@@ -786,7 +796,7 @@ export function useFileAgent() {
       try {
         await exec("FILE_SEARCH", { path: currentPathRef.current, query: query.trim() });
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Search failed");
+        fileErr(err);
         setLoading(false);
       }
     },
@@ -799,7 +809,7 @@ export function useFileAgent() {
       setLoading(true);
       for (const file of Array.from(fileList)) {
         if (file.size > 16 * 1024 * 1024) {
-          toast.error(`${file.name} exceeds 16MB limit`);
+          fileErr(`${file.name} exceeds 16MB limit`);
           continue;
         }
         try {
@@ -810,7 +820,7 @@ export function useFileAgent() {
             content_b64,
           });
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : `Upload failed: ${file.name}`);
+          fileErr(err);
         }
       }
       await refreshListing(true);
@@ -822,7 +832,7 @@ export function useFileAgent() {
   const downloadSelected = useCallback(async () => {
     const entry = items.find((i) => i.path === selectedPaths[0]);
     if (!entry || entry.kind !== "file") {
-      toast.error("Select a file to download");
+      alertMsg(Z.FILE_FAILED, "Select a file to download");
       return;
     }
     setLoading(true);
@@ -843,7 +853,7 @@ export function useFileAgent() {
         pendingDownloadRef.current = { name: String(fr.name || entry.name) };
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Download failed");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -858,7 +868,7 @@ export function useFileAgent() {
       setSelectedPaths([]);
       await refreshListing(true);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -873,7 +883,7 @@ export function useFileAgent() {
         await exec("FILE_RENAME", { path, new_name: newName.trim() });
         await refreshListing(true);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Rename failed");
+        fileErr(err);
       } finally {
         setLoading(false);
       }
@@ -894,7 +904,7 @@ export function useFileAgent() {
         await refreshListing(true);
         toast.success(mode === "copy" ? "Copied successfully" : "Moved successfully");
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : `${mode} failed`);
+        fileErr(err);
       } finally {
         setLoading(false);
       }
@@ -913,7 +923,7 @@ export function useFileAgent() {
         await exec("FILE_MKDIR", { path: currentPathRef.current, name: name.trim() });
         await listDirectory(currentPathRef.current, true);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Create folder failed");
+        fileErr(err);
         setLoading(false);
       } finally {
         mkdirInFlightRef.current = false;
@@ -930,7 +940,7 @@ export function useFileAgent() {
       setEditMode(false);
       setPreviewText(editContent);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      fileErr(err);
       setLoading(false);
     }
   }, [editContent, exec, previewPath]);
@@ -946,7 +956,7 @@ export function useFileAgent() {
         category: metaCategory,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Metadata save failed");
+      fileErr(err);
       setLoading(false);
     }
   }, [exec, metaCategory, metaTags, selectedPaths]);
@@ -958,7 +968,7 @@ export function useFileAgent() {
     try {
       await exec("FILE_GET_METADATA", { path });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Metadata load failed");
+      fileErr(err);
       setLoading(false);
     }
   }, [exec, selectedPaths]);
@@ -970,7 +980,7 @@ export function useFileAgent() {
     try {
       await exec("FILE_SET_PERMISSIONS", { path: entry.path, readonly: !entry.readonly });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Permission update failed");
+      fileErr(err);
       setLoading(false);
     }
   }, [exec, items, selectedPaths]);
@@ -987,7 +997,7 @@ export function useFileAgent() {
       await refreshListing(true);
       toast.success("Compressed successfully");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Compress failed");
+      fileErr(err);
     } finally {
       compressInFlightRef.current = false;
       setLoading(false);
@@ -1003,7 +1013,7 @@ export function useFileAgent() {
       await refreshListing(true);
       toast.success("Extracted successfully");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Extract failed");
+      fileErr(err);
     } finally {
       setLoading(false);
     }
@@ -1042,7 +1052,7 @@ export function useFileAgent() {
         }
         toast.success("Uploaded to cloud vault");
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Cloud upload failed");
+        fileErr(err);
       } finally {
         setLoading(false);
       }
@@ -1053,7 +1063,7 @@ export function useFileAgent() {
   const backupEntryToCloud = useCallback(
     async (entry: FileEntry) => {
       if (entry.kind !== "file") {
-        toast.error("Only files can be backed up");
+        fileErr("Only files can be backed up");
         return;
       }
       setLoading(true);
@@ -1076,7 +1086,7 @@ export function useFileAgent() {
         });
         toast.success(`${entry.name} backed up to cloud`);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Backup failed");
+        fileErr(err);
       } finally {
         setLoading(false);
       }
@@ -1087,7 +1097,7 @@ export function useFileAgent() {
   const backupToCloud = useCallback(async () => {
     const entry = items.find((i) => i.path === selectedPaths[0]);
     if (!entry || entry.kind !== "file") {
-      toast.error("Select a file to backup");
+      fileErr("Select a file to backup");
       return;
     }
     await backupEntryToCloud(entry);
@@ -1119,7 +1129,7 @@ export function useFileAgent() {
       );
       toast.success("Share link copied");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Share failed");
+      fileErr(err);
     }
   }, []);
 
@@ -1137,7 +1147,7 @@ export function useFileAgent() {
         });
         toast.success("Restored from Cloudinary");
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Restore failed");
+        fileErr(err);
       } finally {
         setLoading(false);
       }

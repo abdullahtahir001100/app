@@ -7,6 +7,7 @@ const {
     serviceErrorResponse
 } = require('../services/virtualFileService');
 const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
+const { logMsg, msgText, Z } = require('../utils/messages');
 
 const router = express.Router();
 const upload = multer({
@@ -19,16 +20,16 @@ router.get('/list', attachUser, requirePagePermission('camera'), requireUserIdOw
         const payload = await listDeviceMedia(req);
         return res.status(200).json(payload);
     } catch (error) {
-        console.error('[MEDIA] List failed:', error.message);
-        const err = serviceErrorResponse(error, 'Failed to fetch media from database.');
-        return res.status(err.status).json({ ...err, items: [] });
+        logMsg(Z.LOAD_FAILED, error.message);
+        const err = serviceErrorResponse(error, msgText(Z.LOAD_FAILED));
+        return res.status(err.status).json({ ...err, code: Z.LOAD_FAILED, items: [] });
     }
 });
 
 router.post('/upload', attachUser, upload.single('file'), requirePagePermission('camera'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ success: false, message: 'No media file received.' });
+            return res.status(400).json({ success: false, code: Z.FILE_FAILED, message: msgText(Z.FILE_FAILED, 'No media file received') });
         }
 
         const payload = await uploadDeviceMedia(
@@ -50,9 +51,9 @@ router.post('/upload', attachUser, upload.single('file'), requirePagePermission(
 
         return res.status(200).json(payload);
     } catch (error) {
-        console.error('[MEDIA] Upload failed:', error.message);
-        const err = serviceErrorResponse(error, 'Media upload to database failed.');
-        return res.status(err.status).json(err);
+        logMsg(Z.FILE_FAILED, error.message);
+        const err = serviceErrorResponse(error, msgText(Z.FILE_FAILED));
+        return res.status(err.status).json({ ...err, code: Z.FILE_FAILED });
     }
 });
 
@@ -61,9 +62,9 @@ router.delete('/:id', attachUser, requirePagePermission('camera'), requireUserId
         const payload = await deleteVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
     } catch (error) {
-        console.error('[MEDIA] Delete failed:', error.message);
-        const err = serviceErrorResponse(error, 'Failed to move media to trash.');
-        return res.status(err.status).json(err);
+        logMsg(Z.FILE_FAILED, error.message);
+        const err = serviceErrorResponse(error, msgText(Z.FILE_FAILED));
+        return res.status(err.status).json({ ...err, code: Z.FILE_FAILED });
     }
 });
 

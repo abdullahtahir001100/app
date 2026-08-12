@@ -6,9 +6,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
 import { AuthLayout } from "@/components/auth-layout";
 import { ShieldCheck } from "lucide-react";
+import { alertFromApi, alertMsg, Z } from "@/lib/messages";
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   "google-auth-failed": "Google sign-in failed. Please try again.",
@@ -31,10 +31,10 @@ export default function LoginForm() {
 
   useEffect(() => {
     if (!authError) return;
-    const message =
+    const detail =
       AUTH_ERROR_MESSAGES[authError] ||
       `Sign-in failed (${authError}). Please try again.`;
-    toast.error(message, { duration: 8000 });
+    alertMsg(Z.AUTH_FAILED, detail);
   }, [authError]);
 
   const submit = async (event: FormEvent) => {
@@ -49,19 +49,20 @@ export default function LoginForm() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Authentication failed");
+        alertFromApi(data, Z.AUTH_FAILED);
+        return;
       }
-      toast.success("Welcome back! Signed in successfully.");
+      alertMsg(Z.SIGNED_IN);
       router.replace(nextPath);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Authentication failed");
+      alertMsg(Z.AUTH_FAILED, err instanceof Error ? err.message : undefined);
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleLogin = () => {
-    toast.info("Redirecting to Google sign-in...");
+    alertMsg(Z.GOOGLE_REDIRECT);
     window.location.href = "/api/auth/google";
   };
 

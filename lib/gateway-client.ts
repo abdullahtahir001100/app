@@ -1,5 +1,7 @@
 "use client";
 
+import { logMsg, Z } from "@/lib/messages";
+
 export type DeviceOption = {
   value: string;
   label: string;
@@ -317,7 +319,7 @@ class GatewayClient {
       try {
         listener(event);
       } catch (err) {
-        console.error("[GATEWAY] listener error:", err);
+        logMsg(Z.COMMAND_FAILED, "listener error", err);
       }
     });
   }
@@ -376,7 +378,10 @@ class GatewayClient {
         ? String(process.env.NEXT_PUBLIC_GATEWAY_URL).trim()
         : "";
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const baseUrl = configured || `${protocol}//${window.location.host}/ws/gateway`;
+    const live = `${protocol}//${window.location.host}/ws/gateway`;
+    // Prefer live origin when build-time env still points at localhost.
+    const baseUrl =
+      configured && !/localhost|127\.0\.0\.1/i.test(configured) ? configured : live;
 
     // Prefer ticket auth (proxies often strip Cookie on Upgrade).
     // Cached ticket = open immediately; otherwise one fast HTTP then open.
@@ -404,7 +409,7 @@ class GatewayClient {
     try {
       ws = new WebSocket(gatewayUrl);
     } catch (err) {
-      console.warn("[GATEWAY] WebSocket construct failed:", err);
+      logMsg(Z.GATEWAY_UNREACHABLE, "WebSocket construct failed", err);
       this.connecting = false;
       this.scheduleReconnect();
       return;
@@ -448,8 +453,9 @@ class GatewayClient {
 
         // Soft keep-alive: ping often, but only drop after 5 minutes of total silence.
         if (Date.now() - lastPongAt > HEARTBEAT_TIMEOUT_MS) {
-          console.warn(
-            `[GATEWAY] no traffic for ${Math.round((Date.now() - lastPongAt) / 1000)}s — soft reconnect`
+          logMsg(
+            Z.RECONNECTING,
+            `no traffic for ${Math.round((Date.now() - lastPongAt) / 1000)}s`
           );
           stopHeartbeat();
           // Mark dead without racing a second connect while CLOSE is in-flight.
@@ -490,7 +496,7 @@ class GatewayClient {
           packet.type === "sys_ack" &&
           (packet.status === "auth_failed" || packet.status === "auth_timeout")
         ) {
-          console.warn("[GATEWAY]", packet.message || packet.status);
+          logMsg(Z.AUTH_REJECTED, String(packet.message || packet.status));
           this.preferTicket = true;
           this.cachedWsTicket = null;
           this.cachedWsTicketAt = 0;

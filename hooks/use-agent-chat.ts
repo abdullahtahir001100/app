@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGateway } from "@/hooks/use-gateway";
 import { toast } from "sonner";
+import { alertMsg, Z } from "@/lib/messages";
 
 
 export type AgentMessageRole = "assistant" | "user" | "system";
@@ -288,7 +289,17 @@ const lastCommandRef = useRef<string>("");
         },
       });
 
-      const result = gatewayDispatch("SHELL_EXECUTE", { command: trimmed }, target);
+      const looksPs =
+        /^(?:powershell|pwsh)\b/i.test(trimmed) ||
+        /^(?:Get-|Set-|Write-|Select-|Where-|ForEach-|Invoke-|Import-|Export-|New-|Remove-|Start-|Stop-|Test-|ConvertTo-|ConvertFrom-)/i.test(
+          trimmed
+        ) ||
+        trimmed.includes("$_");
+      const result = gatewayDispatch(
+        "SHELL_EXECUTE",
+        { command: trimmed, shell: looksPs ? "powershell" : "cmd" },
+        target
+      );
       if (!result.ok) {
         appendMessage({
           id: `system-${Date.now() + 1}`,
@@ -483,7 +494,7 @@ const lastCommandRef = useRef<string>("");
           metadata: { ...message.metadata, kind: "warning", step: "completed" },
         }));
         setConnectionState("reconnecting");
-        toast.warning("Stream interrupted. You can reconnect by sending again.");
+        alertMsg(Z.STREAM_INTERRUPTED);
       } else {
         updateMessage(assistantId, (message) => ({
           ...message,
@@ -496,7 +507,7 @@ const lastCommandRef = useRef<string>("");
           metadata: { ...message.metadata, kind: "error", step: "completed" },
         }));
         setConnectionState("error");
-        toast.error(error instanceof Error ? error.message : "Streaming request failed.");
+        alertMsg(Z.COMMAND_FAILED, error instanceof Error ? error.message : undefined);
       }
     } finally {
       abortRef.current = null;

@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Select from "react-select";
 import { toast } from "sonner";
+import { alertMsg, Z } from "@/lib/messages";
 import {
   Archive,
   ArchiveRestore,
@@ -736,7 +737,7 @@ export function FileManager() {
                       onClick={() => {
                         const device = agent.selectedDevice;
                         if (!device) {
-                          toast.error("Select agent device first");
+                          alertMsg(Z.SELECT_DEVICE);
                           return;
                         }
                         const folder = encodeURIComponent(agent.cloudUploadFolder || "/");
@@ -1060,7 +1061,7 @@ export function FileManager() {
             setCloudMkdirOpen(false);
             setCloudMkdirName("");
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Create folder failed");
+            alertMsg(Z.FILE_FAILED, err instanceof Error ? err.message : "Create folder failed");
           }
         }}
       />

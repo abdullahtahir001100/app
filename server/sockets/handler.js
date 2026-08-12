@@ -25,6 +25,7 @@ const {
     extractDeviceIdFromAgentSocket
 } = require('./historyHandler');
 const { userOwnsDevice, verifyAgentToken } = require('../services/authService');
+const { logMsg, msgText, Z } = require('../utils/messages');
 const {
     extractOwnerUserId,
     sendToOwnerDashboards,
@@ -585,18 +586,17 @@ async function handleSocketMessage(ws, message) {
                             )
                         ]);
                     } catch (err) {
-                        console.warn(
-                            `[GW-DEBUG] agent auth failed device=${deviceOrPanelId} err=${err?.message || err}`
-                        );
+                        logMsg(Z.AUTH_REJECTED, `device=${deviceOrPanelId}`, err?.message || err);
                         credential = null;
                     }
 
                     if (!credential) {
-                        console.warn(`[GW-DEBUG] auth_failed invalid credentials device=${deviceOrPanelId}`);
+                        logMsg(Z.AUTH_REJECTED, `invalid credentials device=${deviceOrPanelId}`);
                         ws.send(JSON.stringify({
                             type: 'sys_ack',
                             status: 'auth_failed',
-                            message: 'invalid agent credentials'
+                            code: Z.AUTH_REJECTED,
+                            message: msgText(Z.AUTH_REJECTED)
                         }));
                         ws.close();
                         return;

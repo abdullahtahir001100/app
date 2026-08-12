@@ -85,6 +85,16 @@ async function handleAuth(socket, seq, payload) {
     if (channel !== 'control') {
         const { registerMediaSocket } = require('../media/mediaRelay');
         registerMediaSocket(socket, deviceId, String(credential.userId), channel);
+
+        // Keep WS debug identity accurate (wsInfo previously looked like forever-pending).
+        if (!socket.authContext || socket.authContext.kind === 'pending') {
+            socket.authContext = {
+                kind: 'agent',
+                deviceId,
+                userId: String(credential.userId),
+                channel,
+            };
+        }
         
         sendFrame(socket, encodeJsonFrame(MsgType.AUTH_OK, seq, {
             deviceId,
@@ -103,6 +113,7 @@ async function handleAuth(socket, seq, payload) {
             });
         } catch (_) {}
         
+        console.log(`[MEDIA-DEBUG] AUTH_OK device=${deviceId} channel=${channel}`);
         return true;
     }
 

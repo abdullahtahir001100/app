@@ -2,6 +2,7 @@ const express = require('express');
 const { getConnectionRegistry } = require('../sockets/registry');
 const { execFileCommand, FILE_ACTION_TOKENS } = require('../sockets/fileHandler');
 const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
+const { jsonMsg, Z } = require('../utils/messages');
 
 const router = express.Router();
 
@@ -14,17 +15,11 @@ router.post('/exec', attachUser, requirePagePermission('files'), requireUserIdOw
             : {};
 
         if (!FILE_ACTION_TOKENS.includes(action)) {
-            return res.status(400).json({
-                success: false,
-                message: `Unsupported file action: ${action}`
-            });
+            return jsonMsg(res, 400, Z.FILE_FAILED, `Unsupported file action: ${action}`);
         }
 
         if (!targetDeviceId) {
-            return res.status(400).json({
-                success: false,
-                message: 'targetDeviceId is required.'
-            });
+            return jsonMsg(res, 400, Z.SELECT_DEVICE, 'targetDeviceId is required');
         }
 
         getConnectionRegistry();
@@ -32,11 +27,9 @@ router.post('/exec', attachUser, requirePagePermission('files'), requireUserIdOw
 
         const fileResult = packet.file_result || {};
         if (fileResult.error) {
-            return res.status(400).json({
-                success: false,
-                message: String(fileResult.error),
+            return jsonMsg(res, 400, Z.FILE_FAILED, String(fileResult.error), {
                 action: packet.last_action || action,
-                file_result: fileResult
+                file_result: fileResult,
             });
         }
 
@@ -48,11 +41,13 @@ router.post('/exec', attachUser, requirePagePermission('files'), requireUserIdOw
             file_result: fileResult
         });
     } catch (error) {
-        console.error('[FILES API]', error.message);
-        return res.status(error.message?.includes('offline') ? 503 : 504).json({
-            success: false,
-            message: error.message || 'File operation failed.'
-        });
+        const offline = error.message?.includes('offline');
+        return jsonMsg(
+            res,
+            offline ? 503 : 504,
+            offline ? Z.DEVICE_OFFLINE : Z.FILE_FAILED,
+            error.message
+        );
     }
 });
 

@@ -13,6 +13,8 @@ type TerminalLine = {
   isCommand?: boolean;
 };
 
+type ShellEngine = "cmd" | "powershell";
+
 function newShellId() {
   return `shell-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -36,20 +38,28 @@ export default function ShellPage() {
   const [input, setInput] = useState("");
   const [username, setUsername] = useState("User");
   const [cwd, setCwd] = useState("C:\\");
+  const [shellEngine, setShellEngine] = useState<ShellEngine>("cmd");
 
   const [history, setHistory] = useState<TerminalLine[]>([
     { id: "init-1", text: "Zenvora Secure Shell", color: "#2563eb" },
     { id: "init-2", text: "Connected to the authenticated gateway.", color: "#64748b" },
-    { id: "init-3", text: "Run commands here. Output will stream back live.", color: "#0ea5e9" },
+    {
+      id: "init-3",
+      text: "Toggle CMD or PowerShell above. Output is returned exactly as the agent shell produced it.",
+      color: "#0ea5e9",
+    },
   ]);
 
   const { devices, dispatch, resolveTarget, subscribe } = useGateway();
 
   const promptLabel = useMemo(() => {
-    const user = username || "User";
     const path = cwd || "C:\\";
+    if (shellEngine === "powershell") {
+      return `PS ${path}> `;
+    }
+    const user = username || "User";
     return `${user}@${path}> `;
-  }, [username, cwd]);
+  }, [username, cwd, shellEngine]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -135,55 +145,47 @@ export default function ShellPage() {
         return;
       }
 
+      // Ignore dispatch ack — wait for real shell_output with stdout/stderr.
+      if (
+        packet.type === "sys_ack" &&
+        packet.status === "dispatched" &&
+        !shellPayload.stdout &&
+        !shellPayload.stderr
+      ) {
+        return;
+      }
+
       setIsExecuting(false);
 
-      const stdoutChunks = Array.isArray(shellPayload.stdoutChunks)
-        ? (shellPayload.stdoutChunks as string[])
-        : null;
-      const stderrChunks = Array.isArray(shellPayload.stderrChunks)
-        ? (shellPayload.stderrChunks as string[])
-        : null;
+      // Prefer full original stdout/stderr so line breaks stay exact.
+      const stdout =
+        typeof shellPayload.stdout === "string"
+          ? shellPayload.stdout
+          : typeof packet.stdout === "string"
+            ? packet.stdout
+            : "";
+      const stderr =
+        typeof shellPayload.stderr === "string"
+          ? shellPayload.stderr
+          : typeof packet.stderr === "string"
+            ? packet.stderr
+            : "";
 
-      if (stdoutChunks || stderrChunks) {
-        const lines: TerminalLine[] = [];
-        for (const chunk of stdoutChunks || []) {
-          if (chunk) lines.push({ id: Math.random().toString(), text: chunk, color: "#0f172a" });
-        }
-        for (const chunk of stderrChunks || []) {
-          if (chunk) lines.push({ id: Math.random().toString(), text: chunk, color: "#dc2626" });
-        }
-        if (lines.length === 0) {
-          lines.push({
-            id: Math.random().toString(),
-            text: String(packet.message || "[no output]"),
-            color: "#64748b",
-          });
-        }
-        setHistory((prev) => [...prev, ...lines]);
-      } else {
-        const stdout =
-          typeof shellPayload.stdout === "string"
-            ? shellPayload.stdout
-            : typeof packet.stdout === "string"
-              ? packet.stdout
-              : "";
-        const stderr =
-          typeof shellPayload.stderr === "string"
-            ? shellPayload.stderr
-            : typeof packet.stderr === "string"
-              ? packet.stderr
-              : "";
-        const combined = [stdout, stderr].filter(Boolean).join("\n");
-        const message = combined || String(packet.message || "[no output]");
-        setHistory((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(),
-            text: message,
-            color: stderr ? "#b45309" : "#0f172a",
-          },
-        ]);
+      const lines: TerminalLine[] = [];
+      if (stdout) {
+        lines.push({ id: Math.random().toString(), text: stdout, color: "#0f172a" });
       }
+      if (stderr) {
+        lines.push({ id: Math.random().toString(), text: stderr, color: "#dc2626" });
+      }
+      if (lines.length === 0) {
+        lines.push({
+          id: Math.random().toString(),
+          text: String(packet.message || "[no output]"),
+          color: "#64748b",
+        });
+      }
+      setHistory((prev) => [...prev, ...lines]);
 
       if (shellPayload.timed_out) {
         setHistory((prev) => [
@@ -218,7 +220,11 @@ export default function ShellPage() {
     }
 
     setIsExecuting(true);
-    const result = dispatch("SHELL_EXECUTE", { command, shellId }, target);
+    const result = dispatch(
+      "SHELL_EXECUTE",
+      { command, shellId, shell: shellEngine },
+      target
+    );
     if (!result.ok) {
       setIsExecuting(false);
       setHistory((prev) => [
@@ -231,7 +237,7 @@ export default function ShellPage() {
       ]);
       return;
     }
-    setStatus(`Executing on ${target}`);
+    setStatus(`Executing (${shellEngine}) on ${target}`);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -252,7 +258,7 @@ export default function ShellPage() {
       },
       {
         id: Math.random().toString(),
-        text: "Run commands here. Output will stream back live.",
+        text: `Engine: ${shellEngine === "powershell" ? "PowerShell" : "CMD"}`,
         color: "#0ea5e9",
       },
     ]);
@@ -283,6 +289,32 @@ export default function ShellPage() {
       <div className="flex flex-1 flex-col p-4">
         <div className="relative flex flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.06)]">
           <div className="fixed right-2 top-2 z-10 flex items-center gap-1.5 shadow-sm backdrop-blur">
+            <div className="flex overflow-hidden rounded-md border border-slate-200 bg-white text-[11px] font-semibold">
+              <button
+                type="button"
+                onClick={() => setShellEngine("cmd")}
+                className={`px-2.5 py-1 transition ${
+                  shellEngine === "cmd"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+                title="Run commands in cmd.exe"
+              >
+                CMD
+              </button>
+              <button
+                type="button"
+                onClick={() => setShellEngine("powershell")}
+                className={`px-2.5 py-1 transition ${
+                  shellEngine === "powershell"
+                    ? "bg-blue-700 text-white"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+                title="Run commands in PowerShell"
+              >
+                PowerShell
+              </button>
+            </div>
             <span
               className={`rounded-full px-2 py-1 text-[11px] font-medium ${
                 isExecuting ? "bg-emerald-100 text-emerald-900" : "bg-slate-100 text-slate-700"
@@ -362,7 +394,7 @@ export default function ShellPage() {
             <div
               className="h-full w-full overflow-y-auto rounded-lg border border-slate-200 bg-[#f8fafc] p-4 font-mono text-[14px] leading-[1.45] text-[#0f172a] cursor-text"
               onClick={focusInput}
-              style={{ fontFamily: '"JetBrains Mono", "Fira Code", monospace' }}
+              style={{ fontFamily: '"JetBrains Mono", "Fira Code", Consolas, monospace' }}
             >
               {history.map((line) => (
                 <div key={line.id} className="whitespace-pre-wrap break-words">
@@ -391,6 +423,7 @@ export default function ShellPage() {
                   autoFocus
                   autoComplete="off"
                   spellCheck="false"
+                  disabled={isExecuting}
                 />
               </div>
               <div ref={bottomRef} />

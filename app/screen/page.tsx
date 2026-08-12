@@ -22,7 +22,7 @@ import {
   X,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Select from "react-select";
 import {
@@ -122,6 +122,29 @@ export default function ScreenPage() {
   const [streamQuality, setStreamQuality] = useState<StreamQuality>(loadSavedQuality);
   const [streamFps, setStreamFps] = useState<number>(loadSavedFps);
 
+  // Stable link light: green live/online, amber connecting, red only when truly offline.
+  const linkState = useMemo<"online" | "connecting" | "offline">(() => {
+    if (hasLiveFrame || agentOnline) return "online";
+    if (!isConnected || isStreaming || !selectedDevice || deviceOptions.length === 0) {
+      return "connecting";
+    }
+    return "offline";
+  }, [
+    hasLiveFrame,
+    agentOnline,
+    isConnected,
+    isStreaming,
+    selectedDevice,
+    deviceOptions.length,
+  ]);
+
+  const linkDotClass =
+    linkState === "online"
+      ? "bg-emerald-500 animate-pulse"
+      : linkState === "connecting"
+        ? "bg-amber-400 animate-pulse"
+        : "bg-rose-500";
+
   const streamQualityRef = useRef<StreamQuality>(streamQuality);
   const streamFpsRef = useRef<number>(streamFps);
 
@@ -189,17 +212,26 @@ export default function ScreenPage() {
   }, [deviceOptions, requestedDevice]);
 
   useEffect(() => {
+    // Frames already flowing — keep a calm online status (never flash Reconnecting/offline).
+    if (hasLiveFrame) {
+      setCommandStatus(`Live — ${selectedDevice || "agent"}`);
+      return;
+    }
     if (!isConnected) {
-      ensureConnected();
-      setCommandStatus("Reconnecting to gateway...");
+      setCommandStatus("Connecting to gateway…");
       return;
     }
     if (!agentOnline) {
-      // Don't thrash reconnect — media issues must not mark agent offline.
-      setCommandStatus("Agent offline — waiting for device...");
+      setCommandStatus(
+        selectedDevice
+          ? "Waiting for agent…"
+          : deviceOptions.length === 0
+            ? "Scanning for devices…"
+            : "Select an agent device…"
+      );
       return;
     }
-    if (isStreaming && !hasLiveFrame) {
+    if (isStreaming) {
       setCommandStatus(
         mediaReady
           ? "Waiting for agent stream…"
@@ -212,11 +244,11 @@ export default function ScreenPage() {
     isConnected,
     agentOnline,
     selectedDevice,
-    ensureConnected,
     isStreaming,
     hasLiveFrame,
     mediaReady,
     mediaStatus,
+    deviceOptions.length,
   ]);
 
   const dispatchControl = useCallback(
@@ -559,9 +591,7 @@ export default function ScreenPage() {
               <h1 className="text-xl lg:text-2xl font-display tracking-tight flex items-center gap-2">
                 Remote Desktop
                 <span
-                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                    agentOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
-                  }`}
+                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${linkDotClass}`}
                 />
               </h1>
             </div>
@@ -627,7 +657,7 @@ export default function ScreenPage() {
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="text-xs text-muted-foreground font-mono truncate flex-1 min-w-[12rem]">{commandStatus}</p>
-            {(!hasLiveFrame || !agentOnline || commandStatus.toLowerCase().includes("fail") || commandStatus.toLowerCase().includes("offline") || commandStatus.toLowerCase().includes("ticket")) && (
+            {(!hasLiveFrame || linkState === "offline" || commandStatus.toLowerCase().includes("fail") || commandStatus.toLowerCase().includes("ticket")) && (
               <Button
                 size="sm"
                 variant="outline"

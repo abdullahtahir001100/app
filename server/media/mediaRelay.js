@@ -19,8 +19,12 @@ function registerMediaSocket(socket, deviceId, userId, channel) {
 
     if (entry[channel] && entry[channel] !== socket && !entry[channel].destroyed) {
         try {
-            entry[channel].destroy?.();
-            entry[channel].close?.();
+            // Prefer a clean close; destroy() surfaces as closeCode 1006 on the peer.
+            if (typeof entry[channel].close === 'function') {
+                entry[channel].close(1000, 'replaced');
+            } else {
+                entry[channel].destroy?.();
+            }
         } catch (_) {}
     }
 

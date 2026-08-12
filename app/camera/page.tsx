@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CustomSlider } from "@/components/custom-slider";
 import { Camera, Video, Download, RefreshCw, Square, Cpu, Trash2, Image as ImageIcon, Film, Power, Radar } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import Select from "react-select";
 import { useGateway } from "@/hooks/use-gateway";
@@ -111,6 +111,28 @@ export default function CameraPage() {
 
   const selectedDeviceOption = deviceOptions.find((opt) => opt.value === selectedDevice) || null;
   const activeCameraMeta = detectedCameras.find((cam) => cam.id === activeCamera) || null;
+
+  const linkState = useMemo<"online" | "connecting" | "offline">(() => {
+    if (hasLiveFrame || agentOnline) return "online";
+    if (!isConnected || isCameraOn || !selectedDevice || deviceOptions.length === 0) {
+      return "connecting";
+    }
+    return "offline";
+  }, [
+    hasLiveFrame,
+    agentOnline,
+    isConnected,
+    isCameraOn,
+    selectedDevice,
+    deviceOptions.length,
+  ]);
+
+  const linkDotClass =
+    linkState === "online"
+      ? "bg-emerald-500 animate-pulse"
+      : linkState === "connecting"
+        ? "bg-amber-400 animate-pulse"
+        : "bg-rose-500";
 
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
@@ -855,7 +877,7 @@ export default function CameraPage() {
             <div>
               <h1 className="text-4xl lg:text-5xl font-display tracking-tight mb-2 flex items-center gap-3">
                 Camera Access
-                <span className={`w-3 h-3 rounded-full ${agentOnline ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                <span className={`w-3 h-3 rounded-full ${linkDotClass}`} />
               </h1>
               <p className="text-muted-foreground">Control every detected local camera from the Rust agent in real time</p>
             </div>

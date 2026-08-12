@@ -6,9 +6,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
 import { AuthLayout } from "@/components/auth-layout";
 import { UserPlus } from "lucide-react";
+import { alertFromApi, alertMsg, Z } from "@/lib/messages";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -22,7 +22,7 @@ export default function RegisterPage() {
     event.preventDefault();
 
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
+      alertMsg(Z.PASSWORD_MISMATCH);
       return;
     }
 
@@ -36,12 +36,13 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || "Registration failed");
+        alertFromApi(data, Z.REGISTER_FAILED);
+        return;
       }
-      toast.success("Account created successfully!");
+      alertMsg(Z.ACCOUNT_CREATED);
       router.replace("/dashboard");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Registration failed");
+      alertMsg(Z.REGISTER_FAILED, err instanceof Error ? err.message : undefined);
     } finally {
       setLoading(false);
     }

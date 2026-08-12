@@ -4,6 +4,7 @@ import { Suspense, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { alertMsg, Z } from "@/lib/messages";
 import {
   ArrowLeft,
   ChevronRight,
@@ -155,7 +156,7 @@ function CloudVaultManagerContent() {
         break;
       case "restore":
         if (!restorePath.trim()) {
-          toast.error("Enter agent destination folder path first");
+          alertMsg(Z.ENTER_DEST_PATH);
           return;
         }
         void vault.restoreToAgent(item, restoreAgentId, restorePath, execAgentUpload);

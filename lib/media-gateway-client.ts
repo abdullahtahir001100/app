@@ -4,6 +4,7 @@
  * Dedicated media WebSocket for screen/camera frames.
  * Keeps heavy binary traffic off /ws/gateway so heartbeats stay healthy.
  */
+import { logMsg, Z } from "@/lib/messages";
 
 type MediaListener = (data: ArrayBuffer | Blob) => void;
 type MediaStateListener = (state: "connecting" | "open" | "closed" | "error") => void;
@@ -129,13 +130,13 @@ export class MediaGatewayClient {
         cache: "no-store",
       });
       if (!res.ok) {
-        console.warn(`[MEDIA-DEBUG] ws-ticket HTTP ${res.status}`);
+        logMsg(Z.AUTH_REQUIRED, `ws-ticket HTTP ${res.status}`);
         return null;
       }
       const data = await res.json().catch(() => ({}));
       return typeof data?.ticket === "string" ? data.ticket : null;
     } catch (err) {
-      console.warn("[MEDIA-DEBUG] ws-ticket fetch failed", err);
+      logMsg(Z.AUTH_REQUIRED, "ws-ticket fetch failed", err);
       return null;
     }
   }
@@ -182,7 +183,7 @@ export class MediaGatewayClient {
       return;
     }
     if (!ticket) {
-      console.warn("[MEDIA-DEBUG] ws-ticket missing — not opening /ws/media without auth");
+      logMsg(Z.MEDIA_NOT_READY, "ws-ticket missing");
       this.connecting = false;
       this.emitState("error");
       this.failOpenWaiters(false);
@@ -196,13 +197,13 @@ export class MediaGatewayClient {
     }
 
     const url = this.mediaUrl(ticket);
-    console.log(`[MEDIA-DEBUG] connecting device=${this.deviceId} channel=${this.channel}`);
+    logMsg(Z.MEDIA_CONNECTING, `device=${this.deviceId} channel=${this.channel}`);
 
     let ws: WebSocket;
     try {
       ws = new WebSocket(url);
     } catch (err) {
-      console.warn("[MEDIA-DEBUG] WebSocket construct failed", err);
+      logMsg(Z.MEDIA_NOT_READY, "WebSocket construct failed", err);
       this.connecting = false;
       this.emitState("error");
       this.failOpenWaiters(false);
@@ -219,7 +220,7 @@ export class MediaGatewayClient {
       this.connecting = false;
       this.reconnectAttempt = 0;
       this.lastPongAt = Date.now();
-      console.log(`[MEDIA-DEBUG] browser media open device=${this.deviceId} channel=${this.channel}`);
+      logMsg(Z.MEDIA_READY, `device=${this.deviceId} channel=${this.channel}`);
       this.emitState("open");
       this.resolveOpenWaiters(true);
       this.stopHeartbeat();
@@ -229,8 +230,9 @@ export class MediaGatewayClient {
           return;
         }
         if (Date.now() - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
-          console.warn(
-            `[MEDIA-DEBUG] idle ${Math.round((Date.now() - this.lastPongAt) / 1000)}s — soft reconnect device=${this.deviceId}`
+          logMsg(
+            Z.STREAM_INTERRUPTED,
+            `idle ${Math.round((Date.now() - this.lastPongAt) / 1000)}s device=${this.deviceId}`
           );
           this.stopHeartbeat();
           try {
@@ -267,8 +269,9 @@ export class MediaGatewayClient {
       this.connecting = false;
       this.clearHandshakeTimer();
       this.stopHeartbeat();
-      console.warn(
-        `[MEDIA-DEBUG] media closed device=${this.deviceId} channel=${this.channel} code=${ev.code} reason=${ev.reason || "n/a"}`
+      logMsg(
+        Z.STREAM_STOPPED,
+        `device=${this.deviceId} channel=${this.channel} code=${ev.code} reason=${ev.reason || "n/a"}`
       );
       this.emitState("closed");
       this.failOpenWaiters(false);
@@ -278,7 +281,7 @@ export class MediaGatewayClient {
     };
 
     ws.onerror = () => {
-      console.warn(`[MEDIA-DEBUG] media error device=${this.deviceId} channel=${this.channel}`);
+      logMsg(Z.MEDIA_NOT_READY, `device=${this.deviceId} channel=${this.channel}`);
       this.emitState("error");
     };
   }
@@ -288,8 +291,9 @@ export class MediaGatewayClient {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectAttempt += 1;
     const delay = nextBackoff(this.reconnectAttempt);
-    console.log(
-      `[MEDIA-DEBUG] reconnect in ${delay}ms attempt=${this.reconnectAttempt} device=${this.deviceId}`
+    logMsg(
+      Z.RECONNECTING,
+      `media in ${delay}ms attempt=${this.reconnectAttempt} device=${this.deviceId}`
     );
     this.reconnectTimer = setTimeout(() => {
       void this.open();

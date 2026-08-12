@@ -424,7 +424,7 @@ async function verifyAgentToken(deviceId, agentToken) {
 
     return cred;
 }
-async function pairAgent(body) {
+async function pairAgent(body, req) {
     const pairingToken = String(body.pairingToken || '').trim();
     const pairingUserId = String(body.pairingUserId || '').trim();
     const deviceId = String(body.deviceId || body.hostname || '').trim();
@@ -500,18 +500,10 @@ async function pairAgent(body) {
         userId: { $ne: user._id },
     }).catch(() => {});
 
-    const rawGw =
-        process.env.ZENVORA_GATEWAY_URL ||
-        process.env.NEXT_PUBLIC_GATEWAY_URL ||
-        '';
-    let gatewayUrl = rawGw || 'wss://zenvora.abdullahtahir.me/ws/gateway';
-    // Prefer scheme that matches app URL when possible.
-    const appUrl = String(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_API_URL || '');
-    if (appUrl.startsWith('http://') && gatewayUrl.startsWith('wss://')) {
-        gatewayUrl = gatewayUrl.replace(/^wss:\/\//i, 'ws://');
-    } else if (appUrl.startsWith('https://') && gatewayUrl.startsWith('ws://')) {
-        gatewayUrl = gatewayUrl.replace(/^ws:\/\//i, 'wss://');
-    }
+    // Never hand agents localhost when the pair request hit a public host
+    // (common when Railway still has NEXT_PUBLIC_GATEWAY_URL=ws://localhost:3000/...).
+    const { resolvePublicGatewayUrl } = require('../utils/publicUrls');
+    const gatewayUrl = resolvePublicGatewayUrl(req, body.gatewayUrl);
 
     return {
         agentToken,

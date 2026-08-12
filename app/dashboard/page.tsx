@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGateway } from "@/hooks/use-gateway";
-import { toast } from "sonner";
+import { alertMsg, Z } from "@/lib/messages";
 
 type InstallLogEntry = {
   step?: number;
@@ -98,9 +98,9 @@ export default function DashboardPage() {
         return next.slice(-120);
       });
       if (entry.final) {
-        if (entry.state === "ok") toast.success(entry.message || "Agent connected");
-        else if (entry.state === "fail") toast.error(entry.message || "Install failed");
-        else toast.message(entry.message || "Install update");
+        if (entry.state === "ok") alertMsg(Z.CONNECTED, entry.message);
+        else if (entry.state === "fail") alertMsg(Z.PAIR_FAILED, entry.message);
+        else alertMsg(Z.PAIRING, entry.message);
       }
     });
 
@@ -155,15 +155,25 @@ export default function DashboardPage() {
     Math.max(1, devices.filter((device) => typeof device.battery === "number").length)
   );
 
-  const apiBase = (
-    process.env.NEXT_PUBLIC_API_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (typeof window !== "undefined" ? window.location.origin : "https://zenvora.abdullahtahir.me")
-  ).replace(/\/$/, "");
+  const apiBase = (() => {
+    const configured = (
+      process.env.NEXT_PUBLIC_API_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      ""
+    ).replace(/\/$/, "");
+    const origin =
+      typeof window !== "undefined" ? window.location.origin.replace(/\/$/, "") : "";
+    // Prefer live origin when build-time env still points at localhost.
+    if (origin && (!configured || /localhost|127\.0\.0\.1/i.test(configured))) {
+      return origin;
+    }
+    return configured || origin || "https://zenvora.abdullahtahir.me";
+  })();
   const gatewayUrl = (() => {
     const configured =
       process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.ZENVORA_GATEWAY_URL || "";
-    if (configured) {
+    // Ignore baked localhost gateway on a public origin.
+    if (configured && !/localhost|127\.0\.0\.1/i.test(configured)) {
       if (apiBase.startsWith("http://") && configured.startsWith("wss://")) {
         return configured.replace(/^wss:\/\//i, "ws://");
       }
@@ -211,7 +221,7 @@ export default function DashboardPage() {
       const message = err instanceof Error ? err.message : "Bootstrap failed";
       setInstallCommand(`# ${message} — reopen Pair Device`);
       setBootstrapCode(null);
-      toast.error(message);
+      alertMsg(Z.SHORT_CMD_NOT_READY, message);
     } finally {
       setBootstrapLoading(false);
     }
@@ -226,7 +236,7 @@ export default function DashboardPage() {
   const copyInstallCommand = async () => {
     try {
       if (!installCommand || installCommand.startsWith("#") || installCommand.startsWith("Loading")) {
-        toast.error("Short command not ready yet");
+        alertMsg(Z.SHORT_CMD_NOT_READY);
         return;
       }
       setInstallLogs((prev) => [
@@ -241,10 +251,10 @@ export default function DashboardPage() {
       ]);
       await navigator.clipboard.writeText(installCommand);
       setCopiedCmd(true);
-      toast.success("Short command copied — keep this modal open for live logs");
+      alertMsg(Z.COMMAND_COPIED);
       setTimeout(() => setCopiedCmd(false), 2000);
     } catch {
-      toast.error("Could not copy command");
+      alertMsg(Z.COPY_FAILED);
     }
   };
 
@@ -255,17 +265,13 @@ export default function DashboardPage() {
     const result = dispatch("RESTART_AGENT", {}, deviceId);
     if (!result.ok) {
       const reason = (result as any).reason;
-      toast.error(
-        reason === "offline"
-          ? "Gateway disconnected"
-          : reason === "agent-offline"
-            ? "Agent is offline"
-            : "Could not restart agent"
-      );
+      if (reason === "offline") alertMsg(Z.GATEWAY_UNREACHABLE);
+      else if (reason === "agent-offline") alertMsg(Z.AGENT_OFFLINE);
+      else alertMsg(Z.COMMAND_FAILED);
       setRestartingId(null);
       return;
     }
-    toast.success("Restart command sent");
+    alertMsg(Z.RESTART_SENT);
     setTimeout(() => {
       void refreshDevices(true);
       setRestartingId(null);
@@ -487,9 +493,9 @@ export default function DashboardPage() {
                                 setCopiedCmd(true);
                                 setTimeout(() => setCopiedCmd(false), 2000);
                                 setCliPanelMode("logs");
-                                toast.success("Command copied — watching live logs");
+                                alertMsg(Z.COMMAND_COPIED);
                               } catch {
-                                toast.error("Could not copy command");
+                                alertMsg(Z.COPY_FAILED);
                               }
                             }}
                           >

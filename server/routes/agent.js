@@ -11,6 +11,12 @@ const {
 } = require('../services/bootstrapTicketService');
 const liveLogBus = require('../services/liveLogBus');
 const { verifyUserTokenFast, AUTH_COOKIE } = require('../services/authService');
+const {
+    isLoopbackHost,
+    resolvePublicApiBase,
+    resolvePublicGatewayUrl,
+} = require('../utils/publicUrls');
+const { jsonMsg, msgText, Z } = require('../utils/messages');
 
 const router = express.Router();
 
@@ -32,7 +38,7 @@ function requireUserFast(req, res, next) {
     const token = bearer || req.cookies?.[AUTH_COOKIE] || cookies[AUTH_COOKIE] || null;
     const user = verifyUserTokenFast(token);
     if (!user?.sub) {
-        return res.status(401).json({ success: false, message: 'Authentication required.' });
+        return jsonMsg(res, 401, Z.AUTH_REQUIRED);
     }
     req.user = { id: String(user.sub), email: user.email, role: user.role, name: user.name };
     return next();
@@ -72,26 +78,17 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
         return res.status(400).json({ success: false, message: 'pairingToken and pairingUserId required' });
     }
 
-    const host = `${req.protocol}://${req.get('host')}`;
-    const apiBase = String(req.body?.apiBase || host).replace(/\/$/, '');
-    const defaultWsScheme = apiBase.startsWith('https://') ? 'wss' : 'ws';
-    let gatewayUrl = String(
-        req.body?.gatewayUrl
-        || process.env.NEXT_PUBLIC_GATEWAY_URL
-        || process.env.ZENVORA_GATEWAY_URL
-        || `${defaultWsScheme}://${req.get('host')}/ws/gateway`
-    );
-    // Local/http installs must not get wss:// (TLS will hang the handshake).
-    if (apiBase.startsWith('http://') && gatewayUrl.startsWith('wss://')) {
-        gatewayUrl = gatewayUrl.replace(/^wss:\/\//i, 'ws://');
-    } else if (apiBase.startsWith('https://') && gatewayUrl.startsWith('ws://')) {
-        gatewayUrl = gatewayUrl.replace(/^ws:\/\//i, 'wss://');
-    }
-    const downloadUrl = String(
+    const apiBase = resolvePublicApiBase(req, req.body?.apiBase);
+    const gatewayUrl = resolvePublicGatewayUrl(req, req.body?.gatewayUrl);
+    let downloadUrl = String(
         req.body?.downloadUrl
         || process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL
         || `${apiBase}/api/agent/download`
     );
+    // Don't ship localhost download URLs to remote PCs.
+    if (isLoopbackHost(downloadUrl) && !isLoopbackHost(apiBase)) {
+        downloadUrl = `${apiBase}/api/agent/download`;
+    }
 
     const ticket = createTicket({
         userId: req.user.id,
@@ -135,13 +132,10 @@ router.get('/download', (req, res) => {
         liveLogBus.push({
             channel: 'http',
             level: 'error',
-            message: 'agent download 404 — ZenvoraAgent.exe / win_32.exe missing',
+            message: msgText(Z.BINARY_MISSING),
             route: '/api/agent/download',
         });
-        return res.status(404).json({
-            success: false,
-            message: 'Agent binary not found. Place ZenvoraAgent.exe in public/downloads/.',
-        });
+        return jsonMsg(res, 404, Z.BINARY_MISSING, 'Place ZenvoraAgent.exe in public/downloads/');
     }
 
     const stat = fs.statSync(filePath);
