@@ -195,17 +195,32 @@ fn schedule_screen_capture(
         })
         .await;
 
-        // If the capture succeeded, send it through the media channel.
-        if let Ok(Some(jpeg)) = jpeg_result {
-            let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
-            if let Some(tx) = media_tx.as_ref() {
-                // Instant non-blocking send. If buffer is full (slow network), drop frame cleanly
-                // so agent Tokio threads NEVER block and heartbeats NEVER timeout.
-                if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(binary) {
-                    // Frame dropped cleanly due to network lag — no disconnection!
+        match jpeg_result {
+            Ok(Some(jpeg)) => {
+                let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
+                if let Some(tx) = media_tx.as_ref() {
+                    // Instant non-blocking send. If buffer is full (slow network), drop frame cleanly
+                    // so agent Tokio threads NEVER block and heartbeats NEVER timeout.
+                    if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(binary) {
+                        // Frame dropped cleanly due to network lag — no disconnection!
+                    }
+                } else {
+                    eprintln!("[SCREEN] screen_media_tx is None while streaming");
                 }
-            } else {
-                eprintln!("[SCREEN] screen_media_tx is None while streaming");
+            }
+            Ok(None) => {
+                // Rate-limit: xcap failures spam otherwise.
+                static FAIL_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = FAIL_LOG.fetch_add(1, Ordering::Relaxed);
+                if n < 3 || n % 60 == 0 {
+                    eprintln!(
+                        "[SCREEN] capture_display_jpeg returned None (fail #{}) — no binary frame sent",
+                        n + 1
+                    );
+                }
+            }
+            Err(err) => {
+                eprintln!("[SCREEN] spawn_blocking join failed: {}", err);
             }
         }
 
@@ -581,13 +596,14 @@ pub async fn run_network_loop(
                             &message,
                             false,
                         );
-                        let wait_secs = if is_duplicate {
-                            45
-                        } else if is_retry {
-                            2
-                        } else {
-                            5
-                        };
+                        if is_duplicate {
+                            eprintln!(
+                                "--> [NETWORK] Duplicate agent — exiting this worker so the primary can stay connected."
+                            );
+                            connection_status::report_failed(&message);
+                            std::process::exit(0);
+                        }
+                        let wait_secs = if is_retry { 2 } else { 5 };
                         sleep(Duration::from_secs(wait_secs)).await;
                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                         continue;

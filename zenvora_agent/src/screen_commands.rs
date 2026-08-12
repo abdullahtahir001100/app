@@ -77,21 +77,55 @@ pub fn handle_screen_command(
             }
         }
         "START_SCREEN_STREAM" => {
-            state.apply_quality_from_payload(&packet.payload);
-            if state.detected_displays.is_empty() {
-                state.probe_displays();
-            }
-            if !state.detected_displays.is_empty() {
-                state.active_display_index = state
-                    .active_display_index
-                    .min(state.detected_displays.len().saturating_sub(1));
-                state.streaming_active = true;
-                println!(
-                    "[RUST AGENT] Screen stream activated on display {}.",
-                    state.active_display_index
+            if crate::session_launch::is_session_zero() {
+                state.streaming_active = false;
+                action_message = Some(
+                    "Screen capture unavailable: agent is in Windows Session 0. Restart Zenvora service while a user is logged in.".into(),
                 );
             } else {
-                action_message = Some("No displays available to stream.".into());
+                state.apply_quality_from_payload(&packet.payload);
+                if state.detected_displays.is_empty() {
+                    state.probe_displays();
+                }
+                if !state.detected_displays.is_empty() {
+                    state.active_display_index = state
+                        .active_display_index
+                        .min(state.detected_displays.len().saturating_sub(1));
+
+                    // Smoke-test one frame before claiming stream is live — otherwise UI
+                    // shows ACTIVE_STREAMING with zero binary frames forever.
+                    let settings = StreamCaptureSettings {
+                        max_width: state.stream_max_width,
+                        jpeg_quality: state.stream_jpeg_quality,
+                    };
+                    match capture_display_jpeg(state.active_display_index, false, settings) {
+                        Some(jpeg) => {
+                            state.streaming_active = true;
+                            println!(
+                                "[RUST AGENT] Screen stream activated on display {} (probe {} bytes).",
+                                state.active_display_index,
+                                jpeg.len()
+                            );
+                            action_message = Some(format!(
+                                "Screen stream started on {}.",
+                                state.active_display_label()
+                            ));
+                            // Probe only validates capture; live frames go via /ws/media pump.
+                            let _ = jpeg;
+                        }
+                        None => {
+                            state.streaming_active = false;
+                            action_message = Some(
+                                "Screen capture failed on this display. Check Windows display permissions / RDP / locked screen.".into(),
+                            );
+                            eprintln!(
+                                "[RUST AGENT] Screen stream NOT started — capture_display_jpeg returned None"
+                            );
+                        }
+                    }
+                } else {
+                    action_message = Some("No displays available to stream.".into());
+                }
             }
         }
         "STOP_SCREEN_STREAM" => {
@@ -478,6 +512,7 @@ fn build_screen_telemetry_json(
             "brightness": state.brightness,
             "volume": state.volume,
             "streaming_active": state.streaming_active,
+            "session_zero": crate::session_launch::is_session_zero(),
             "last_sent_text": state.last_sent_text,
             "latency_ms": if frame_bytes.is_some() { 12 } else { 3 },
             "live_frame_b64": live_frame_b64

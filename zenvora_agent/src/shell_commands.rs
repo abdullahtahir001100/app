@@ -7,12 +7,44 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::json;
 
 use crate::commands::{CommandResponse, IncomingPacket};
 
 const CHUNK_SIZE: usize = 8 * 1024;
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_TIMEOUT_SECS: u64 = 180;
+const MAX_STDOUT_BYTES: usize = 512 * 1024;
+const MAX_STDERR_BYTES: usize = 128 * 1024;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellEngine {
+    Cmd,
+    PowerShell,
+}
+
+impl ShellEngine {
+    fn parse(raw: &str) -> Self {
+        let s = raw.trim().to_ascii_lowercase();
+        if matches!(
+            s.as_str(),
+            "powershell" | "pwsh" | "ps" | "ps1" | "power-shell"
+        ) {
+            ShellEngine::PowerShell
+        } else {
+            ShellEngine::Cmd
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            ShellEngine::Cmd => "cmd",
+            ShellEngine::PowerShell => "powershell",
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct ShellState {
@@ -32,9 +64,9 @@ impl ShellState {
                 return dir.clone();
             }
         }
-        self.current_dir.clone().unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        })
+        self.current_dir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 
     fn set_current_dir(&mut self, dir: PathBuf, shell_id: &str) {
@@ -60,7 +92,7 @@ fn prompt_cwd(shell_state: &ShellState, shell_id: &str) -> String {
         .to_string()
 }
 
-/// Chunk large strings for WS-safe streaming.
+/// Chunk large strings for WS-safe metadata (UI should prefer full stdout/stderr for fidelity).
 fn chunk_text(text: &str) -> Vec<String> {
     if text.is_empty() {
         return Vec::new();
@@ -70,7 +102,6 @@ fn chunk_text(text: &str) -> Vec<String> {
     let mut i = 0;
     while i < bytes.len() {
         let end = (i + CHUNK_SIZE).min(bytes.len());
-        // Align to char boundary
         let mut e = end;
         while e > i && !text.is_char_boundary(e) {
             e -= 1;
@@ -84,14 +115,118 @@ fn chunk_text(text: &str) -> Vec<String> {
     out
 }
 
-pub fn handle_shell_command(packet: IncomingPacket, shell_state: &mut ShellState) -> Option<CommandResponse> {
+fn looks_like_powershell(command: &str) -> bool {
+    let t = command.trim_start();
+    let lower = t.to_ascii_lowercase();
+    lower.starts_with("powershell ")
+        || lower.starts_with("pwsh ")
+        || lower.starts_with("get-")
+        || lower.starts_with("set-")
+        || lower.starts_with("write-")
+        || lower.starts_with("select-")
+        || lower.starts_with("where-")
+        || lower.starts_with("foreach-")
+        || lower.starts_with("invoke-")
+        || lower.starts_with("import-")
+        || lower.starts_with("export-")
+        || lower.starts_with("new-")
+        || lower.starts_with("remove-")
+        || lower.starts_with("start-")
+        || lower.starts_with("stop-")
+        || lower.starts_with("test-")
+        || lower.starts_with("convertto-")
+        || lower.starts_with("convertfrom-")
+        || t.contains("$_")
+        || t.contains("|%")
+        || t.contains("|$")
+        || t.contains(".ps1")
+}
+
+fn resolve_engine(packet: &IncomingPacket, command: &str) -> ShellEngine {
+    if let Some(raw) = packet
+        .payload
+        .get("shell")
+        .or_else(|| packet.payload.get("engine"))
+        .and_then(|v| v.as_str())
+    {
+        return ShellEngine::parse(raw);
+    }
+    if looks_like_powershell(command) {
+        ShellEngine::PowerShell
+    } else {
+        ShellEngine::Cmd
+    }
+}
+
+/// Decode console pipe bytes without mangling original text.
+fn decode_console_bytes(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    // UTF-8 (preferred when we force UTF-8 from PowerShell / modern tools)
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+
+    // UTF-16LE (cmd /U pipes, some PowerShell redirects)
+    if bytes.len() >= 2 {
+        let (start, aligned) = if bytes[0] == 0xFF && bytes[1] == 0xFE {
+            (2usize, true)
+        } else if bytes.len() % 2 == 0 {
+            // Heuristic: many 0x00 on odd indexes → UTF-16LE ASCII-heavy text
+            let zero_odd = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
+            (0usize, zero_odd * 2 >= bytes.len() / 2)
+        } else {
+            (0usize, false)
+        };
+        if aligned {
+            let slice = &bytes[start..];
+            if slice.len() >= 2 && slice.len() % 2 == 0 {
+                let u16s: Vec<u16> = slice
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                if let Ok(s) = String::from_utf16(&u16s) {
+                    return s;
+                }
+            }
+        }
+    }
+
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn maybe_truncate(text: String, max_bytes: usize) -> (String, bool) {
+    if text.len() <= max_bytes {
+        return (text, false);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = text[..end].to_string();
+    out.push_str("\n\n[truncated — output exceeded limit]");
+    (out, true)
+}
+
+pub fn handle_shell_command(
+    packet: IncomingPacket,
+    shell_state: &mut ShellState,
+) -> Option<CommandResponse> {
     let command = packet
         .payload
         .get("command")
         .and_then(|value| value.as_str())
         .unwrap_or("")
-        .trim()
         .to_string();
+    // Keep leading spaces if user typed them; only reject empty/whitespace-only.
+    let command_trim = command.trim();
+    let command = if command_trim.is_empty() {
+        String::new()
+    } else {
+        command_trim.to_string()
+    };
 
     let shell_id = packet
         .payload
@@ -100,6 +235,7 @@ pub fn handle_shell_command(packet: IncomingPacket, shell_state: &mut ShellState
         .unwrap_or("")
         .to_string();
 
+    let engine = resolve_engine(&packet, &command);
     let username = os_username();
     let cwd = prompt_cwd(shell_state, &shell_id);
 
@@ -118,6 +254,7 @@ pub fn handle_shell_command(packet: IncomingPacket, shell_state: &mut ShellState
                     "username": username,
                     "cwd": cwd,
                     "shellId": shell_id,
+                    "shell": engine.as_str(),
                     "timed_out": false
                 }
             }),
@@ -126,31 +263,11 @@ pub fn handle_shell_command(packet: IncomingPacket, shell_state: &mut ShellState
         });
     }
 
-    let output = run_shell_command(&command, shell_state, &shell_id);
+    let output = run_shell_command(&command, engine, shell_state, &shell_id);
     let cwd_after = prompt_cwd(shell_state, &shell_id);
 
-    // For large output, emit chunk markers in the final JSON (server fans out as-is;
-    // UI also supports shell_output_chunk if sent as separate packets later).
-    let stdout = output.stdout;
-    let stderr = output.stderr;
-    let stdout_truncated = stdout.len() > 256 * 1024;
-    let stderr_truncated = stderr.len() > 256 * 1024;
-    let stdout_out = if stdout_truncated {
-        let mut s = stdout.chars().take(250_000).collect::<String>();
-        s.push_str("\n\n[truncated — output exceeded 256KB]");
-        s
-    } else {
-        stdout
-    };
-    let stderr_out = if stderr_truncated {
-        let mut s = stderr.chars().take(64_000).collect::<String>();
-        s.push_str("\n\n[truncated]");
-        s
-    } else {
-        stderr
-    };
-
-    // Attach chunks metadata for UI progressive render (same packet).
+    let (stdout_out, _) = maybe_truncate(output.stdout, MAX_STDOUT_BYTES);
+    let (stderr_out, _) = maybe_truncate(output.stderr, MAX_STDERR_BYTES);
     let stdout_chunks = chunk_text(&stdout_out);
     let stderr_chunks = chunk_text(&stderr_out);
 
@@ -159,7 +276,11 @@ pub fn handle_shell_command(packet: IncomingPacket, shell_state: &mut ShellState
             "type": "shell_output",
             "action": packet.action,
             "status": if output.exit_code == 0 { "success" } else { "error" },
-            "message": if output.exit_code == 0 { "Shell command completed." } else { "Shell command failed." },
+            "message": if output.exit_code == 0 {
+                "Shell command completed."
+            } else {
+                "Shell command failed."
+            },
             "shell": {
                 "command": command,
                 "exit_code": output.exit_code,
@@ -170,6 +291,7 @@ pub fn handle_shell_command(packet: IncomingPacket, shell_state: &mut ShellState
                 "username": username,
                 "cwd": cwd_after,
                 "shellId": shell_id,
+                "shell": engine.as_str(),
                 "timed_out": output.timed_out
             }
         }),
@@ -187,105 +309,209 @@ struct ShellExecutionResult {
 
 fn run_shell_command(
     command_text: &str,
+    engine: ShellEngine,
     shell_state: &mut ShellState,
     shell_id: &str,
 ) -> ShellExecutionResult {
-    if let Some(result) = try_handle_cd_command(command_text, shell_state, shell_id) {
+    if let Some(result) = try_handle_cd_command(command_text, engine, shell_state, shell_id) {
         return result;
     }
 
-    #[cfg(windows)]
-    let mut command = Command::new("cmd");
-    #[cfg(windows)]
-    {
-        // /S so quotes in large/complex commands are preserved correctly.
-        command.args(["/D", "/Q", "/S", "/C", command_text]);
-        command.creation_flags(0x08000000);
-    }
-
-    #[cfg(not(windows))]
-    let mut command = Command::new("/bin/sh");
-    #[cfg(not(windows))]
-    {
-        command.arg("-c").arg(command_text);
-    }
-
     let current_dir = shell_state.resolve_current_dir(shell_id);
+    let mut command = match engine {
+        ShellEngine::Cmd => build_cmd_command(command_text),
+        ShellEngine::PowerShell => build_powershell_command(command_text),
+    };
+
     command.current_dir(&current_dir);
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
+    // Inherit a minimal env; force UTF-8 hints where tools honor them.
+    command.env("PYTHONIOENCODING", "utf-8");
+    command.env("DOTNET_CLI_UI_LANGUAGE", "en");
 
     let started = Instant::now();
     match command.spawn() {
         Ok(mut child) => {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout_bytes = Vec::new();
+            let mut stderr_bytes = Vec::new();
 
             if let Some(out) = child.stdout.take() {
                 let mut reader = BufReader::new(out);
-                let mut buf = Vec::new();
-                let _ = reader.read_to_end(&mut buf);
-                stdout = String::from_utf8_lossy(&buf).to_string();
+                let _ = reader.read_to_end(&mut stdout_bytes);
             }
             if let Some(err) = child.stderr.take() {
                 let mut reader = BufReader::new(err);
-                let mut buf = Vec::new();
-                let _ = reader.read_to_end(&mut buf);
-                stderr = String::from_utf8_lossy(&buf).to_string();
+                let _ = reader.read_to_end(&mut stderr_bytes);
             }
 
             let timed_out = started.elapsed() > Duration::from_secs(DEFAULT_TIMEOUT_SECS);
+            if timed_out {
+                let _ = child.kill();
+            }
             let status = child.wait();
             let exit_code = match status {
-                Ok(s) => s.code().unwrap_or(-1),
+                Ok(s) => s.code().unwrap_or(if timed_out { 124 } else { -1 }),
                 Err(_) => 1,
             };
 
             ShellExecutionResult {
                 exit_code,
-                stdout: stdout.trim_end().to_string(),
-                stderr: stderr.trim_end().to_string(),
+                // Keep original text — do not trim (preserves trailing spaces / blank lines).
+                stdout: decode_console_bytes(&stdout_bytes),
+                stderr: decode_console_bytes(&stderr_bytes),
                 timed_out,
             }
         }
         Err(err) => ShellExecutionResult {
             exit_code: 1,
             stdout: String::new(),
-            stderr: format!("Failed to launch shell: {err}"),
+            stderr: format!("Failed to launch {}: {err}", engine.as_str()),
             timed_out: false,
         },
     }
 }
 
-fn try_handle_cd_command(
-    command_text: &str,
-    shell_state: &mut ShellState,
-    shell_id: &str,
-) -> Option<ShellExecutionResult> {
+#[cfg(windows)]
+fn build_cmd_command(command_text: &str) -> Command {
+    // /U => Unicode (UTF-16LE) on redirected pipes — faithful text for decode.
+    // /S /C => pass command string as-is (supports quotes, pipes, &&, redirects).
+    let mut command = Command::new("cmd.exe");
+    command.args(["/D", "/S", "/U", "/C", command_text]);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(windows))]
+fn build_cmd_command(command_text: &str) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command.arg("-c").arg(command_text);
+    command
+}
+
+#[cfg(windows)]
+fn build_powershell_command(command_text: &str) -> Command {
+    // Strip an optional leading `powershell ` / `pwsh ` so users can paste either form.
+    let script_body = {
+        let t = command_text.trim_start();
+        let lower = t.to_ascii_lowercase();
+        let skip = if lower.starts_with("powershell.exe ") {
+            "powershell.exe ".len()
+        } else if lower.starts_with("powershell ") {
+            "powershell ".len()
+        } else if lower.starts_with("pwsh.exe ") {
+            "pwsh.exe ".len()
+        } else if lower.starts_with("pwsh ") {
+            "pwsh ".len()
+        } else {
+            0
+        };
+        if skip > 0 {
+            t[skip..].trim_start()
+        } else {
+            command_text
+        }
+    };
+
+    // Force UTF-8 host output so pipe bytes match what PowerShell shows for text.
+    let wrapped = format!(
+        "$ErrorActionPreference='Continue'; \
+         try {{ [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; \
+         $OutputEncoding = [Console]::OutputEncoding }} catch {{}}; \
+         {script_body}"
+    );
+
+    // -EncodedCommand avoids cmd/PowerShell quoting breakage on large/complex scripts.
+    let utf16: Vec<u8> = wrapped
+        .encode_utf16()
+        .flat_map(|u| u.to_le_bytes())
+        .collect();
+    let encoded = B64.encode(utf16);
+
+    let mut command = Command::new("powershell.exe");
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        &encoded,
+    ]);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(windows))]
+fn build_powershell_command(command_text: &str) -> Command {
+    let mut command = Command::new("pwsh");
+    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command_text]);
+    command
+}
+
+fn extract_cd_target(command_text: &str) -> Option<String> {
     let trimmed = command_text.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let mut parts = trimmed.split_whitespace();
-    let command_name = parts.next().unwrap_or("");
-    let is_cd = command_name.eq_ignore_ascii_case("cd") || command_name.eq_ignore_ascii_case("chdir");
-    if !is_cd {
+    let lower = trimmed.to_ascii_lowercase();
+    let prefix_len = if lower.starts_with("set-location") {
+        "set-location".len()
+    } else if lower.starts_with("chdir") {
+        "chdir".len()
+    } else if lower == "cd"
+        || lower.starts_with("cd ")
+        || lower.starts_with("cd\t")
+        || lower.starts_with("cd/")
+        || lower.starts_with("cd\\")
+    {
+        2
+    } else if lower.starts_with("sl ") || lower.starts_with("sl\t") || lower.starts_with("sl-") {
+        2
+    } else {
         return None;
+    };
+
+    let mut args = trimmed[prefix_len..].trim_start();
+    let args_lower = args.to_ascii_lowercase();
+    for flag in ["-literalpath ", "-path ", "/d "] {
+        if let Some(stripped) = args_lower.strip_prefix(flag) {
+            let skip = args.len() - stripped.len();
+            args = args[skip..].trim_start();
+            break;
+        }
     }
 
-    let mut target_parts = parts.collect::<Vec<_>>();
-    let mut use_d = false;
-    if target_parts.first().is_some_and(|part| part.eq_ignore_ascii_case("/d")) {
-        use_d = true;
-        target_parts.remove(0);
+    if args.is_empty() {
+        return Some(String::new());
     }
 
-    let target = target_parts.join(" ");
+    let bytes = args.as_bytes();
+    if bytes[0] == b'"' || bytes[0] == b'\'' {
+        let quote = bytes[0] as char;
+        if let Some(end) = args[1..].find(quote) {
+            return Some(args[1..1 + end].to_string());
+        }
+    }
+
+    Some(args.trim().to_string())
+}
+
+fn try_handle_cd_command(
+    command_text: &str,
+    _engine: ShellEngine,
+    shell_state: &mut ShellState,
+    shell_id: &str,
+) -> Option<ShellExecutionResult> {
+    let target = extract_cd_target(command_text)?;
     let base_dir = shell_state.resolve_current_dir(shell_id);
 
     let resolved = if target.is_empty() {
+        // bare `cd` → show/stay current (cmd) / home-ish — keep current for remote shell fidelity
         base_dir.clone()
+    } else if target == "~" {
+        dirs::home_dir().unwrap_or(base_dir.clone())
     } else {
         let candidate = if Path::new(&target).is_absolute() {
             PathBuf::from(&target)
@@ -301,16 +527,20 @@ fn try_handle_cd_command(
             return Some(ShellExecutionResult {
                 exit_code: 1,
                 stdout: String::new(),
-                stderr: format!("Directory not found: {}", target),
+                stderr: format!("Directory not found: {target}"),
                 timed_out: false,
             });
         }
     };
 
-    let mut final_dir = resolved;
-    if use_d && final_dir.is_file() {
-        final_dir = final_dir.parent().unwrap_or(&base_dir).to_path_buf();
-    }
+    let final_dir = if resolved.is_file() {
+        resolved
+            .parent()
+            .unwrap_or(&base_dir)
+            .to_path_buf()
+    } else {
+        resolved
+    };
 
     shell_state.set_current_dir(final_dir.clone(), shell_id);
     Some(ShellExecutionResult {
@@ -328,9 +558,16 @@ mod tests {
     #[test]
     fn cd_command_updates_shell_state() {
         let mut shell_state = ShellState::new();
-        let result = try_handle_cd_command("cd ..", &mut shell_state, "").unwrap();
+        let result =
+            try_handle_cd_command("cd ..", ShellEngine::Cmd, &mut shell_state, "").unwrap();
 
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("\\") || result.stdout.contains("/"));
+        assert!(result.stdout.contains('\\') || result.stdout.contains('/'));
+    }
+
+    #[test]
+    fn detect_powershell_verbs() {
+        assert!(looks_like_powershell("Get-Process"));
+        assert!(!looks_like_powershell("dir"));
     }
 }

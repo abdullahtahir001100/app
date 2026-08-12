@@ -1,10 +1,13 @@
 //! Dynamic connection progress UI (WinForms) + headless terminal reporting.
+//! GUI theme matches the Zenvora browser app (cream background, dark brand type).
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Mutex;
+
+use crate::messages::{self, Msg};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -54,6 +57,24 @@ fn write_progress_line(line: &str) {
     }
 }
 
+fn state_for_msg(msg: Msg) -> &'static str {
+    match msg.kind {
+        messages::MsgKind::Success => "ok",
+        messages::MsgKind::Error => "fail",
+        messages::MsgKind::Warn => "warn",
+        messages::MsgKind::Info => "running",
+    }
+}
+
+/// Emit a coded production progress step.
+pub fn step_msg(index: u32, total: u32, msg: Msg) {
+    step(index, total, &msg.display(), state_for_msg(msg));
+}
+
+pub fn step_msg_detail(index: u32, total: u32, msg: Msg, detail: &str) {
+    step(index, total, &msg.with_detail(detail), state_for_msg(msg));
+}
+
 /// Emit a visible progress step. In headless mode prints to the terminal.
 pub fn step(index: u32, total: u32, message: &str, state: &str) {
     let line = format!("step|{}|{}|{}|{}", index, total, state, message.replace('|', "/"));
@@ -61,7 +82,6 @@ pub fn step(index: u32, total: u32, message: &str, state: &str) {
     crate::connection_status::log(format!("[{}/{}] {} ({})", index, total, message, state));
     crate::install_telemetry::step(index, total, message, state);
 
-    // Always print clear CLI lines (headless OR console attached).
     let icon = match state {
         "ok" => "[OK]  ",
         "fail" => "[FAIL]",
@@ -74,24 +94,51 @@ pub fn step(index: u32, total: u32, message: &str, state: &str) {
 
 pub fn finish_success(device: &str, gateway: &str) {
     write_progress_line(&format!("final|connected|{}|{}", device, gateway));
-    let msg = format!("Connected as {} via {}", device, gateway);
+    let msg = format!(
+        "{} — {} via {}",
+        messages::M200_CONNECTED.display(),
+        device,
+        gateway
+    );
     crate::install_telemetry::finish_success(&msg);
     println!("[SUCCESS] {}", msg);
     let _ = std::io::Write::flush(&mut std::io::stdout());
 }
 
 pub fn finish_failed(reason: &str) {
-    write_progress_line(&format!("final|failed|{}", reason.replace('|', "/")));
-    crate::install_telemetry::finish_failed(reason);
-    eprintln!("[FAILED] {}", reason);
+    let text = if reason.contains("[ZENVORA-") {
+        reason.to_string()
+    } else {
+        messages::M501_CONNECT_FAILED.with_detail(reason)
+    };
+    write_progress_line(&format!("final|failed|{}", text.replace('|', "/")));
+    crate::install_telemetry::finish_failed(&text);
+    eprintln!("[FAILED] {}", text);
     let _ = std::io::Write::flush(&mut std::io::stderr());
 }
 
+pub fn finish_failed_msg(msg: Msg) {
+    finish_failed(&msg.display());
+}
+
+pub fn finish_failed_msg_detail(msg: Msg, detail: &str) {
+    finish_failed(&msg.with_detail(detail));
+}
+
 pub fn finish_warning(message: &str) {
-    write_progress_line(&format!("final|warn|{}", message.replace('|', "/")));
-    crate::install_telemetry::finish_warning(message);
-    println!("[WARN] {}", message);
+    let text = if message.contains("[ZENVORA-") {
+        message.to_string()
+    } else {
+        messages::M112_STILL_CONNECTING.with_detail(message)
+    };
+    write_progress_line(&format!("final|warn|{}", text.replace('|', "/")));
+    crate::install_telemetry::finish_warning(&text);
+    println!("[WARN] {}", text);
     let _ = std::io::Write::flush(&mut std::io::stdout());
+}
+
+pub fn finish_warning_msg(msg: Msg) {
+    finish_warning(&msg.display());
 }
 
 /// Launch a non-blocking WinForms progress window that polls connection.progress.
@@ -102,50 +149,123 @@ pub fn start_gui() {
     }
 
     let path = progress_file();
-    let _ = fs::write(&path, "step|0|6|running|Starting Zenvora Agent...");
+    let _ = fs::write(
+        &path,
+        format!(
+            "step|0|8|running|{}",
+            messages::M100_PROVISION_STARTED.display()
+        ),
+    );
 
+    // Browser theme: cream bg #F9F9F7, ink #1F1C1A, muted #6B6560, success #1F7A4D, error #B42318
     let script = format!(
         r#"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $path = '{path}'
+
+$bg     = [System.Drawing.Color]::FromArgb(249,249,247)
+$ink    = [System.Drawing.Color]::FromArgb(31,28,26)
+$muted  = [System.Drawing.Color]::FromArgb(107,101,96)
+$line   = [System.Drawing.Color]::FromArgb(224,220,214)
+$card   = [System.Drawing.Color]::White
+$okCol  = [System.Drawing.Color]::FromArgb(31,122,77)
+$failCol= [System.Drawing.Color]::FromArgb(180,35,24)
+$warnCol= [System.Drawing.Color]::FromArgb(180,110,20)
+$barFill= [System.Drawing.Color]::FromArgb(31,28,26)
+
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'Zenvora Agent - Connecting'
-$form.Size = New-Object System.Drawing.Size(520, 360)
+$form.Text = 'Zenvora'
+$form.Size = New-Object System.Drawing.Size(560, 420)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.BackColor = [System.Drawing.Color]::FromArgb(248,249,251)
+$form.BackColor = $bg
+$form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+
+# Brand mark (wifi rings — same motif as browser ZenvoraLogo)
+$logoBox = New-Object System.Windows.Forms.PictureBox
+$logoBox.Location = New-Object System.Drawing.Point(24, 20)
+$logoBox.Size = New-Object System.Drawing.Size(48, 48)
+$logoBmp = New-Object System.Drawing.Bitmap 96, 96
+$g = [System.Drawing.Graphics]::FromImage($logoBmp)
+$g.SmoothingMode = 'AntiAlias'
+$g.Clear([System.Drawing.Color]::Transparent)
+$pen1 = New-Object System.Drawing.Pen $ink, 3
+$pen1.Color = [System.Drawing.Color]::FromArgb(80, 31,28,26)
+$pen2 = New-Object System.Drawing.Pen $ink, 3
+$pen2.Color = [System.Drawing.Color]::FromArgb(130, 31,28,26)
+$pen3 = New-Object System.Drawing.Pen $ink, 3.5
+$g.DrawEllipse($pen1, 6, 6, 84, 84)
+$g.DrawEllipse($pen2, 18, 18, 60, 60)
+$g.DrawEllipse($pen3, 30, 30, 36, 36)
+$brush = New-Object System.Drawing.SolidBrush $ink
+$g.FillEllipse($brush, 42, 42, 12, 12)
+$g.Dispose()
+$logoBox.Image = $logoBmp
+$logoBox.SizeMode = 'Zoom'
+
+$brand = New-Object System.Windows.Forms.Label
+$brand.Text = 'Zenvora'
+$brand.Font = New-Object System.Drawing.Font('Georgia', 18, [System.Drawing.FontStyle]::Bold)
+$brand.ForeColor = $ink
+$brand.AutoSize = $true
+$brand.Location = New-Object System.Drawing.Point(84, 18)
+
 $title = New-Object System.Windows.Forms.Label
-$title.Text = 'Establishing gateway connection'
-$title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 12)
+$title.Text = 'Connecting your device'
+$title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 11)
+$title.ForeColor = $ink
 $title.AutoSize = $true
-$title.Location = New-Object System.Drawing.Point(20, 16)
+$title.Location = New-Object System.Drawing.Point(86, 48)
+
 $status = New-Object System.Windows.Forms.Label
-$status.Text = 'Preparing...'
+$status.Text = 'Preparing…'
 $status.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-$status.AutoSize = $true
-$status.Location = New-Object System.Drawing.Point(20, 48)
+$status.ForeColor = $muted
+$status.AutoSize = $false
+$status.Size = New-Object System.Drawing.Size(500, 22)
+$status.Location = New-Object System.Drawing.Point(24, 82)
+
+$panel = New-Object System.Windows.Forms.Panel
+$panel.Location = New-Object System.Drawing.Point(24, 112)
+$panel.Size = New-Object System.Drawing.Size(500, 210)
+$panel.BackColor = $card
+$panel.BorderStyle = 'FixedSingle'
+
 $list = New-Object System.Windows.Forms.ListBox
-$list.Location = New-Object System.Drawing.Point(20, 80)
-$list.Size = New-Object System.Drawing.Size(460, 190)
-$list.Font = New-Object System.Drawing.Font('Consolas', 9)
+$list.Location = New-Object System.Drawing.Point(1, 1)
+$list.Size = New-Object System.Drawing.Size(496, 206)
+$list.BorderStyle = 'None'
+$list.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+$list.BackColor = $card
+$list.ForeColor = $ink
+$list.IntegralHeight = $false
+$panel.Controls.Add($list)
+
 $bar = New-Object System.Windows.Forms.ProgressBar
-$bar.Location = New-Object System.Drawing.Point(20, 280)
-$bar.Size = New-Object System.Drawing.Size(360, 18)
+$bar.Location = New-Object System.Drawing.Point(24, 338)
+$bar.Size = New-Object System.Drawing.Size(390, 10)
 $bar.Style = 'Marquee'
-$bar.MarqueeAnimationSpeed = 30
+$bar.MarqueeAnimationSpeed = 28
+
 $btn = New-Object System.Windows.Forms.Button
 $btn.Text = 'Close'
 $btn.Enabled = $false
-$btn.Location = New-Object System.Drawing.Point(400, 274)
-$btn.Size = New-Object System.Drawing.Size(80, 28)
+$btn.Location = New-Object System.Drawing.Point(430, 328)
+$btn.Size = New-Object System.Drawing.Size(94, 30)
+$btn.FlatStyle = 'Flat'
+$btn.BackColor = $ink
+$btn.ForeColor = $bg
+$btn.FlatAppearance.BorderSize = 0
 $btn.Add_Click({{ $form.Close() }})
-$form.Controls.AddRange(@($title,$status,$list,$bar,$btn))
+
+$form.Controls.AddRange(@($logoBox,$brand,$title,$status,$panel,$bar,$btn))
+
 $done = $false
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 600
+$timer.Interval = 500
 $timer.Add_Tick({{
   if (-not (Test-Path $path)) {{ return }}
   $line = (Get-Content -Path $path -ErrorAction SilentlyContinue | Select-Object -Last 1)
@@ -153,10 +273,15 @@ $timer.Add_Tick({{
   $parts = $line -split '\|', 5
   if ($parts[0] -eq 'step' -and $parts.Length -ge 5) {{
     $idx = $parts[1]; $total = $parts[2]; $state = $parts[3]; $msg = $parts[4]
-    $prefix = switch ($state) {{ 'ok' {{ '[OK]  ' }} 'fail' {{ '[FAIL]' }} 'warn' {{ '[WARN]' }} default {{ '[..]  ' }} }}
-    $entry = "$prefix ($idx/$total) $msg"
+    $prefix = switch ($state) {{
+      'ok'   {{ 'OK' }}
+      'fail' {{ 'ERR' }}
+      'warn' {{ 'WARN' }}
+      default {{ '…' }}
+    }}
+    $entry = "$prefix  ($idx/$total)  $msg"
     if ($list.Items.Count -eq 0 -or $list.Items[$list.Items.Count-1] -ne $entry) {{
-      if ($state -eq 'running' -and $list.Items.Count -gt 0 -and ($list.Items[$list.Items.Count-1] -like '*[..]*')) {{
+      if ($state -eq 'running' -and $list.Items.Count -gt 0 -and ($list.Items[$list.Items.Count-1] -like '*…*')) {{
         $list.Items[$list.Items.Count-1] = $entry
       }} else {{
         [void]$list.Items.Add($entry)
@@ -164,6 +289,7 @@ $timer.Add_Tick({{
       $list.TopIndex = [Math]::Max(0, $list.Items.Count - 1)
     }}
     $status.Text = $msg
+    $status.ForeColor = $muted
     if ($total -as [int] -gt 0) {{
       $bar.Style = 'Continuous'
       $bar.Maximum = [Math]::Max(1, [int]$total)
@@ -175,21 +301,22 @@ $timer.Add_Tick({{
     $bar.Style = 'Continuous'
     $bar.Value = $bar.Maximum
     if ($parts[1] -eq 'connected') {{
-      $status.ForeColor = [System.Drawing.Color]::DarkGreen
-      $status.Text = 'Connected successfully'
-      $title.Text = 'Connection established'
-      [void]$list.Items.Add('[OK] Device: ' + $parts[2])
-      [void]$list.Items.Add('[OK] Gateway: ' + $parts[3])
+      $status.ForeColor = $okCol
+      $status.Text = '[ZENVORA-200] Connected successfully'
+      $title.Text = 'You are online'
+      [void]$list.Items.Add('OK  Device  ' + $parts[2])
+      [void]$list.Items.Add('OK  Gateway  ' + $parts[3])
     }} elseif ($parts[1] -eq 'warn') {{
-      $status.ForeColor = [System.Drawing.Color]::DarkOrange
+      $status.ForeColor = $warnCol
       $status.Text = $parts[2]
-      $title.Text = 'Still connecting'
-      [void]$list.Items.Add('[WARN] ' + $parts[2])
+      $title.Text = 'Almost there'
+      [void]$list.Items.Add('WARN  ' + $parts[2])
     }} else {{
-      $status.ForeColor = [System.Drawing.Color]::DarkRed
-      $status.Text = 'Connection failed'
+      $status.ForeColor = $failCol
+      $failMsg = ($parts[2..($parts.Length-1)] -join '|')
+      $status.Text = $failMsg
       $title.Text = 'Connection failed'
-      [void]$list.Items.Add('[FAIL] ' + ($parts[2..($parts.Length-1)] -join '|'))
+      [void]$list.Items.Add('ERR  ' + $failMsg)
     }}
     $btn.Enabled = $true
     $timer.Stop()

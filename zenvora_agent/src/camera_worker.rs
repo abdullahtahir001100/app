@@ -205,29 +205,80 @@ fn format_from_camera(cam: &Camera) -> CameraFormatInfo {
 
 fn open_camera(inner: &mut WorkerInner, device_index: CameraIndex) -> Result<CameraFormatInfo, String> {
     release_camera(inner);
+    // Give Windows time to fully release exclusive camera handles after drop.
+    thread::sleep(Duration::from_millis(250));
 
-    // Prefer modest capture size — AbsoluteHighestFrameRate often opens 1080p+ and
-    // saturates encode after a few hundred live frames.
-    let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(
-        CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 15),
-    ));
+    // Try several formats — Integrated Webcam often rejects a hard MJPEG 640x480 request
+    // even when the device is free (was previously reported as "in use by another app").
+    let attempts: Vec<RequestedFormatType> = vec![
+        RequestedFormatType::Closest(CameraFormat::new(
+            Resolution::new(640, 480),
+            FrameFormat::MJPEG,
+            15,
+        )),
+        RequestedFormatType::Closest(CameraFormat::new(
+            Resolution::new(640, 480),
+            FrameFormat::YUYV,
+            15,
+        )),
+        RequestedFormatType::Closest(CameraFormat::new(
+            Resolution::new(1280, 720),
+            FrameFormat::MJPEG,
+            10,
+        )),
+        RequestedFormatType::AbsoluteHighestFrameRate,
+    ];
 
+    let mut last_err = String::from("unknown camera open error");
+    for (i, fmt_type) in attempts.into_iter().enumerate() {
+        let requested = RequestedFormat::new::<RgbFormat>(fmt_type);
+        match Camera::new(device_index.clone(), requested) {
+            Ok(mut cam) => match cam.open_stream() {
+                Ok(()) => {
+                    let info = format_from_camera(&cam);
+                    println!(
+                        "[RUST AGENT] Camera opened attempt={} {}x{} @ {} ({})",
+                        i + 1,
+                        info.width,
+                        info.height,
+                        info.frame_rate,
+                        info.format_string
+                    );
+                    inner.camera = Some(cam);
+                    return Ok(info);
+                }
+                Err(err) => {
+                    last_err = format!("open_stream: {}", err);
+                    eprintln!(
+                        "[RUST AGENT] Camera open_stream failed attempt={}: {}",
+                        i + 1,
+                        err
+                    );
+                    drop(cam);
+                    thread::sleep(Duration::from_millis(150));
+                }
+            },
+            Err(err) => {
+                last_err = format!("Camera::new: {}", err);
+                eprintln!(
+                    "[RUST AGENT] Camera::new failed attempt={}: {}",
+                    i + 1,
+                    err
+                );
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
 
-    let mut cam = Camera::new(device_index, requested).map_err(|err| err.to_string())?;
-    cam.open_stream()
-        .map_err(|err| err.to_string())?;
-
-    let info = format_from_camera(&cam);
-    inner.camera = Some(cam);
-    Ok(info)
+    Err(last_err)
 }
 
 fn release_camera(inner: &mut WorkerInner) {
     if let Some(mut cam) = inner.camera.take() {
         let _ = cam.stop_stream();
-        thread::sleep(Duration::from_millis(400));
+        thread::sleep(Duration::from_millis(200));
         let _ = cam.stop_stream();
-        thread::sleep(Duration::from_millis(400));
+        thread::sleep(Duration::from_millis(200));
         drop(cam);
     }
 }

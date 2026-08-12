@@ -40,7 +40,6 @@ fn run_message_box(title: &str, message: &str, _icon: &str, _blocking: bool) {
     println!("[{}] {}", title, message);
 }
 
-/// Startup / install messages — wait until user clicks OK.
 pub fn show_blocking_info(title: &str, message: &str) {
     println!("--> [{}] {}", title, message);
     run_message_box(title, message, "Information", true);
@@ -55,6 +54,15 @@ pub fn show_blocking_error(title: &str, message: &str) {
 pub fn show_blocking_warning(title: &str, message: &str) {
     eprintln!("--> [{}] {}", title, message);
     run_message_box(title, message, "Warning", true);
+}
+
+pub fn show_blocking_msg(msg: crate::messages::Msg) {
+    let text = msg.display();
+    match msg.kind {
+        crate::messages::MsgKind::Error => show_blocking_error("Zenvora", &text),
+        crate::messages::MsgKind::Warn => show_blocking_warning("Zenvora", &text),
+        _ => show_blocking_info("Zenvora", &text),
+    }
 }
 
 /// Background agent — never block the socket loop.

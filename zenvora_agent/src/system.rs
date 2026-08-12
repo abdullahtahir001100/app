@@ -291,13 +291,46 @@ impl CameraState {
             }
             Err(err) => {
                 eprintln!("[ERROR] Could not open camera device: {}", err);
-                self.blocked_by_external_app = true;
                 self.camera_open.store(false, Ordering::Release);
-                self.status_message = Some(
-                    "Camera is in use by another app on this PC. Close Camera app and try again."
-                        .into(),
-                );
-                SwitchResult::InUseByOtherApp { index: logical_index }
+
+                if crate::session_launch::is_session_zero() {
+                    self.blocked_by_external_app = false;
+                    self.status_message = Some(crate::messages::M901_SESSION_ZERO.display());
+                    return SwitchResult::OpenFailed {
+                        index: logical_index,
+                    };
+                }
+
+                let lower = err.to_lowercase();
+                let looks_busy = [
+                    "in use",
+                    "busy",
+                    "access is denied",
+                    "access denied",
+                    "occupied",
+                    "sharing violation",
+                    "cannot be opened",
+                    "device is not available",
+                    "already",
+                ]
+                .iter()
+                .any(|k| lower.contains(k));
+
+                if looks_busy {
+                    self.blocked_by_external_app = true;
+                    self.status_message = Some(crate::messages::M902_CAMERA_IN_USE.display());
+                    SwitchResult::InUseByOtherApp {
+                        index: logical_index,
+                    }
+                } else {
+                    self.blocked_by_external_app = false;
+                    self.status_message = Some(
+                        crate::messages::M903_CAMERA_OPEN_FAILED.with_detail(&err),
+                    );
+                    SwitchResult::OpenFailed {
+                        index: logical_index,
+                    }
+                }
             }
         }
     }

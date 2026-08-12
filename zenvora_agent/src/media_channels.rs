@@ -161,7 +161,7 @@ async fn run_media_loop(
             if let Ok(url) = Url::parse(&ws_url) {
                 if let Ok((ws_stream, _)) = connect_async(url).await {
                     let (mut write_pipe, mut read_pipe) = ws_stream.split();
-                    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Message>();
                     let (read_tx, mut read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
                     seq_out += 1;
@@ -171,19 +171,20 @@ async fn run_media_loop(
                         "channel": channel_name,
                     });
                     let auth_frame = encode_json_frame(MsgType::Auth, seq_out, &auth);
-                    if write_tx.send(auth_frame).is_err() {
+                    if write_tx.send(Message::Binary(auth_frame)).is_err() {
                         sleep(Duration::from_secs(backoff)).await;
                         backoff = next_backoff(backoff);
                         continue;
                     }
 
                     let writer_task = tokio::spawn(async move {
-                        while let Some(buf) = write_rx.recv().await {
-                            if write_pipe.send(Message::Binary(buf)).await.is_err() {
+                        while let Some(msg) = write_rx.recv().await {
+                            if write_pipe.send(msg).await.is_err() {
                                 break;
                             }
                         }
                     });
+                    let write_tx_reader = write_tx.clone();
                     let reader_task = tokio::spawn(async move {
                         while let Some(msg) = read_pipe.next().await {
                             match msg {
@@ -192,6 +193,13 @@ async fn run_media_loop(
                                         break;
                                     }
                                 }
+                                Ok(Message::Ping(payload)) => {
+                                    // Server heartbeat expects a WS pong — missing it → terminate → closeCode 1006.
+                                    if write_tx_reader.send(Message::Pong(payload)).is_err() {
+                                        break;
+                                    }
+                                }
+                                Ok(Message::Pong(_)) => {}
                                 Ok(Message::Close(_)) | Err(_) => break,
                                 _ => {}
                             }
@@ -244,14 +252,19 @@ async fn run_media_loop(
                                 let Some(payload) = payload else { break; };
                                 seq_out += 1;
                                 let frame = encode_frame(MsgType::MediaFrame, seq_out, &payload, 0);
-                                if write_tx.send(frame).is_err() {
+                                if write_tx.send(Message::Binary(frame)).is_err() {
                                     break;
                                 }
                             }
                             _ = heartbeat.tick(), if authed => {
                                 seq_out += 1;
                                 if write_tx
-                                    .send(encode_frame(MsgType::Heartbeat, seq_out, &[], 0))
+                                    .send(Message::Binary(encode_frame(
+                                        MsgType::Heartbeat,
+                                        seq_out,
+                                        &[],
+                                        0,
+                                    )))
                                     .is_err()
                                 {
                                     break;

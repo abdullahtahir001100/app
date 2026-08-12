@@ -22,8 +22,57 @@ use windows_service::service_dispatcher;
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 const SERVICE_NAME: &str = "ZenvoraAgent";
-const DISPLAY_NAME: &str = "Zenvora Agent";
+const DISPLAY_NAME: &str = "Zenvora Agent Service";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const SINGLETON_MUTEX_NAME: &str = "Global\\ZenvoraAgentSingleton";
+
+/// Returns true if this process owns the singleton (only one agent worker should run).
+/// Keep the returned handle alive for the process lifetime.
+#[cfg(windows)]
+pub fn acquire_singleton() -> Option<windows::Win32::Foundation::HANDLE> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    let mut name: Vec<u16> = SINGLETON_MUTEX_NAME.encode_utf16().collect();
+    name.push(0);
+    unsafe {
+        let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr())).ok()?;
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            let _ = windows::Win32::Foundation::CloseHandle(handle);
+            return None;
+        }
+        if handle.is_invalid() || handle == HANDLE::default() {
+            return None;
+        }
+        Some(handle)
+    }
+}
+
+/// True when another agent worker already holds the singleton mutex.
+#[cfg(windows)]
+pub fn agent_singleton_held() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
+
+    let mut name: Vec<u16> = SINGLETON_MUTEX_NAME.encode_utf16().collect();
+    name.push(0);
+    unsafe {
+        match OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn agent_singleton_held() -> bool {
+    false
+}
 
 windows_service::define_windows_service!(ffi_service_main, service_main);
 
@@ -69,11 +118,13 @@ fn run_service() -> windows_service::Result<()> {
 
     let stop_flag_for_thread = stop_flag.clone();
     thread::spawn(move || {
-        // Prefer running the agent in the interactive user session so screen +
-        // browser history work. Fall back to in-service process if that fails.
+        // NEVER run the full agent in Session 0 — camera/screen capture always fail
+        // there, and the Session-0 process steals the singleton so the interactive
+        // user agent cannot start. Keep retrying interactive launch only.
         let exe = env::current_exe().ok();
         if crate::session_launch::is_session_zero() {
             if let Some(exe_path) = exe.as_ref() {
+                let mut consecutive_fail = 0u32;
                 loop {
                     if rx.try_recv().is_ok() || stop_flag_for_thread.load(Ordering::SeqCst) {
                         return;
@@ -84,6 +135,7 @@ fn run_service() -> windows_service::Result<()> {
                         &stop_flag_for_thread,
                     ) {
                         Ok(()) => {
+                            consecutive_fail = 0;
                             crate::connection_status::log(
                                 "Interactive agent exited; will relaunch if service is still running.",
                             );
@@ -94,17 +146,32 @@ fn run_service() -> windows_service::Result<()> {
                             continue;
                         }
                         Err(err) => {
+                            consecutive_fail = consecutive_fail.saturating_add(1);
+                            let wait = if consecutive_fail < 6 { 5 } else { 15 };
                             crate::connection_status::log(format!(
-                                "Interactive session launch failed ({}); falling back to service process.",
-                                err
+                                "Interactive session launch failed ({}); retrying in {}s (no Session-0 fallback — camera/screen require a logged-in user).",
+                                err, wait
                             ));
-                            break;
+                            for _ in 0..(wait * 2) {
+                                if rx.try_recv().is_ok()
+                                    || stop_flag_for_thread.load(Ordering::SeqCst)
+                                {
+                                    return;
+                                }
+                                thread::sleep(Duration::from_millis(500));
+                            }
+                            continue;
                         }
                     }
                 }
             }
+            crate::connection_status::log(
+                "Service has no executable path; cannot launch interactive agent.",
+            );
+            return;
         }
 
+        // Non-Session-0 service context (unusual) — run agent in-process.
         loop {
             if rx.try_recv().is_ok() || stop_flag_for_thread.load(Ordering::SeqCst) {
                 break;
@@ -409,6 +476,10 @@ pub fn uninstall_service() {
 
 /// Run agent as a detached background process (not a Windows service).
 pub fn spawn_background_agent(exe: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    if agent_singleton_held() {
+        return Ok(());
+    }
     Command::new(exe)
         .arg("--run-agent")
         .creation_flags(CREATE_NO_WINDOW | 0x00000008) // DETACHED_PROCESS

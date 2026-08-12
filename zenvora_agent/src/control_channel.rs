@@ -199,13 +199,25 @@ pub async fn run_control_loop(config: AgentConfig, stop_flag: Option<Arc<AtomicB
                 if let Ok((ws_stream, _)) = connect_async(url).await {
                     let (mut write_pipe, mut read_pipe) = ws_stream.split();
                     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let (pong_tx, mut pong_rx) = mpsc::unbounded_channel::<Vec<u8>>();
                     let (read_tx, read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
                     let write_tx = tx.clone();
 
                     let writer_task = tokio::spawn(async move {
-                        while let Some(buf) = rx.recv().await {
-                            if write_pipe.send(Message::Binary(buf)).await.is_err() {
-                                break;
+                        loop {
+                            tokio::select! {
+                                bin = rx.recv() => {
+                                    let Some(buf) = bin else { break; };
+                                    if write_pipe.send(Message::Binary(buf)).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                pong = pong_rx.recv() => {
+                                    let Some(payload) = pong else { break; };
+                                    if write_pipe.send(Message::Pong(payload)).await.is_err() {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     });
@@ -218,9 +230,11 @@ pub async fn run_control_loop(config: AgentConfig, stop_flag: Option<Arc<AtomicB
                                     }
                                 }
                                 Ok(Message::Ping(p)) => {
-                                    // tungstenite auto-pongs on some paths; ignore payload here
-                                    let _ = p;
+                                    if pong_tx.send(p).is_err() {
+                                        break;
+                                    }
                                 }
+                                Ok(Message::Pong(_)) => {}
                                 Ok(Message::Close(_)) | Err(_) => break,
                                 _ => {}
                             }

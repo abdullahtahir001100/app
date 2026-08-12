@@ -13,7 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(windows)]
 use windows::core::{PCWSTR, PWSTR};
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Foundation::{
+    CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 #[cfg(windows)]
 use windows::Win32::Security::{
     DuplicateTokenEx, SecurityImpersonation, TokenPrimary, TOKEN_ALL_ACCESS,
@@ -22,7 +24,8 @@ use windows::Win32::Security::{
 use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 #[cfg(windows)]
 use windows::Win32::System::RemoteDesktop::{
-    ProcessIdToSessionId, WTSGetActiveConsoleSessionId, WTSQueryUserToken,
+    ProcessIdToSessionId, WTSEnumerateSessionsW, WTSFreeMemory, WTSGetActiveConsoleSessionId,
+    WTSQueryUserToken, WTS_CURRENT_SERVER_HANDLE, WTSActive, WTS_SESSION_INFOW,
 };
 #[cfg(windows)]
 use windows::Win32::System::Threading::{
@@ -49,6 +52,36 @@ pub fn is_session_zero() -> bool {
     false
 }
 
+#[cfg(windows)]
+fn find_interactive_session_id() -> Option<u32> {
+    unsafe {
+        let console = WTSGetActiveConsoleSessionId();
+        if console != 0 && console != 0xFFFFFFFF {
+            return Some(console);
+        }
+
+        let mut info_ptr: *mut WTS_SESSION_INFOW = ptr::null_mut();
+        let mut count: u32 = 0;
+        if WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut info_ptr, &mut count).is_err()
+            || info_ptr.is_null()
+            || count == 0
+        {
+            return None;
+        }
+
+        let mut chosen: Option<u32> = None;
+        let slice = std::slice::from_raw_parts(info_ptr, count as usize);
+        for sess in slice {
+            if sess.State == WTSActive && sess.SessionId != 0 {
+                chosen = Some(sess.SessionId);
+                break;
+            }
+        }
+        WTSFreeMemory(info_ptr as *mut _);
+        chosen
+    }
+}
+
 /// Spawn `exe --run-agent` in the interactive user session and wait until it exits
 /// (or until `stop` is set).
 #[cfg(windows)]
@@ -57,10 +90,8 @@ pub fn spawn_agent_in_active_user_session(
     stop: &AtomicBool,
 ) -> Result<(), String> {
     unsafe {
-        let session_id = WTSGetActiveConsoleSessionId();
-        if session_id == 0xFFFFFFFF || session_id == 0 {
-            return Err("No interactive user session is logged on.".into());
-        }
+        let session_id = find_interactive_session_id()
+            .ok_or_else(|| "No interactive user session is logged on.".to_string())?;
 
         let mut user_token = HANDLE::default();
         WTSQueryUserToken(session_id, &mut user_token)
@@ -120,7 +151,6 @@ pub fn spawn_agent_in_active_user_session(
             let _ = CloseHandle(process_info.hThread);
         }
 
-        // Wait for interactive agent to exit (or service stop).
         while !stop.load(Ordering::SeqCst) {
             let wait = WaitForSingleObject(process_info.hProcess, 1000);
             if wait == WAIT_OBJECT_0 {

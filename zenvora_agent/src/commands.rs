@@ -116,10 +116,17 @@ pub fn handle_command(packet: IncomingPacket, state: &mut CameraState) -> Option
             }
         }
         "START_STREAM" => {
-            if state.detected_devices.is_empty() {
+            if crate::session_launch::is_session_zero() {
+                state.streaming_active = false;
+                state.blocked_by_external_app = false;
+                switch_message = Some(
+                    "Camera unavailable: agent is running in Windows Session 0. Restart the Zenvora service while a user is logged in.".into(),
+                );
+            } else if state.detected_devices.is_empty() {
                 state.probe_hardware_capabilities();
             }
 
+            if !crate::session_launch::is_session_zero() {
             if state.streaming_active && state.camera_is_open() {
                 switch_message = Some("Camera is already streaming.".into());
                 state.blocked_by_external_app = false;
@@ -168,6 +175,7 @@ pub fn handle_command(packet: IncomingPacket, state: &mut CameraState) -> Option
                 }
             } else if state.detected_devices.is_empty() && switch_message.is_none() {
                 switch_message = Some("No camera hardware detected on this machine.".into());
+            }
             }
 
             if let Some(msg) = switch_message.clone() {

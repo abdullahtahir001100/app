@@ -33,6 +33,7 @@ mod session_launch;
 mod paths;
 pub mod media_channels;
 pub mod screen_abr;
+pub mod messages;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -56,6 +57,39 @@ pub async fn run_agent() {
 }
 
 pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
+    // Session 0 (Windows service) cannot capture camera/screen of the logged-in user.
+    // Refuse here so we never steal the singleton from an interactive agent.
+    #[cfg(windows)]
+    if session_launch::is_session_zero() {
+        connection_status::log(
+            "Refusing full agent in Session 0 (camera/screen unavailable). Service must launch into the interactive user session.",
+        );
+        while stop_flag
+            .as_ref()
+            .map(|f| !f.load(std::sync::atomic::Ordering::SeqCst))
+            .unwrap_or(false)
+        {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        return;
+    }
+
+    #[cfg(windows)]
+    let _singleton = {
+        match service::acquire_singleton() {
+            Some(handle) => handle,
+            None => {
+                eprintln!(
+                    "--> [AGENT] Another ZenvoraAgent is already running — exiting duplicate worker"
+                );
+                connection_status::log(
+                    "Duplicate agent process detected — exiting (keeps gateway/media stable)",
+                );
+                return;
+            }
+        }
+    };
+
     connection_status::log("Agent worker starting");
     com_runtime::init_process_com();
 
@@ -108,6 +142,72 @@ fn is_in_install_dir(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(windows)]
+fn is_process_elevated() -> bool {
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = windows::Win32::Foundation::HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut ret = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut ret,
+        )
+        .is_ok();
+        let _ = windows::Win32::Foundation::CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
+    }
+}
+
+/// Relaunch this exe with a UAC elevation prompt (asInvoker → runas).
+#[cfg(windows)]
+fn relaunch_elevated_and_exit() -> ! {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{PCWSTR, w};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let exe = env::current_exe().expect("current exe");
+    let mut exe_wide: Vec<u16> = exe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let args: Vec<String> = env::args().skip(1).collect();
+    let mut params = args.join(" ");
+    if !params.contains("--from-install-dir") && !params.contains("--elevated-relaunch") {
+        if !params.is_empty() {
+            params.push(' ');
+        }
+        params.push_str("--elevated-relaunch");
+    }
+    let mut params_wide: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("runas"),
+            PCWSTR(exe_wide.as_mut_ptr()),
+            PCWSTR(params_wide.as_mut_ptr()),
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+
+    if (result.0 as usize) <= 32 {
+        ui_notify::show_blocking_error(
+            "Zenvora",
+            &messages::M701_ADMIN_REQUIRED.display(),
+        );
+    }
+    std::process::exit(0);
+}
+
 /// Install under ProgramData\Zenvora (never System32 — that triggers Defender ML).
 #[cfg(windows)]
 fn relocate_to_install_dir() -> ! {
@@ -115,25 +215,49 @@ fn relocate_to_install_dir() -> ! {
     let target_path = paths::agent_exe_path();
     let _ = fs::create_dir_all(paths::agent_dir());
 
+    // Running service locks ZenvoraAgent.exe — stop before overwrite.
+    if service::service_exists() {
+        service::stop_service();
+        thread::sleep(std::time::Duration::from_millis(800));
+    }
+
     if let Err(err) = fs::copy(&current_exe, &target_path) {
-        ui_notify::show_blocking_error(
-            "Zenvora Agent",
-            &format!("Failed to install agent to {}:\n{}", target_path.display(), err),
-        );
-        std::process::exit(1);
+        let denied = err.raw_os_error() == Some(5) || err.kind() == std::io::ErrorKind::PermissionDenied;
+        if denied && !is_process_elevated() {
+            relaunch_elevated_and_exit();
+        }
+        // Elevated but still denied — often a leftover lock; one more stop+retry.
+        if denied {
+            service::stop_service();
+            thread::sleep(std::time::Duration::from_millis(1200));
+            if fs::copy(&current_exe, &target_path).is_ok() {
+                // fall through to launch
+            } else {
+                ui_notify::show_blocking_error(
+                    "Zenvora",
+                    &messages::M702_INSTALL_DENIED.display(),
+                );
+                std::process::exit(1);
+            }
+        } else {
+            ui_notify::show_blocking_error(
+                "Zenvora",
+                &messages::M703_INSTALL_COPY_FAILED.with_detail(&err.to_string()),
+            );
+            std::process::exit(1);
+        }
     }
 
     let mut args: Vec<String> = env::args().skip(1).collect();
     if !args.iter().any(|arg| arg == "--from-install-dir") {
         args.push("--from-install-dir".to_string());
     }
-    // Keep legacy flag accepted for older scripts.
-    args.retain(|a| a != "--from-system32");
+    args.retain(|a| a != "--from-system32" && a != "--elevated-relaunch");
 
     if Command::new(&target_path).args(&args).spawn().is_err() {
         ui_notify::show_blocking_error(
-            "Zenvora Agent",
-            "Failed to launch agent from install directory.",
+            "Zenvora",
+            &messages::M704_LAUNCH_FAILED.display(),
         );
         std::process::exit(1);
     }
@@ -153,7 +277,7 @@ fn wait_for_connection_report(timeout_secs: u64) -> Option<String> {
                 connection_progress::step(
                     6,
                     8,
-                    &format!("Waiting for gateway… {}s", i / 2),
+                    &messages::M109_HANDSHAKE.with_detail(&format!("{}s", i / 2)),
                     "running",
                 );
             }
@@ -169,7 +293,7 @@ fn show_connection_report(status: &str) {
         let parts: Vec<&str> = rest.splitn(2, '|').collect();
         let device = parts.first().copied().unwrap_or("device");
         let gateway = parts.get(1).copied().unwrap_or("gateway");
-        connection_progress::step(7, 8, "Gateway connection established", "ok");
+        connection_progress::step_msg(7, 8, messages::M110_GATEWAY_OK);
         connection_progress::finish_success(device, gateway);
         if !connection_progress::is_headless() {
             connection_progress::wait_gui_closed();
@@ -178,8 +302,8 @@ fn show_connection_report(status: &str) {
     }
 
     if let Some(reason) = status.strip_prefix("failed|") {
-        connection_progress::step(7, 8, reason, "fail");
-        connection_progress::finish_failed(reason);
+        connection_progress::step(7, 8, &messages::M501_CONNECT_FAILED.with_detail(reason), "fail");
+        connection_progress::finish_failed_msg_detail(messages::M501_CONNECT_FAILED, reason);
         if !connection_progress::is_headless() {
             connection_progress::wait_gui_closed();
         }
@@ -192,15 +316,8 @@ fn ensure_agent_running() -> Result<(), String> {
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| e.to_string())?;
 
-    // Fast path first — do not block on SCM.
-    connection_progress::step(3, 8, "Starting agent worker (fast path)...", "running");
-    if let Err(err) = service::spawn_background_agent(&exe) {
-        connection_progress::step(3, 8, &format!("Fast launch failed: {}", err), "warn");
-    } else {
-        connection_progress::step(3, 8, "Agent worker launched", "ok");
-    }
-
-    connection_progress::step(4, 8, "Installing Windows service for auto-start...", "running");
+    connection_progress::step_msg(4, 8, messages::M104_SERVICE_INSTALLING);
+    let mut service_ok = false;
     match service::install_service() {
         Ok(()) => {
             let started = if service::service_running() {
@@ -215,24 +332,45 @@ fn ensure_agent_running() -> Result<(), String> {
                 })
             };
             match started {
-                Ok(()) => connection_progress::step(4, 8, "Windows service running", "ok"),
-                Err(err) => connection_progress::step(
+                Ok(()) => {
+                    connection_progress::step_msg(3, 8, messages::M116_SERVICE_WORKER_OK);
+                    connection_progress::step_msg(4, 8, messages::M105_SERVICE_RUNNING);
+                    service_ok = true;
+                }
+                Err(err) => connection_progress::step_msg_detail(
                     4,
                     8,
-                    &format!("Service optional — agent already running ({})", err),
-                    "warn",
+                    messages::M111_SERVICE_FALLBACK,
+                    &err,
                 ),
             }
+        }
+        Err(err) => {
+            connection_progress::step_msg_detail(4, 8, messages::M111_SERVICE_FALLBACK, &err);
+        }
+    }
+
+    // One permanent worker only: if the Windows service is running it already
+    // launches the interactive --run-agent. Do NOT also spawn a second worker —
+    // two agents fight over gateway/media and show as duplicate Task Manager entries.
+    if service_ok {
+        connection_progress::step_msg(3, 8, messages::M107_WORKER_STARTED);
+        return Ok(());
+    }
+
+    connection_progress::step_msg(3, 8, messages::M106_WORKER_STARTING);
+    if service::agent_singleton_held() {
+        connection_progress::step_msg(3, 8, messages::M107_WORKER_STARTED);
+        return Ok(());
+    }
+    match service::spawn_background_agent(&exe) {
+        Ok(()) => {
+            connection_progress::step_msg(3, 8, messages::M107_WORKER_STARTED);
             Ok(())
         }
         Err(err) => {
-            connection_progress::step(
-                4,
-                8,
-                &format!("Service install skipped ({}) — using background agent", err),
-                "warn",
-            );
-            Ok(())
+            connection_progress::step_msg_detail(3, 8, messages::M706_WORKER_LAUNCH_FAILED, &err);
+            Err(messages::M706_WORKER_LAUNCH_FAILED.with_detail(&err))
         }
     }
 }
@@ -242,7 +380,7 @@ fn bootstrap_service_and_report() {
     connection_status::mark_bootstrap_waiting();
     connection_status::reset_connect_report();
     connection_progress::start_gui();
-    connection_progress::step(1, 8, "Preparing agent...", "ok");
+    connection_progress::step_msg(1, 8, messages::M101_PREPARING);
 
     if let Err(err) = ensure_agent_running() {
         connection_progress::step(4, 8, &err, "fail");
@@ -253,8 +391,8 @@ fn bootstrap_service_and_report() {
         return;
     }
 
-    connection_progress::step(5, 8, "Connecting to gateway WebSocket...", "running");
-    connection_progress::step(6, 8, "Waiting for handshake (max ~60s)...", "running");
+    connection_progress::step_msg(5, 8, messages::M108_CONNECTING);
+    connection_progress::step_msg(6, 8, messages::M109_HANDSHAKE);
 
     if let Some(status) = wait_for_connection_report(60) {
         show_connection_report(&status);
@@ -268,9 +406,8 @@ fn bootstrap_service_and_report() {
         }
     }
 
-    let warn = "Still connecting in background. Watch live logs on Pair Device modal — agent keeps retrying.";
-    connection_progress::step(8, 8, warn, "warn");
-    connection_progress::finish_warning(warn);
+    connection_progress::step_msg(8, 8, messages::M502_HANDSHAKE_TIMEOUT);
+    connection_progress::finish_warning_msg(messages::M502_HANDSHAKE_TIMEOUT);
     if !connection_progress::is_headless() {
         connection_progress::wait_gui_closed();
     }
@@ -331,19 +468,22 @@ fn run_async_main(args: &[String]) {
                 if headless {
                     println!("[OK] Service removed.");
                 } else {
-                    ui_notify::show_blocking_info("Zenvora Agent", "Service removed.");
+                    ui_notify::show_blocking_info("Zenvora", &messages::M113_SERVICE_REMOVED.display());
                 }
                 return;
             }
             "start" => {
                 if let Err(err) = service::start_service() {
                     if headless {
-                        eprintln!("[FAIL] {}", err);
+                        eprintln!("{}", messages::M705_SERVICE_START_FAILED.with_detail(&err));
                     } else {
-                        ui_notify::show_blocking_error("Zenvora Agent", &err);
+                        ui_notify::show_blocking_error(
+                            "Zenvora",
+                            &messages::M705_SERVICE_START_FAILED.with_detail(&err),
+                        );
                     }
                 } else if headless {
-                    println!("[OK] Service started.");
+                    println!("[OK] {}", messages::M105_SERVICE_RUNNING.display());
                 }
                 return;
             }
@@ -357,9 +497,12 @@ fn run_async_main(args: &[String]) {
             "restart" => {
                 if let Err(err) = service::restart_service() {
                     if headless {
-                        eprintln!("[FAIL] {}", err);
+                        eprintln!("{}", messages::M707_SERVICE_OP_FAILED.with_detail(&err));
                     } else {
-                        ui_notify::show_blocking_error("Zenvora Agent", &err);
+                        ui_notify::show_blocking_error(
+                            "Zenvora",
+                            &messages::M707_SERVICE_OP_FAILED.with_detail(&err),
+                        );
                     }
                 } else if headless {
                     println!("[OK] Service restarted.");
@@ -375,11 +518,11 @@ fn run_async_main(args: &[String]) {
     if headless {
         #[cfg(windows)]
         {
-            connection_progress::step(1, 8, "Headless provision started", "running");
+            connection_progress::step_msg(1, 8, messages::M100_PROVISION_STARTED);
             runtime.block_on(async {
-                connection_progress::step(2, 8, "Pairing / loading credentials...", "running");
+                connection_progress::step_msg(2, 8, messages::M102_PAIRING);
                 let _ = config::AgentConfig::load_or_pair().await;
-                connection_progress::step(2, 8, "Credentials ready (agent.dat)", "ok");
+                connection_progress::step_msg(2, 8, messages::M103_CREDENTIALS_READY);
             });
             if let Ok(current_exe) = env::current_exe() {
                 if !is_in_install_dir(&current_exe) {
@@ -437,6 +580,7 @@ fn main() {
                 | "--run-agent"
                 | "--from-system32"
                 | "--from-install-dir"
+                | "--elevated-relaunch"
                 | "--headless"
                 | "--provision"
         )

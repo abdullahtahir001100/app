@@ -182,12 +182,7 @@ impl AgentConfig {
 
             if should_http_pair {
                 println!("--> [CONFIG] Headless/CLI pair flags detected — refreshing credentials + gateway");
-                crate::connection_progress::step(
-                    2,
-                    8,
-                    "Refreshing pair + gateway from install command...",
-                    "running",
-                );
+                crate::connection_progress::step_msg(2, 8, crate::messages::M114_CREDENTIALS_REFRESH);
                 match Self::pair_from_env_or_args().await {
                     Ok(config) => {
                         println!("--> [CONFIG] Using gateway {}", config.gateway_url);
@@ -195,11 +190,11 @@ impl AgentConfig {
                     }
                     Err(err) => {
                         println!("--> [CONFIG] Re-pair failed ({}), falling back to agent.dat", err);
-                        crate::connection_progress::step(
+                        crate::connection_progress::step_msg_detail(
                             2,
                             8,
-                            &format!("Re-pair failed: {} — trying saved agent.dat", err),
-                            "warn",
+                            crate::messages::M402_PAIR_FAILED,
+                            &err,
                         );
                     }
                 }
@@ -214,7 +209,7 @@ impl AgentConfig {
                     "--> [CONFIG] Skipping re-pair (already provisioned) — using {}",
                     get_config_path().to_string_lossy()
                 );
-                crate::connection_progress::step(2, 8, "Credentials ready (agent.dat)", "ok");
+                crate::connection_progress::step_msg(2, 8, crate::messages::M103_CREDENTIALS_READY);
                 return config;
             }
         }
@@ -227,11 +222,11 @@ impl AgentConfig {
                         "--> [CONFIG] Overriding gateway\n    old: {}\n    new: {}",
                         config.gateway_url, gw
                     );
-                    crate::connection_progress::step(
+                    crate::connection_progress::step_msg_detail(
                         2,
                         8,
-                        &format!("Updating gateway → {}", gw),
-                        "running",
+                        crate::messages::M114_CREDENTIALS_REFRESH,
+                        &gw,
                     );
                     config.gateway_url = gw;
                     changed = true;
@@ -239,7 +234,7 @@ impl AgentConfig {
             }
             if changed {
                 let _ = config.save();
-                crate::connection_progress::step(2, 8, "agent.dat gateway updated", "ok");
+                crate::connection_progress::step_msg(2, 8, crate::messages::M115_GATEWAY_UPDATED);
             } else {
                 println!(
                     "--> [CONFIG] Loaded existing paired credentials from {}",
@@ -281,12 +276,8 @@ impl AgentConfig {
 
         // Windows services cannot show InputBox dialogs (Session 0).
         if is_service_session() {
-            crate::connection_status::report_failed(
-                "Agent is not paired. Run the dashboard PowerShell install command, or: ZenvoraAgent.exe --console",
-            );
-            crate::connection_progress::finish_failed(
-                "Agent is not paired. Use the dashboard install command or --console to pair.",
-            );
+            crate::connection_status::report_failed(&crate::messages::M401_PAIR_REQUIRED.display());
+            crate::connection_progress::finish_failed_msg(crate::messages::M401_PAIR_REQUIRED);
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 if let Some(config) = Self::load_existing() {
@@ -296,9 +287,7 @@ impl AgentConfig {
         }
 
         if crate::connection_progress::is_headless() {
-            crate::connection_progress::finish_failed(
-                "Missing pair credentials. Pass --pair-token and --pair-user-id.",
-            );
+            crate::connection_progress::finish_failed_msg(crate::messages::M401_PAIR_REQUIRED);
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 if let Some(config) = Self::load_existing() {
@@ -337,7 +326,7 @@ impl AgentConfig {
         let gateway_override = get_flag("--gateway-url")
             .or_else(|| std::env::var("ZENVORA_GATEWAY_URL").ok());
 
-        crate::connection_progress::step(2, 6, "Pairing with cloud API...", "running");
+        crate::connection_progress::step_msg(2, 6, crate::messages::M102_PAIRING);
         let mut config = Self::pair_with_credentials(
             &pairing_token,
             &pairing_user_id,
@@ -345,8 +334,18 @@ impl AgentConfig {
         )
         .await?;
         if let Some(gw) = gateway_override {
-            config.gateway_url = gw;
-            let _ = config.save();
+            let api_public = !api_base_url.contains("localhost")
+                && !api_base_url.contains("127.0.0.1");
+            let gw_loopback = gw.contains("localhost") || gw.contains("127.0.0.1");
+            if api_public && gw_loopback {
+                println!(
+                    "--> [CONFIG] Ignoring loopback --gateway-url ({}); keeping {}",
+                    gw, config.gateway_url
+                );
+            } else {
+                config.gateway_url = gw;
+                let _ = config.save();
+            }
         }
         crate::install_telemetry::configure(
             &api_base_url,
@@ -360,7 +359,7 @@ impl AgentConfig {
                 .map(|w| w[1].clone())
                 .unwrap_or_default(),
         );
-        crate::connection_progress::step(2, 6, "Credentials saved to agent.dat", "ok");
+        crate::connection_progress::step_msg(2, 6, crate::messages::M103_CREDENTIALS_READY);
         Ok(config)
     }
 
@@ -451,6 +450,22 @@ impl AgentConfig {
             // Plain HTTP local servers cannot terminate TLS — force ws://
             if api_base_url.starts_with("http://") && gateway_url.starts_with("wss://") {
                 gateway_url = gateway_url.replacen("wss://", "ws://", 1);
+            }
+            // Never keep a loopback gateway when we paired against a public API.
+            let api_public = !api_base_url.contains("localhost")
+                && !api_base_url.contains("127.0.0.1");
+            let gw_loopback =
+                gateway_url.contains("localhost") || gateway_url.contains("127.0.0.1");
+            if api_public && gw_loopback {
+                if let Ok(api) = url::Url::parse(api_base_url) {
+                    let host = api.host_str().unwrap_or("zenvora.abdullahtahir.me");
+                    let scheme = if api.scheme() == "https" { "wss" } else { "ws" };
+                    gateway_url = format!("{}://{}/ws/gateway", scheme, host);
+                    println!(
+                        "--> [CONFIG] Rewrote loopback gateway from pair response → {}",
+                        gateway_url
+                    );
+                }
             }
 
             let new_config = Self {
