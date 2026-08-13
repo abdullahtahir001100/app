@@ -2,8 +2,11 @@
  * Shared Zenvora production messages (Node server).
  * Source of truth: shared/zenvora-messages.json + MESSAGES.md
  */
+const fs = require('fs');
 const path = require('path');
-const catalog = require(path.join(__dirname, '..', '..', 'shared', 'zenvora-messages.json'));
+
+const filePath = path.join(process.cwd(), 'shared', 'zenvora-messages.json');
+const catalog = JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
 const MESSAGES = catalog.messages || {};
 const PREFIX = catalog.prefix || 'ZENVORA';
