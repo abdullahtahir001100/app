@@ -8,30 +8,40 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { AuthLayout } from "@/components/auth-layout";
-import { HelpCircle, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setFormError("");
     setLoading(true);
     try {
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email }),
       });
-      const data = await res.json();
+      const raw = await res.text();
+      let data: { success?: boolean; message?: string } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error("Password reset service is unavailable. Try again.");
+      }
       if (!res.ok || !data.success) {
         throw new Error(data.message || "Request failed");
       }
-      toast.success("Recovery code sent to your registered email!");
+      toast.success(data.message || "Recovery code sent to your registered email.");
       router.push(`/verify-otp?email=${encodeURIComponent(email)}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Request failed");
+      const message = err instanceof Error ? err.message : "Request failed";
+      setFormError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -43,6 +53,11 @@ export default function ForgotPasswordPage() {
       subtitle="Enter your verified security email to recover your credentials and unlock agent nodes."
     >
       <div className="space-y-6">
+        {formError && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-200">
+            {formError}
+          </div>
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email" className="text-xs uppercase font-mono tracking-wider text-muted-foreground">
@@ -53,7 +68,10 @@ export default function ForgotPasswordPage() {
               type="email"
               placeholder="operator@zenvora.local"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />

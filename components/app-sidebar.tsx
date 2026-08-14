@@ -266,6 +266,7 @@ function AppSidebarContent() {
     }
 
     try {
+      gatewayClient.setAuthEnabled(false);
       clearDeviceRegistryCache();
       gatewayClient.clearCachedDevices();
       sessionStorage.removeItem("zenvora_camera_streaming");

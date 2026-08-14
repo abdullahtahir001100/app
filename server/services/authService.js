@@ -5,6 +5,7 @@ const User = require('../models/User');
 const AgentCredential = require('../models/AgentCredential');
 const Device = require('../models/Device');
 const { ensureMongooseConnected } = require('../db/mongo/connection');
+const { sendPasswordResetOtp } = require('./mailService');
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
@@ -324,8 +325,16 @@ async function upsertGoogleUser(profile) {
 
 async function requestPasswordReset(email) {
     const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) {
+        const error = new Error('Email is required.');
+        error.status = 400;
+        throw error;
+    }
+
     const user = await User.findOne({ email: normalized });
-    if (!user) return { success: true, message: 'If that email exists, a reset code was generated.' };
+    // Always look successful to the client so emails cannot be enumerated.
+    const generic = { success: true, message: 'If that email exists, a reset code was sent.' };
+    if (!user) return generic;
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpHash = await bcrypt.hash(otp, 10);
@@ -334,11 +343,13 @@ async function requestPasswordReset(email) {
         passwordResetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     });
 
-    if (process.env.NODE_ENV === 'production') {
-        return { success: true, message: 'If that email exists, a reset code was generated.' };
-    }
+    await sendPasswordResetOtp({
+        to: user.email,
+        otp,
+        name: user.name,
+    });
 
-    return { success: true, message: 'If that email exists, a reset code was generated.', otp };
+    return generic;
 }
 
 async function verifyPasswordResetOtp(email, otp) {

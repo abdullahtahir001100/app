@@ -94,10 +94,11 @@ function registerSecurityMiddleware(app) {
 
     app.use('/api', validateSameSiteOrigin);
 
-    // Skip body parsers for Next App Router exclusive APIs — Express must not
+    // Skip body parsers for Next pages and Next-only APIs — Express must not
     // lock/disturb the request stream before nextHandler reads it.
     const skipBodyParse = (req) => {
         const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+        if (!pathOnly.startsWith('/api')) return true;
         return (
             pathOnly === '/api/agent/chat' ||
             pathOnly.startsWith('/api/agent/chat/')

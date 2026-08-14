@@ -12,6 +12,8 @@ const {
     clearUserAuthSession,
     rotateUserPairingFields,
     updateUserPairingFields,
+    requestPasswordReset,
+    resetPassword,
     AUTH_COOKIE,
     authCookieOptions,
     pairAgent
@@ -89,6 +91,32 @@ router.post('/login', async (req, res) => {
                 pairingToken: user.pairingToken,
                 pairingUserId: user.pairingUserId
             }
+        });
+    } catch (error) {
+        return jsonMsg(res, error.status || 500, Z.AUTH_FAILED, error.message);
+    }
+});
+
+router.post('/forgot-password', async (req, res) => {
+    try {
+        const result = await requestPasswordReset(req.body?.email);
+        return res.status(200).json({
+            success: true,
+            code: 308,
+            message: result.message || '[ZENVORA-308] New code sent',
+        });
+    } catch (error) {
+        return jsonMsg(res, error.status || 500, Z.AUTH_FAILED, error.message);
+    }
+});
+
+router.post('/reset-password', async (req, res) => {
+    try {
+        await resetPassword(req.body?.email, req.body?.otp, req.body?.newPassword);
+        return res.status(200).json({
+            success: true,
+            code: 203,
+            message: '[ZENVORA-203] Verification successful',
         });
     } catch (error) {
         return jsonMsg(res, error.status || 500, Z.AUTH_FAILED, error.message);

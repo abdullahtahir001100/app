@@ -234,6 +234,8 @@ class GatewayClient {
   private cachedWsTicket: string | null = null;
   private cachedWsTicketAt = 0;
   private preferTicket = false;
+  /** Only open dashboard WS after AuthGuard confirms a signed-in session. */
+  private authEnabled = false;
 
   constructor() {
     const cached = readDeviceCache();
@@ -246,6 +248,40 @@ class GatewayClient {
       this.fullDevices = [];
     }
     this.bindLifecycleHandlers();
+  }
+
+  /** Gate WS connect/reconnect — off on login/register until session is verified. */
+  setAuthEnabled(enabled: boolean) {
+    this.authEnabled = enabled;
+    if (!enabled) {
+      this.disconnect();
+    }
+  }
+
+  isAuthEnabled() {
+    return this.authEnabled;
+  }
+
+  disconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.connecting = false;
+    this.connectGeneration += 1;
+    this.reconnectAttempt = 0;
+    this.cachedWsTicket = null;
+    this.cachedWsTicketAt = 0;
+    const ws = this.ws;
+    this.ws = null;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      try {
+        ws.close(1000, "session-ended");
+      } catch {
+        // ignore
+      }
+    }
+    this.emit({ type: "disconnected" });
   }
 
   /** Call after login/session resolve so cache never crosses users. */
@@ -280,6 +316,7 @@ class GatewayClient {
     this.lifecycleBound = true;
 
     const resumeIfDead = () => {
+      if (!this.authEnabled) return;
       const state = this.ws?.readyState;
       // Never abort OPEN/CONNECTING — persistence first.
       if (state === WebSocket.OPEN || state === WebSocket.CONNECTING || this.connecting) {
@@ -309,7 +346,9 @@ class GatewayClient {
 
   subscribe(listener: GatewayListener): () => void {
     this.listeners.add(listener);
-    this.ensureConnected();
+    if (this.authEnabled) {
+      this.ensureConnected();
+    }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
       listener({ type: "connected" });
@@ -337,6 +376,7 @@ class GatewayClient {
 
   ensureConnected() {
     if (typeof window === "undefined") return;
+    if (!this.authEnabled) return;
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
@@ -375,6 +415,7 @@ class GatewayClient {
 
   private async connect() {
     if (typeof window === "undefined") return;
+    if (!this.authEnabled) return;
     // Single-flight: never open a second socket while one is connecting/open.
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
@@ -507,7 +548,14 @@ class GatewayClient {
           packet.type === "sys_ack" &&
           (packet.status === "auth_failed" || packet.status === "auth_timeout")
         ) {
-          logMsg(Z.AUTH_REJECTED, String(packet.message || packet.status));
+          const detail = String(packet.message || packet.status);
+          const needsLogin =
+            detail.includes("dashboard authentication required") ||
+            detail.includes("invalid_or_expired") ||
+            !this.authEnabled;
+          if (!needsLogin) {
+            logMsg(Z.AUTH_REJECTED, detail);
+          }
           this.preferTicket = true;
           this.cachedWsTicket = null;
           this.cachedWsTicketAt = 0;
@@ -517,7 +565,11 @@ class GatewayClient {
           } catch {
             // ignore
           }
-          // Immediately reconnect with a fresh ticket (don't wait full backoff).
+          if (!this.authEnabled || needsLogin) {
+            this.reconnectAttempt = 0;
+            return;
+          }
+          // Signed-in session: retry once with a fresh ticket.
           this.reconnectAttempt = 0;
           setTimeout(() => this.ensureConnected(), 300);
           return;
@@ -644,12 +696,15 @@ class GatewayClient {
       this.connecting = false;
       if (this.ws === ws) this.ws = null;
       this.emit({ type: "disconnected" });
-      // Singleton must stay alive across React remounts / BFCache — always resume.
-      this.scheduleReconnect();
+      if (this.authEnabled) {
+        // Singleton must stay alive across React remounts / BFCache — resume when signed in.
+        this.scheduleReconnect();
+      }
     };
   }
 
   private scheduleReconnect() {
+    if (!this.authEnabled) return;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     // Already open/connecting — nothing to do.
     if (

@@ -51,6 +51,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (isPublicPath(pathname)) {
+      gatewayClient.setAuthEnabled(false);
       setAuthorized(true);
       setForbidden(false);
       setReady(true);
@@ -73,7 +74,9 @@ export function AuthGuard({ children }: { children: ReactNode }) {
         if (response.ok && data?.authenticated) {
           const userId = data?.user?.id ? String(data.user.id) : null;
           bindDeviceCacheUser(userId);
+          gatewayClient.setAuthEnabled(true);
           gatewayClient.bindUser(userId);
+          gatewayClient.ensureConnected();
           if (!isPoll) {
             void gatewayClient.refreshDevices({ force: true });
           }
@@ -90,6 +93,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
           return;
         }
 
+        gatewayClient.setAuthEnabled(false);
         clearDeviceRegistryCache();
         gatewayClient.clearCachedDevices();
         const reason =
