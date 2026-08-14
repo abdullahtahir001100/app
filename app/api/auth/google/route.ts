@@ -11,6 +11,8 @@ const {
   authCookieOptions,
   ensureAuthDatabase
 } = require("../../../../server/services/authService");
+const { getConnectionRegistry } = require("../../../../server/sockets/registry");
+const { forceLogoutUserDashboards } = require("../../../../server/sockets/fanout");
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -125,6 +127,11 @@ export async function GET(request: NextRequest) {
 
     const token = signUserToken(user);
     await setUserAuthSession(user, token);
+    try {
+      forceLogoutUserDashboards(getConnectionRegistry(), String(user._id), "session_replaced");
+    } catch {
+      // registry may be unavailable in some Next-only deployments
+    }
 
     const response = NextResponse.redirect(new URL("/dashboard", appOrigin));
     response.cookies.set(AUTH_COOKIE, token, authCookieOptions());

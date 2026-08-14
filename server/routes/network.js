@@ -82,6 +82,17 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
         const query = seeAll ? {} : { userId: req.user.id };
         const deviceRecords = await Device.find(query).sort({ lastSeen: -1 }).lean();
 
+        const metricPercent = (value) => {
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                return Math.max(0, Math.min(100, value));
+            }
+            if (typeof value === 'string' && value.trim() !== '') {
+                const n = Number(value);
+                if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
+            }
+            return null;
+        };
+
         const devices = deviceRecords.map((record) => {
             const deviceId = String(record.deviceId || '');
             const isLive = liveDeviceIds.has(deviceId);
@@ -93,8 +104,8 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
                 status: isLive ? 'online' : 'offline',
                 localIp: record.localIp || '',
                 publicIp: record.publicIp || '',
-                battery: record.battery,
-                storage: record.storage,
+                battery: metricPercent(record.battery),
+                storage: metricPercent(record.storage),
                 network: record.network || '',
                 latitude: record.latitude,
                 longitude: record.longitude,

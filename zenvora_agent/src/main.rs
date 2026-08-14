@@ -28,6 +28,7 @@ mod ui_notify;
 mod input;
 mod connection_status;
 mod connection_progress;
+mod agent_update;
 mod install_telemetry;
 mod session_launch;
 mod paths;

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthLayout } from "@/components/auth-layout";
 import { ShieldCheck } from "lucide-react";
-import { alertFromApi, alertMsg, Z } from "@/lib/messages";
+import { alertFromApi, alertMsg, msgText, Z } from "@/lib/messages";
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   "google-auth-failed": "Google sign-in failed. Please try again.",
@@ -18,7 +18,14 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   "database-unavailable":
     "Database is not connected. Check MONGODB_URI in .env and ensure MongoDB Atlas allows your IP.",
   "auth-not-configured": "Server auth is not configured. Set JWT_SECRET in .env.",
+  "session-replaced": msgText(Z.SESSION_REPLACED),
 };
+
+function extractErrorMessage(data: { code?: number; message?: string } | null | undefined): string {
+  if (data?.message && String(data.message).trim()) return String(data.message).trim();
+  if (data?.code != null) return msgText(data.code);
+  return msgText(Z.AUTH_FAILED);
+}
 
 export default function LoginForm() {
   const router = useRouter();
@@ -28,17 +35,20 @@ export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState("");
 
   useEffect(() => {
     if (!authError) return;
     const detail =
       AUTH_ERROR_MESSAGES[authError] ||
       `Sign-in failed (${authError}). Please try again.`;
+    setFormError(detail);
     alertMsg(Z.AUTH_FAILED, detail);
   }, [authError]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setFormError("");
     setLoading(true);
     try {
       const res = await fetch("/api/auth/login", {
@@ -47,15 +57,19 @@ export default function LoginForm() {
         credentials: "include",
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
+        const message = extractErrorMessage(data);
+        setFormError(message);
         alertFromApi(data, Z.AUTH_FAILED);
         return;
       }
       alertMsg(Z.SIGNED_IN);
       router.replace(nextPath);
     } catch (err) {
-      alertMsg(Z.AUTH_FAILED, err instanceof Error ? err.message : undefined);
+      const message = err instanceof Error ? err.message : msgText(Z.AUTH_FAILED);
+      setFormError(message);
+      alertMsg(Z.AUTH_FAILED, message);
     } finally {
       setLoading(false);
     }
@@ -72,9 +86,10 @@ export default function LoginForm() {
       subtitle="Identify yourself to enter the Zenvora central control console."
     >
       <div className="space-y-6">
-        {authError && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-            {AUTH_ERROR_MESSAGES[authError] ||
+        {(authError || formError) && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-200">
+            {formError ||
+              AUTH_ERROR_MESSAGES[authError || ""] ||
               `Sign-in failed (${authError}). Please try again.`}
           </div>
         )}
@@ -89,7 +104,10 @@ export default function LoginForm() {
               placeholder="operator@zenvora.local"
               autoComplete="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />
@@ -100,10 +118,7 @@ export default function LoginForm() {
               <Label htmlFor="password" className="text-xs uppercase font-mono tracking-wider text-muted-foreground">
                 Access Token / Password
               </Label>
-              <Link
-                href="/forgot-password"
-                className="text-xs font-mono transition-colors"
-              >
+              <Link href="/forgot-password" className="text-xs font-mono transition-colors">
                 Forgot?
               </Link>
             </div>
@@ -113,7 +128,10 @@ export default function LoginForm() {
               placeholder="••••••••"
               autoComplete="current-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />
@@ -138,7 +156,6 @@ export default function LoginForm() {
           </Button>
         </form>
 
-        {/* Separator */}
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
             <span className="w-full border-t border-border/60" />
@@ -150,7 +167,6 @@ export default function LoginForm() {
           </div>
         </div>
 
-        {/* Google Authentication Button */}
         <Button
           type="button"
           variant="outline"
@@ -178,7 +194,6 @@ export default function LoginForm() {
           <span className="font-medium text-sm font-sans">Continue with Google Account</span>
         </Button>
 
-        {/* Action Footnotes */}
         <div className="flex items-center justify-between text-xs font-mono pt-4 border-t border-border/40">
           <Link href="/register" className=" hover:underline">
             Register Agent

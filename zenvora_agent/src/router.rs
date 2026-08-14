@@ -18,7 +18,7 @@ pub fn is_history_action(action: &str) -> bool {
 pub fn is_agent_control_action(action: &str) -> bool {
     matches!(
         action,
-        "RESTART_AGENT" | "RESTART_SERVICE" | "SET_PREFERRED_MEDIA_TRANSPORT"
+        "RESTART_AGENT" | "RESTART_SERVICE" | "SET_PREFERRED_MEDIA_TRANSPORT" | "UPDATE_AGENT"
     )
 }
 
@@ -42,6 +42,34 @@ pub fn handle_agent_control_command(action: &str, payload: &serde_json::Value) -
                 frame: None,
                 frame_kind: 0,
             })
+        }
+        "UPDATE_AGENT" => {
+            let url = payload
+                .get("download_url")
+                .or_else(|| payload.get("downloadUrl"))
+                .and_then(|v| v.as_str());
+            match crate::agent_update::schedule_silent_update(url) {
+                Ok(()) => Some(CommandResponse {
+                    json: serde_json::json!({
+                        "type": "sys_ack",
+                        "status": "success",
+                        "action": action,
+                        "message": "Silent agent update scheduled."
+                    }),
+                    frame: None,
+                    frame_kind: 0,
+                }),
+                Err(err) => Some(CommandResponse {
+                    json: serde_json::json!({
+                        "type": "sys_ack",
+                        "status": "error",
+                        "action": action,
+                        "message": format!("Update failed: {}", err)
+                    }),
+                    frame: None,
+                    frame_kind: 0,
+                }),
+            }
         }
         "SET_PREFERRED_MEDIA_TRANSPORT" => {
             let transport = payload

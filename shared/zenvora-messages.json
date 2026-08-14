@@ -25,6 +25,9 @@
     "203": { "kind": "success", "text": "Verification successful", "meaning": "OTP verified / credentials unlocked" },
     "204": { "kind": "success", "text": "Command copied", "meaning": "Install/short command copied to clipboard" },
     "205": { "kind": "success", "text": "Restart command sent", "meaning": "Dashboard sent restart to agent" },
+    "206": { "kind": "success", "text": "Pairing credentials rotated", "meaning": "New pairing token / user id issued" },
+    "207": { "kind": "success", "text": "Pairing credentials updated", "meaning": "User saved custom pairing fields" },
+    "208": { "kind": "success", "text": "Agent update started", "meaning": "Silent agent reinstall/update dispatched" },
 
     "301": { "kind": "error", "text": "Authentication required", "meaning": "Missing or invalid user session/token" },
     "302": { "kind": "error", "text": "Authentication failed", "meaning": "Login rejected (bad password/credentials)" },
@@ -35,6 +38,7 @@
     "307": { "kind": "info", "text": "Redirecting to Google sign-in", "meaning": "OAuth redirect started" },
     "308": { "kind": "success", "text": "New code sent", "meaning": "OTP resent to email" },
     "309": { "kind": "error", "text": "Could not resend code", "meaning": "OTP resend API failed" },
+    "310": { "kind": "warn", "text": "Signed in elsewhere — this session was closed", "meaning": "Single-session kick / authTokenHash mismatch" },
 
     "401": { "kind": "error", "text": "Pairing required — run install from the dashboard", "meaning": "No valid agent credentials" },
     "402": { "kind": "error", "text": "Pairing failed", "meaning": "Pair API rejected or network failed" },

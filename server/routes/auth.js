@@ -10,14 +10,27 @@ const {
     listUserDevices,
     setUserAuthSession,
     clearUserAuthSession,
+    rotateUserPairingFields,
+    updateUserPairingFields,
     AUTH_COOKIE,
     authCookieOptions,
     pairAgent
 } = require('../services/authService');
 const { attachUser, extractToken } = require('../middleware/auth');
 const { jsonMsg, Z } = require('../utils/messages');
+const { getConnectionRegistry } = require('../sockets/registry');
+const { forceLogoutUserDashboards } = require('../sockets/fanout');
 
 const router = express.Router();
+
+function kickOtherSessions(userId) {
+    try {
+        const registry = getConnectionRegistry();
+        forceLogoutUserDashboards(registry, userId, 'session_replaced');
+    } catch (_) {
+        // registry may be unavailable during early boot
+    }
+}
 
 router.post('/agent/pair', async (req, res) => {
     try {
@@ -37,6 +50,7 @@ router.post('/register', async (req, res) => {
         const user = await registerUser(req.body || {});
         const token = signUserToken(user);
         await setUserAuthSession(user, token);
+        kickOtherSessions(String(user._id));
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
         return res.status(200).json({
             success: true,
@@ -61,6 +75,7 @@ router.post('/login', async (req, res) => {
         const user = await loginUser(req.body || {});
         const token = signUserToken(user);
         await setUserAuthSession(user, token);
+        kickOtherSessions(String(user._id));
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
         return res.status(200).json({
             success: true,
@@ -155,7 +170,13 @@ router.post('/agents', attachUser, async (req, res) => {
 router.get('/session', attachUser, async (req, res) => {
     const payload = await verifyUserToken(req.authToken || req.cookies?.[AUTH_COOKIE]);
     if (!payload?.sub) {
-        return res.status(401).json({ success: false, authenticated: false });
+        return res.status(401).json({
+            success: false,
+            authenticated: false,
+            code: 310,
+            reason: 'session_invalid',
+            message: 'Signed in elsewhere — this session was closed.',
+        });
     }
 
     const user = await User.findById(payload.sub).lean();
@@ -173,6 +194,50 @@ router.get('/session', attachUser, async (req, res) => {
             pairingUserId: user?.pairingUserId || null
         }
     });
+});
+
+/** Rotate pairing token + pairing user id (agent re-pair required after). */
+router.post('/pairing/rotate', attachUser, async (req, res) => {
+    try {
+        const user = await rotateUserPairingFields(req.user.id);
+        return res.status(200).json({
+            success: true,
+            code: 206,
+            message: '[ZENVORA-206] Pairing credentials rotated',
+            user: {
+                id: String(user._id),
+                pairingToken: user.pairingToken,
+                pairingUserId: user.pairingUserId,
+            },
+        });
+    } catch (error) {
+        return res.status(error.status || 500).json({
+            success: false,
+            message: error.message || 'Could not rotate pairing credentials.',
+        });
+    }
+});
+
+/** Manually set pairing token / pairing user id (unique). */
+router.put('/pairing', attachUser, async (req, res) => {
+    try {
+        const user = await updateUserPairingFields(req.user.id, req.body || {});
+        return res.status(200).json({
+            success: true,
+            code: 207,
+            message: '[ZENVORA-207] Pairing credentials updated',
+            user: {
+                id: String(user._id),
+                pairingToken: user.pairingToken,
+                pairingUserId: user.pairingUserId,
+            },
+        });
+    } catch (error) {
+        return res.status(error.status || 500).json({
+            success: false,
+            message: error.message || 'Could not update pairing credentials.',
+        });
+    }
 });
 
 module.exports = router;

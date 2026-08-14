@@ -8,7 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthLayout } from "@/components/auth-layout";
 import { UserPlus } from "lucide-react";
-import { alertFromApi, alertMsg, Z } from "@/lib/messages";
+import { alertFromApi, alertMsg, msgText, Z } from "@/lib/messages";
+
+function extractErrorMessage(data: { code?: number; message?: string } | null | undefined): string {
+  if (data?.message && String(data.message).trim()) return String(data.message).trim();
+  if (data?.code != null) return msgText(data.code);
+  return msgText(Z.REGISTER_FAILED);
+}
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -17,12 +23,23 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setFormError("");
 
     if (password !== confirmPassword) {
+      const message = msgText(Z.PASSWORD_MISMATCH);
+      setFormError(message);
       alertMsg(Z.PASSWORD_MISMATCH);
+      return;
+    }
+
+    if (password.length < 6) {
+      const message = "Password must be at least 6 characters.";
+      setFormError(message);
+      alertMsg(Z.REGISTER_FAILED, message);
       return;
     }
 
@@ -34,15 +51,19 @@ export default function RegisterPage() {
         credentials: "include",
         body: JSON.stringify({ email, password, name }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
+        const message = extractErrorMessage(data);
+        setFormError(message);
         alertFromApi(data, Z.REGISTER_FAILED);
         return;
       }
       alertMsg(Z.ACCOUNT_CREATED);
       router.replace("/dashboard");
     } catch (err) {
-      alertMsg(Z.REGISTER_FAILED, err instanceof Error ? err.message : undefined);
+      const message = err instanceof Error ? err.message : msgText(Z.REGISTER_FAILED);
+      setFormError(message);
+      alertMsg(Z.REGISTER_FAILED, message);
     } finally {
       setLoading(false);
     }
@@ -54,6 +75,11 @@ export default function RegisterPage() {
       subtitle="Register to Zenvora to manage your devices, vaults, and agent nodes."
     >
       <div className="space-y-6">
+        {formError && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-200">
+            {formError}
+          </div>
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name" className="text-xs uppercase font-mono tracking-wider text-muted-foreground">
@@ -64,7 +90,10 @@ export default function RegisterPage() {
               type="text"
               placeholder="Alex Mercer"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />
@@ -80,7 +109,10 @@ export default function RegisterPage() {
               placeholder="alex@zenvora.local"
               autoComplete="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />
@@ -95,7 +127,10 @@ export default function RegisterPage() {
               type="password"
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />
@@ -110,7 +145,10 @@ export default function RegisterPage() {
               type="password"
               placeholder="••••••••"
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                if (formError) setFormError("");
+              }}
               className="h-11 rounded-xl bg-card border-border/80 focus-visible:ring-emerald-500/20"
               required
             />
@@ -135,7 +173,6 @@ export default function RegisterPage() {
           </Button>
         </form>
 
-        {/* Footnote links */}
         <div className="flex items-center justify-between text-xs font-mono pt-4 border-t border-border/40">
           <span className="text-muted-foreground">
             Already have an account?{" "}

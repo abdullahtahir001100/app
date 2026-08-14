@@ -22,8 +22,10 @@ type AdminUser = {
   name: string;
   email: string;
   role: string;
+  provider?: string;
   pages?: string[];
   lastLoginAt?: string | null;
+  createdAt?: string | null;
 };
 
 export default function AdminUsersPage() {
@@ -33,6 +35,11 @@ export default function AdminUsersPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [dateField, setDateField] = useState<"lastLoginAt" | "createdAt">("lastLoginAt");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
 
   const load = async () => {
     try {
@@ -87,7 +94,7 @@ export default function AdminUsersPage() {
     }
   };
 
-  // Filter based on search query and role chips
+  // Filter based on search, role, provider, and date range
   const filteredUsers = users.filter((user) => {
     const matchesRole = filterRole === "all" || user.role === filterRole;
     const searchLower = searchQuery.toLowerCase();
@@ -95,7 +102,29 @@ export default function AdminUsersPage() {
       (user.name || "").toLowerCase().includes(searchLower) ||
       (user.email || "").toLowerCase().includes(searchLower);
 
-    return matchesRole && matchesSearch;
+    if (!matchesRole || !matchesSearch) return false;
+
+    if (providerFilter !== "all") {
+      const provider = String((user as AdminUser & { provider?: string }).provider || "local");
+      if (provider !== providerFilter) return false;
+    }
+
+    const rawDate = dateField === "createdAt" ? user.createdAt : user.lastLoginAt;
+    if (dateFrom || dateTo) {
+      if (!rawDate) return false;
+      const ts = new Date(rawDate).getTime();
+      if (Number.isNaN(ts)) return false;
+      if (dateFrom) {
+        const fromTs = new Date(`${dateFrom}T00:00:00`).getTime();
+        if (ts < fromTs) return false;
+      }
+      if (dateTo) {
+        const toTs = new Date(`${dateTo}T23:59:59`).getTime();
+        if (ts > toTs) return false;
+      }
+    }
+
+    return true;
   });
 
   if (isLoading) {
@@ -200,11 +229,76 @@ export default function AdminUsersPage() {
                 className="w-full pl-12 pr-4 py-3 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-foreground/20"
               />
             </div>
-            <Button variant="outline" className="border-border hover:bg-accent/10 gap-2 whitespace-nowrap">
+            <Button
+              variant="outline"
+              className="border-border hover:bg-accent/10 gap-2 whitespace-nowrap"
+              onClick={() => setShowMoreFilters((v) => !v)}
+            >
               <Filter className="w-4 h-4" />
               More Filters
             </Button>
           </div>
+
+          {showMoreFilters && (
+            <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 p-4 border border-border rounded-lg bg-card/40">
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground font-mono uppercase">Date field</label>
+                <select
+                  value={dateField}
+                  onChange={(e) => setDateField(e.target.value as "lastLoginAt" | "createdAt")}
+                  className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm"
+                >
+                  <option value="lastLoginAt">Last login</option>
+                  <option value="createdAt">Created at</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground font-mono uppercase">From</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground font-mono uppercase">To</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground font-mono uppercase">Provider</label>
+                <select
+                  value={providerFilter}
+                  onChange={(e) => setProviderFilter(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm"
+                >
+                  <option value="all">All providers</option>
+                  <option value="local">Local</option>
+                  <option value="google">Google</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-xs"
+                  onClick={() => {
+                    setDateFrom("");
+                    setDateTo("");
+                    setProviderFilter("all");
+                    setDateField("lastLoginAt");
+                  }}
+                >
+                  Clear extra filters
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Role filter chips */}
           <div className="flex gap-2 mb-8 flex-wrap">

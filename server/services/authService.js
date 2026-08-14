@@ -161,6 +161,64 @@ async function ensureUserPairingFields(user) {
     return await User.findById(user._id).lean();
 }
 
+async function rotateUserPairingFields(userId) {
+    if (!userId) {
+        const error = new Error('User required.');
+        error.status = 400;
+        throw error;
+    }
+    const pairingToken = await generateUniqueUserField('pairingToken');
+    const pairingUserId = await generateUniqueUserField('pairingUserId');
+    const user = await User.findByIdAndUpdate(
+        userId,
+        { pairingToken, pairingUserId },
+        { new: true }
+    ).lean();
+    if (!user) {
+        const error = new Error('User not found.');
+        error.status = 404;
+        throw error;
+    }
+    return user;
+}
+
+async function updateUserPairingFields(userId, body = {}) {
+    if (!userId) {
+        const error = new Error('User required.');
+        error.status = 400;
+        throw error;
+    }
+    const pairingToken = String(body.pairingToken || '').trim();
+    const pairingUserId = String(body.pairingUserId || '').trim();
+    if (!/^\d{6}$/.test(pairingToken) || !/^\d{6}$/.test(pairingUserId)) {
+        const error = new Error('Pairing token and user id must be 6-digit codes.');
+        error.status = 400;
+        throw error;
+    }
+
+    const conflict = await User.findOne({
+        _id: { $ne: userId },
+        $or: [{ pairingToken }, { pairingUserId }],
+    }).lean();
+    if (conflict) {
+        const error = new Error('That pairing token or user id is already in use.');
+        error.status = 409;
+        throw error;
+    }
+
+    const user = await User.findByIdAndUpdate(
+        userId,
+        { pairingToken, pairingUserId },
+        { new: true }
+    ).lean();
+    if (!user) {
+        const error = new Error('User not found.');
+        error.status = 404;
+        throw error;
+    }
+    return user;
+}
+
 async function registerUser({ email, password, passwordHash, name, provider = 'local', googleId = '', avatarUrl = '' }) {
     const normalized = String(email || '').trim().toLowerCase();
     const plain = String(password || '');
@@ -574,5 +632,7 @@ module.exports = {
     userOwnsDevice,
     listUserDevices,
     ensureDefaultAdmin,
-    pairAgent
+    pairAgent,
+    rotateUserPairingFields,
+    updateUserPairingFields,
 };

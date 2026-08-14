@@ -4,7 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, Copy, Check, Loader2, ChevronDown, Terminal, DownloadCloud } from "lucide-react";
+import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText, RotateCcw, RefreshCw, Copy, Check, Loader2, ChevronDown, Terminal, DownloadCloud } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -264,7 +264,7 @@ export default function DashboardPage() {
     setOpenMenu(null);
     const result = dispatch("RESTART_AGENT", {}, deviceId);
     if (!result.ok) {
-      const reason = (result as any).reason;
+      const reason = (result as { reason?: string }).reason;
       if (reason === "offline") alertMsg(Z.GATEWAY_UNREACHABLE);
       else if (reason === "agent-offline") alertMsg(Z.AGENT_OFFLINE);
       else alertMsg(Z.COMMAND_FAILED);
@@ -276,6 +276,29 @@ export default function DashboardPage() {
       void refreshDevices(true);
       setRestartingId(null);
     }, 5000);
+  };
+
+  const updateAgent = (deviceId: string) => {
+    ensureConnected();
+    setRestartingId(deviceId);
+    setOpenMenu(null);
+    const downloadUrl =
+      process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL ||
+      `${typeof window !== "undefined" ? window.location.origin : ""}/api/agent/download`;
+    const result = dispatch("UPDATE_AGENT", { download_url: downloadUrl }, deviceId);
+    if (!result.ok) {
+      const reason = (result as { reason?: string }).reason;
+      if (reason === "offline") alertMsg(Z.GATEWAY_UNREACHABLE);
+      else if (reason === "agent-offline") alertMsg(Z.AGENT_OFFLINE);
+      else alertMsg(Z.COMMAND_FAILED);
+      setRestartingId(null);
+      return;
+    }
+    alertMsg(Z.AGENT_UPDATE_SENT);
+    setTimeout(() => {
+      void refreshDevices(true);
+      setRestartingId(null);
+    }, 8000);
   };
 
   return (
@@ -858,6 +881,14 @@ export default function DashboardPage() {
                             >
                               <RotateCcw className={`w-3.5 h-3.5 ${restartingId === device.id ? "animate-spin" : ""}`} />
                               Restart agent
+                            </button>
+                            <button
+                              className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 disabled:opacity-50"
+                              disabled={device.status !== "online" || restartingId === device.id}
+                              onClick={() => updateAgent(device.id)}
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${restartingId === device.id ? "animate-spin" : ""}`} />
+                              Update agent
                             </button>
                           </div>
                         )}

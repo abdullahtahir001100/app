@@ -422,6 +422,14 @@ function isScreenAck(packet) {
     return false;
 }
 
+function isAudioAck(packet) {
+    const action = String(packet?.action || packet?.last_action || '');
+    if (action.includes('AUDIO') || action === 'LIST_AUDIO_DEVICES') return true;
+    if (packet?.metrics && Array.isArray(packet.metrics.audio_devices)) return true;
+    const msg = String(packet?.message || '');
+    return msg.includes('Audio command');
+}
+
 function isKnownBinaryFrame(buffer) {
     if (!buffer || buffer.length < 2) return false;
 
@@ -847,6 +855,26 @@ async function handleSocketMessage(ws, message) {
 
         if (packet.type === 'sys_ack' && (packet.file_result || isFileAck(packet))) {
             handleFileTelemetry(ws, packet, activeConnections);
+            return;
+        }
+
+        // Audio LIST/START/STOP acks must not fall into camera telemetry (drops metrics.audio_devices).
+        if (
+            packet.type === 'sys_ack' &&
+            isAudioAck(packet) &&
+            (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))
+        ) {
+            const ownerUserId = extractOwnerUserId(ws);
+            const senderAgentId = extractDeviceIdFromAgentSocket(ws);
+            forwardPacketToDashboards(
+                {
+                    ...packet,
+                    senderAgentId,
+                    deviceId: senderAgentId,
+                },
+                activeConnections,
+                ownerUserId
+            );
             return;
         }
 

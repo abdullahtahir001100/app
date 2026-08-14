@@ -788,6 +788,29 @@ export default function CameraPage() {
     setCommandStatus("Camera turned off.");
   };
 
+  // Stop camera when leaving page / closing tab.
+  useEffect(() => {
+    const stopOnUnload = () => {
+      try {
+        if (sessionStorage.getItem("zenvora_camera_streaming") !== "1") return;
+        const target = selectedDeviceRef.current || "";
+        if (target) {
+          gatewayClient.dispatch("STOP_STREAM", target, {});
+        }
+        sessionStorage.setItem("zenvora_camera_streaming", "0");
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("pagehide", stopOnUnload);
+    window.addEventListener("beforeunload", stopOnUnload);
+    return () => {
+      window.removeEventListener("pagehide", stopOnUnload);
+      window.removeEventListener("beforeunload", stopOnUnload);
+      stopOnUnload();
+    };
+  }, []);
+
   const probeHardware = () => {
     const deviceId = selectedDeviceRef.current;
     if (!deviceId) {

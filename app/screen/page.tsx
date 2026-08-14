@@ -7,7 +7,7 @@ import { CustomSlider } from "@/components/custom-slider";
 import { Label } from "@/components/ui/label";
 import { useScreenRemote } from "@/hooks/use-screen-remote";
 import { useGateway } from "@/hooks/use-gateway";
-import type { DeviceOption } from "@/lib/gateway-client";
+import { gatewayClient, type DeviceOption } from "@/lib/gateway-client";
 import {
   Keyboard,
   Lock,
@@ -347,17 +347,23 @@ export default function ScreenPage() {
     wasMediaReadyRef.current = mediaReady;
   }, [mediaReady, isStreaming, agentOnline, selectedDevice, dispatchControl]);
 
-  // Leave page: stop stream only if user had it ON.
+  // Leave page / close tab: stop stream only if user had it ON.
   useEffect(() => {
-    return () => {
+    const stopOnUnload = () => {
       try {
-        if (sessionStorage.getItem("zenvora_screen_streaming") === "1") {
-          dispatchControl("STOP_SCREEN_STREAM", {});
-          sessionStorage.setItem("zenvora_screen_streaming", "0");
-        }
+        if (sessionStorage.getItem("zenvora_screen_streaming") !== "1") return;
+        gatewayClient.dispatch("STOP_SCREEN_STREAM", selectedDeviceRef.current || "", {});
+        sessionStorage.setItem("zenvora_screen_streaming", "0");
       } catch {
         // ignore
       }
+    };
+    window.addEventListener("pagehide", stopOnUnload);
+    window.addEventListener("beforeunload", stopOnUnload);
+    return () => {
+      window.removeEventListener("pagehide", stopOnUnload);
+      window.removeEventListener("beforeunload", stopOnUnload);
+      stopOnUnload();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

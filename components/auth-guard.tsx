@@ -22,6 +22,7 @@ export function pathToPageKey(pathname: string): string | null {
   if (pathname.startsWith("/shell")) return "shell";
   if (pathname.startsWith("/logs")) return "logs";
   if (pathname.startsWith("/notifications")) return "notifications";
+  if (pathname.startsWith("/settings")) return null;
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/devices")) return "dashboard";
   return null;
 }
@@ -33,6 +34,12 @@ function userCanAccessPage(
 ): boolean {
   if (role === "admin") return true;
   return Array.isArray(pages) && pages.includes(pageKey);
+}
+
+function redirectToLogin(router: ReturnType<typeof useRouter>, pathname: string, reason?: string) {
+  const next = encodeURIComponent(pathname);
+  const q = reason ? `?next=${next}&error=${encodeURIComponent(reason)}` : `?next=${next}`;
+  router.replace(`/login${q}`);
 }
 
 export function AuthGuard({ children }: { children: ReactNode }) {
@@ -54,15 +61,22 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     setReady(false);
     setForbidden(false);
 
-    fetch("/api/auth/session", { credentials: "include", cache: "no-store" })
-      .then(async (response) => {
+    const checkSession = async (isPoll = false) => {
+      try {
+        const response = await fetch("/api/auth/session", {
+          credentials: "include",
+          cache: "no-store",
+        });
         if (!active) return;
         const data = await response.json().catch(() => ({}));
+
         if (response.ok && data?.authenticated) {
           const userId = data?.user?.id ? String(data.user.id) : null;
           bindDeviceCacheUser(userId);
           gatewayClient.bindUser(userId);
-          void gatewayClient.refreshDevices({ force: true });
+          if (!isPoll) {
+            void gatewayClient.refreshDevices({ force: true });
+          }
 
           const pageKey = pathToPageKey(pathname);
           const role = data?.user?.role as string | undefined;
@@ -75,22 +89,30 @@ export function AuthGuard({ children }: { children: ReactNode }) {
           setAuthorized(true);
           return;
         }
+
         clearDeviceRegistryCache();
         gatewayClient.clearCachedDevices();
-        const next = encodeURIComponent(pathname);
-        router.replace(`/login?next=${next}`);
-      })
-      .catch(() => {
+        const reason =
+          data?.reason === "session_invalid" || data?.code === 310
+            ? "session-replaced"
+            : undefined;
+        redirectToLogin(router, pathname, reason);
+      } catch {
         if (!active) return;
-        const next = encodeURIComponent(pathname);
-        router.replace(`/login?next=${next}`);
-      })
-      .finally(() => {
-        if (active) setReady(true);
-      });
+        if (!isPoll) redirectToLogin(router, pathname);
+      } finally {
+        if (active && !isPoll) setReady(true);
+      }
+    };
+
+    void checkSession(false);
+    const pollId = window.setInterval(() => {
+      void checkSession(true);
+    }, 20_000);
 
     return () => {
       active = false;
+      window.clearInterval(pollId);
     };
   }, [pathname, router]);
 

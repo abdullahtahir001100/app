@@ -9,6 +9,18 @@ const { getConnectionRegistry } = require('../sockets/registry');
 
 router.use(attachUser, requireAdmin);
 
+/** Coerce Mongo / lean values to a finite 0–100 metric (or null). */
+function metricPercent(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(0, Math.min(100, value));
+    }
+    if (typeof value === 'string' && value.trim() !== '') {
+        const n = Number(value);
+        if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
+    }
+    return null;
+}
+
 async function ensurePermissionDoc(user) {
     let doc = await Permission.findOne({ userId: user._id });
     if (!doc) {
@@ -67,6 +79,7 @@ router.get('/users', async (_req, res) => {
             users: users.map((u) => ({
                 ...u,
                 id: String(u._id),
+                provider: u.provider || 'local',
                 pages: byUser.get(String(u._id)) || Permission.defaultsForRole(u.role),
             })),
             pageKeys: Permission.PAGE_KEYS,
@@ -180,6 +193,8 @@ router.get('/devices', async (_req, res) => {
                 platform: d.platform,
                 status: online.has(String(d.deviceId)) ? 'online' : (d.status || 'offline'),
                 lastSeen: d.lastSeen || d.updatedAt,
+                battery: metricPercent(d.battery),
+                storage: metricPercent(d.storage),
             });
         }
         for (const c of credentials) {
@@ -192,6 +207,8 @@ router.get('/devices', async (_req, res) => {
                     platform: 'unknown',
                     status: online.has(id) ? 'online' : 'offline',
                     lastSeen: c.updatedAt,
+                    battery: null,
+                    storage: null,
                 });
             }
         }

@@ -94,6 +94,36 @@ function broadcastOwnerBinary(ws, frameBuffer, activeConnections) {
     return sendToOwnerDashboards(activeConnections, ownerUserId, wrapped, { binary: true });
 }
 
+/**
+ * Kick every live dashboard socket for a user (single-session login).
+ */
+function forceLogoutUserDashboards(activeConnections, userId, reason = 'session_replaced') {
+    const owner = String(userId || '').trim();
+    if (!owner || !activeConnections) return 0;
+
+    let sent = 0;
+    const payload = JSON.stringify({
+        type: 'force_logout',
+        reason,
+        code: 310,
+        message: 'Signed in elsewhere — this session was closed.',
+    });
+
+    activeConnections.forEach((clientSocket, key) => {
+        if (!String(key).startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
+        const uid = dashboardUserId(clientSocket).trim();
+        if (uid !== owner) return;
+        try {
+            clientSocket.send(payload);
+            clientSocket.close();
+            sent += 1;
+        } catch (_) {
+            // ignore
+        }
+    });
+    return sent;
+}
+
 module.exports = {
     BINARY_ENVELOPE,
     extractDeviceIdFromAgentSocket,
@@ -102,4 +132,5 @@ module.exports = {
     sendToOwnerDashboards,
     wrapBinaryForDevice,
     broadcastOwnerBinary,
+    forceLogoutUserDashboards,
 };

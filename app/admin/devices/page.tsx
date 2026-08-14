@@ -7,6 +7,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useGateway } from "@/hooks/use-gateway";
+import { alertMsg, Z } from "@/lib/messages";
 import { 
   Search, 
   Filter, 
@@ -14,7 +16,8 @@ import {
   Monitor, 
   Terminal, 
   Folder,
-  AlertCircle 
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 type AdminDevice = {
@@ -24,18 +27,20 @@ type AdminDevice = {
   platform?: string;
   status: string;
   lastSeen?: string;
-  // Optional fields in case your API ever returns them for the UI bars
-  battery?: number; 
-  storage?: number; 
+  battery?: number | null;
+  storage?: number | null;
 };
 
 export default function AdminDevicesPage() {
   const router = useRouter();
+  const { dispatch, ensureConnected } = useGateway();
   const [devices, setDevices] = useState<AdminDevice[]>([]);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingAll, setUpdatingAll] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -78,10 +83,46 @@ export default function AdminDevicesPage() {
 
   // Calculate stats dynamically
   const totalDevices = devices.length;
-  const onlineDevices = devices.filter(d => d.status === "online").length;
-  const offlineDevices = devices.filter(d => d.status === "offline").length;
+  const onlineDevices = devices.filter((d) => d.status === "online").length;
+  const offlineDevices = totalDevices - onlineDevices;
+
+  const agentDownloadUrl = () =>
+    process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL ||
+    `${typeof window !== "undefined" ? window.location.origin : ""}/api/agent/download`;
+
+  const updateAgent = (deviceId: string) => {
+    ensureConnected();
+    setUpdatingId(deviceId);
+    const result = dispatch("UPDATE_AGENT", { download_url: agentDownloadUrl() }, deviceId);
+    if (!result.ok) {
+      alertMsg(Z.COMMAND_FAILED);
+      setUpdatingId(null);
+      return;
+    }
+    alertMsg(Z.AGENT_UPDATE_SENT);
+    setTimeout(() => setUpdatingId(null), 8000);
+  };
+
+  const updateAllOnline = () => {
+    const online = devices.filter((d) => d.status === "online");
+    if (online.length === 0) {
+      alertMsg(Z.NO_AGENT);
+      return;
+    }
+    ensureConnected();
+    setUpdatingAll(true);
+    let sent = 0;
+    for (const device of online) {
+      const result = dispatch("UPDATE_AGENT", { download_url: agentDownloadUrl() }, device.deviceId);
+      if (result.ok) sent += 1;
+    }
+    if (sent > 0) alertMsg(Z.AGENT_UPDATE_SENT, `${sent} device(s)`);
+    else alertMsg(Z.COMMAND_FAILED);
+    setTimeout(() => setUpdatingAll(false), 8000);
+  };
 
   if (isLoading) {
+
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />
@@ -146,13 +187,22 @@ export default function AdminDevicesPage() {
         <div className="p-6 lg:p-12">
           {/* Header */}
           <div className="mb-8">
-            <div className="flex items-end justify-between mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
               <div>
                 <h1 className="text-4xl lg:text-5xl font-display tracking-tight mb-2">
                   Device Management
                 </h1>
                 <p className="text-muted-foreground">Admin can open and control any device on the platform</p>
               </div>
+              <Button
+                type="button"
+                onClick={() => updateAllOnline()}
+                disabled={updatingAll || onlineDevices === 0}
+                className="gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${updatingAll ? "animate-spin" : ""}`} />
+                {updatingAll ? "Updating…" : "Update all online agents"}
+              </Button>
             </div>
           </div>
 
@@ -232,9 +282,23 @@ export default function AdminDevicesPage() {
             )}
 
             {filteredDevices.map((device) => {
-              // Fallback values for UI elements not strictly typed in your original API response
-              const batteryLevel = device.battery || 0; 
-              const storageLevel = device.storage || 0;
+              const batteryRaw = device.battery as unknown;
+              const storageRaw = device.storage as unknown;
+              const batteryLevel =
+                typeof batteryRaw === "number" && Number.isFinite(batteryRaw)
+                  ? batteryRaw
+                  : typeof batteryRaw === "string" && batteryRaw.trim() !== "" && Number.isFinite(Number(batteryRaw))
+                    ? Number(batteryRaw)
+                    : null;
+              const storageLevel =
+                typeof storageRaw === "number" && Number.isFinite(storageRaw)
+                  ? storageRaw
+                  : typeof storageRaw === "string" && storageRaw.trim() !== "" && Number.isFinite(Number(storageRaw))
+                    ? Number(storageRaw)
+                    : null;
+              const lastSeenLabel = device.lastSeen
+                ? new Date(device.lastSeen).toLocaleString()
+                : "Unknown";
 
               return (
                 <Card
@@ -283,43 +347,60 @@ export default function AdminDevicesPage() {
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground mb-1">Battery</p>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-border rounded-full h-2">
-                              <div
-                                className={`h-full rounded-full ${
-                                  batteryLevel > 50
-                                    ? "bg-green-600"
-                                    : batteryLevel > 20
-                                    ? "bg-orange-600"
-                                    : "bg-red-600"
-                                }`}
-                                style={{ width: `${batteryLevel}%` }}
-                              />
+                          {batteryLevel == null ? (
+                            <p className="text-xs font-mono text-muted-foreground">N/A</p>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-border rounded-full h-2">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    batteryLevel > 50
+                                      ? "bg-green-600"
+                                      : batteryLevel > 20
+                                      ? "bg-orange-600"
+                                      : "bg-red-600"
+                                  }`}
+                                  style={{ width: `${batteryLevel}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-mono w-8">{batteryLevel}%</span>
                             </div>
-                            <span className="text-xs font-mono w-6">{batteryLevel}%</span>
-                          </div>
+                          )}
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground mb-1">Storage</p>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-border rounded-full h-2">
-                              <div
-                                className="h-full rounded-full bg-blue-600"
-                                style={{ width: `${storageLevel}%` }}
-                              />
+                          {storageLevel == null ? (
+                            <p className="text-xs font-mono text-muted-foreground">N/A</p>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-border rounded-full h-2">
+                                <div
+                                  className="h-full rounded-full bg-blue-600"
+                                  style={{ width: `${storageLevel}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-mono w-8">{storageLevel}%</span>
                             </div>
-                            <span className="text-xs font-mono w-6">{storageLevel}%</span>
-                          </div>
+                          )}
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground mb-1">Last Seen</p>
-                          <p className="text-xs font-mono">{device.lastSeen || "Unknown"}</p>
+                          <p className="text-xs font-mono">{lastSeenLabel}</p>
                         </div>
                       </div>
                     </div>
 
                     {/* Actions - Mapped from your logic links to icons */}
                     <div className="flex flex-col sm:flex-row items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button
+                        type="button"
+                        className="p-2 hover:bg-accent/10 rounded transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
+                        title="Silent update agent"
+                        disabled={device.status !== "online" || updatingId === device.deviceId || updatingAll}
+                        onClick={() => updateAgent(device.deviceId)}
+                      >
+                        <RefreshCw className={`w-4 h-4 ${updatingId === device.deviceId ? "animate-spin" : ""}`} />
+                      </button>
                       <Link href={`/screen?device=${encodeURIComponent(device.deviceId)}`}>
                         <button
                           className="p-2 hover:bg-accent/10 rounded transition-colors text-muted-foreground hover:text-foreground"

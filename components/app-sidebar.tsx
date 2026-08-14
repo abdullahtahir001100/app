@@ -1,12 +1,32 @@
 "use client";
 
-import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare, ScrollText, ChevronDown } from "lucide-react";
+import {
+  Smartphone,
+  Shield,
+  LogOut,
+  Menu,
+  X,
+  Home,
+  FileText,
+  Eye,
+  Camera,
+  Bell,
+  History,
+  Mic,
+  MicOff,
+  TerminalSquare,
+  ScrollText,
+  ChevronDown,
+  ChevronUp,
+  Settings,
+} from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ZenvoraLogo } from "@/components/zenvora-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
+import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 
 import Link from "next/link";
 import { clearDeviceRegistryCache, gatewayClient } from "@/lib/gateway-client";
@@ -39,21 +59,34 @@ function AppSidebarContent() {
     pages?: string[];
   } | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
-  const { isConnected, devices, dispatch, subscribe } = useGateway();
+  const { devices, dispatch, subscribe } = useGateway();
   const searchParams = useSearchParams();
-  const deviceId = searchParams ? (searchParams.get("deviceId") || devices[0]?.value || "") : (devices[0]?.value || "");
+  const urlDeviceId = searchParams ? searchParams.get("deviceId") || "" : "";
 
   const [isAudioStreaming, setIsAudioStreaming] = useState(false);
   const [micDropdownOpen, setMicDropdownOpen] = useState(false);
-  const [audioDevices, setAudioDevices] = useState<Array<{ id: string, label: string }>>([]);
+  const [audioDevices, setAudioDevices] = useState<Array<{ id: string; label: string }>>([]);
+  const [listeningDeviceId, setListeningDeviceId] = useState("");
+  const [micsLoading, setMicsLoading] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
-  const activeDeviceIdRef = useRef<string>("");
+  const listeningDeviceIdRef = useRef<string>("");
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const micMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    activeDeviceIdRef.current = deviceId;
-  }, [deviceId]);
+    listeningDeviceIdRef.current = listeningDeviceId;
+  }, [listeningDeviceId]);
+
+  useEffect(() => {
+    if (listeningDeviceId) return;
+    const fromUrl = urlDeviceId && devices.some((d) => d.value === urlDeviceId) ? urlDeviceId : "";
+    const online = devices.find((d) => d.status === "online")?.value || "";
+    const fallback = fromUrl || online || devices[0]?.value || "";
+    if (fallback) setListeningDeviceId(fallback);
+  }, [urlDeviceId, devices, listeningDeviceId]);
 
   useEffect(() => {
     let active = true;
@@ -82,16 +115,28 @@ function AppSidebarContent() {
 
   useEffect(() => {
     const unsubscribe = subscribe((event) => {
-      if (event.type === "json" && event.packet?.action === "LIST_AUDIO_DEVICES") {
-        if (event.packet.metrics?.audio_devices) {
-          setAudioDevices(event.packet.metrics.audio_devices);
-        }
+      if (event.type !== "json") return;
+      const packet = event.packet;
+      if (packet?.action !== "LIST_AUDIO_DEVICES") return;
+      const metrics = packet.metrics as { audio_devices?: Array<{ id?: string; label?: string }> } | undefined;
+      const list = Array.isArray(metrics?.audio_devices) ? metrics.audio_devices : [];
+      const sender = String(packet.senderAgentId || packet.deviceId || "");
+      if (sender && listeningDeviceIdRef.current && sender !== listeningDeviceIdRef.current) {
+        return;
       }
+      setAudioDevices(
+        list
+          .map((dev) => ({
+            id: String(dev.id || dev.label || ""),
+            label: String(dev.label || dev.id || "Microphone"),
+          }))
+          .filter((dev) => dev.id)
+      );
+      setMicsLoading(false);
     });
     return () => unsubscribe();
   }, [subscribe]);
 
-  // Handle gateway binary streaming events for audio packets (0x0A)
   useEffect(() => {
     if (!isAudioStreaming) {
       if (audioContextRef.current) {
@@ -101,40 +146,34 @@ function AppSidebarContent() {
       return;
     }
 
-    // Initialize audio context
-    const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const audioCtx = new AudioContextClass();
     audioContextRef.current = audioCtx;
     nextStartTimeRef.current = 0;
 
-    // Handle gateway binary streaming events for audio packets (0x0A)
     const unsubscribe = subscribe((event) => {
-        const payload = event.data;
-        const bufferPromise = payload instanceof Blob ? payload.arrayBuffer() : Promise.resolve(payload);
-        bufferPromise.then((buffer) => {
-          const bytes = new Uint8Array(buffer);
-          if (bytes.length < 5 || bytes[0] !== 0x0A) return;
+      if (event.type !== "binary") return;
+      const payload = event.data;
+      const bufferPromise = payload instanceof Blob ? payload.arrayBuffer() : Promise.resolve(payload);
+      bufferPromise
+        .then((buffer) => {
+          const { deviceId, frame } = unwrapDeviceBinaryFrame(buffer);
+          if (deviceId && listeningDeviceIdRef.current && deviceId !== listeningDeviceIdRef.current) {
+            return;
+          }
+          if (frame.length < 5 || frame[0] !== 0x0a) return;
 
-          // Read sample rate (bytes 1-4)
-          const sampleRate = (bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4];
-
-          // Read mono PCM i16 samples starting at byte 5
+          const sampleRate = (frame[1] << 24) | (frame[2] << 16) | (frame[3] << 8) | frame[4];
           const samplesByteOffset = 5;
-          const samplesLength = (bytes.length - samplesByteOffset) / 2;
-          
-          const int16Array = new Int16Array(samplesLength);
-          const dataView = new DataView(buffer);
-          for (let i = 0; i < samplesLength; i++) {
-            int16Array[i] = dataView.getInt16(samplesByteOffset + i * 2, true); 
-          }
+          const samplesLength = Math.floor((frame.length - samplesByteOffset) / 2);
+          if (samplesLength <= 0 || !sampleRate) return;
 
-          // Convert to Float32
           const float32Array = new Float32Array(samplesLength);
+          const dataView = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
           for (let i = 0; i < samplesLength; i++) {
-            float32Array[i] = int16Array[i] / 32768.0;
+            float32Array[i] = dataView.getInt16(samplesByteOffset + i * 2, true) / 32768.0;
           }
 
-          // Queue and play PCM chunk
           if (audioCtx.state === "suspended") {
             audioCtx.resume().catch(() => {});
           }
@@ -148,11 +187,12 @@ function AppSidebarContent() {
 
           const now = audioCtx.currentTime;
           if (nextStartTimeRef.current < now) {
-            nextStartTimeRef.current = now + 0.06; 
+            nextStartTimeRef.current = now + 0.06;
           }
           source.start(nextStartTimeRef.current);
           nextStartTimeRef.current += audioBuffer.duration;
-        }).catch((err) => {
+        })
+        .catch((err) => {
           console.error("[AUDIO SIDEBAR] Failed to parse binary audio packet:", err);
         });
     });
@@ -166,25 +206,50 @@ function AppSidebarContent() {
     };
   }, [isAudioStreaming, subscribe]);
 
+  useEffect(() => {
+    if (!accountMenuOpen && !micDropdownOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (accountMenuOpen && accountMenuRef.current && !accountMenuRef.current.contains(target)) {
+        setAccountMenuOpen(false);
+      }
+      if (micDropdownOpen && micMenuRef.current && !micMenuRef.current.contains(target)) {
+        setMicDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [accountMenuOpen, micDropdownOpen]);
+
+  const requestMicList = (targetDeviceId: string) => {
+    if (!targetDeviceId) return;
+    setMicsLoading(true);
+    setAudioDevices([]);
+    dispatch("LIST_AUDIO_DEVICES", {}, targetDeviceId);
+  };
+
   const toggleAudioStream = (selectedMicrophoneId?: string) => {
-    const target = activeDeviceIdRef.current;
+    const target = listeningDeviceIdRef.current;
     if (!target) return;
 
     if (isAudioStreaming) {
       dispatch("STOP_AUDIO_STREAM", {}, target);
       setIsAudioStreaming(false);
-    } else {
-      dispatch("START_AUDIO_STREAM", { device_id: selectedMicrophoneId }, target);
-      setIsAudioStreaming(true);
+      return;
     }
+
+    dispatch("START_AUDIO_STREAM", { device_id: selectedMicrophoneId || undefined }, target);
+    setIsAudioStreaming(true);
+    setMicDropdownOpen(false);
   };
 
   const handleLogout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
+    setAccountMenuOpen(false);
 
     if (isAudioStreaming) {
-      const target = activeDeviceIdRef.current;
+      const target = listeningDeviceIdRef.current;
       if (target) {
         dispatch("STOP_AUDIO_STREAM", {}, target);
       }
@@ -241,74 +306,74 @@ function AppSidebarContent() {
       ]
     : [];
 
+  const initials = userProfile?.name
+    ? userProfile.name
+        .split(" ")
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase()
+    : "U";
+
   return (
     <>
-      {/* Mobile toggle */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="fixed top-4 left-4 z-50 lg:hidden p-2 hover:bg-secondary rounded-lg transition-colors"
       >
-       {isOpen ? 
-        (<><div className="left"><X className="w-6 h-6" /></div></>) : 
-        <Menu className="w-6 h-6" />}
+        {isOpen ? (
+          <>
+            <div className="left">
+              <X className="w-6 h-6" />
+            </div>
+          </>
+        ) : (
+          <Menu className="w-6 h-6" />
+        )}
       </button>
 
-      {/* Sidebar */}
       <aside
         className={`fixed left-0 top-0 h-screen w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out z-40 overflow-y-auto custom-scrollbar ${
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        <div className="p-8">
+        <div className="p-8 pb-6">
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-2">
-              {/* <div className="w-10 h-10 bg-sidebar-primary rounded-lg flex items-center justify-center">
-                <Smartphone className="w-5 h-5 text-sidebar-primary-foreground" />
-              </div> */}
-            
-          <div className="flex items-center gap-3">
-            <div className="text-foreground hover-lift transition-transform">
-              <ZenvoraLogo />
-            </div>
-            <span className="font-display text-xl font-semibold">Zenvora</span>
-          </div>
-         
+              <div className="flex items-center gap-3">
+                <div className="text-foreground hover-lift transition-transform">
+                  <ZenvoraLogo />
+                </div>
+                <span className="font-display text-xl font-semibold">Zenvora</span>
+              </div>
             </div>
             <p className="text-xs text-sidebar-foreground/60 text-center">Remote Device Control</p>
           </div>
 
-          <div className="mb-6 rounded-lg border border-sidebar-border/60 bg-sidebar-accent/30 p-3">
-            <div className="flex items-center gap-3">
-              <Avatar className="h-10 w-10">
-                <AvatarImage src={userProfile?.avatarUrl || undefined} alt={userProfile?.name || "User"} />
-                <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-sm">
-                  {userProfile?.name ? userProfile.name.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase() : "U"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-sidebar-foreground">{userProfile?.name || "Signed in"}</p>
-                <p className="truncate text-xs text-sidebar-foreground/60">{userProfile?.email || "View your account"}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* User Mode */}
           <div className="mb-10">
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-mono text-sidebar-foreground/50 uppercase tracking-wide">User Mode</p>
-              {deviceId && (
-                <div className="flex items-center gap-1 relative">
+              {devices.length > 0 && (
+                <div className="relative" ref={micMenuRef}>
                   <button
+                    type="button"
                     onClick={() => {
-                      if (!isAudioStreaming) {
-                        dispatch("LIST_AUDIO_DEVICES", {}, deviceId);
-                        setMicDropdownOpen(!micDropdownOpen);
-                      } else {
+                      if (isAudioStreaming) {
                         toggleAudioStream();
+                        return;
+                      }
+                      const nextOpen = !micDropdownOpen;
+                      setMicDropdownOpen(nextOpen);
+                      if (nextOpen && listeningDeviceId) {
+                        requestMicList(listeningDeviceId);
                       }
                     }}
                     className="p-1 hover:text-foreground text-sidebar-foreground/60 transition-colors focus:outline-none focus:ring-0 cursor-pointer"
-                    title={isAudioStreaming ? "Stop Live Device Audio Listening" : "Select & Listen to Live Microphone"}
+                    title={
+                      isAudioStreaming
+                        ? "Stop Live Device Audio Listening"
+                        : "Select device & microphone"
+                    }
                   >
                     {isAudioStreaming ? (
                       <Mic className="w-4.5 h-4.5 text-rose-500 animate-pulse" />
@@ -319,27 +384,70 @@ function AppSidebarContent() {
                       </div>
                     )}
                   </button>
-                  
+
                   {micDropdownOpen && !isAudioStreaming && (
-                    <div className="absolute top-6 left-0 w-48 bg-card border border-border rounded-md shadow-lg z-50 p-2 text-xs">
-                      <p className="text-muted-foreground mb-2 px-1 font-semibold">Select Audio Device</p>
-                      {audioDevices.length === 0 ? (
-                        <p className="px-1 text-muted-foreground animate-pulse">Loading devices...</p>
+                    <div className="absolute top-6 right-[-19px] z-50 w-52 bg-sidebar py-1.5 text-[11px] outline-none">
+                      <p className="px-2.5 pb-1 text-[10px] uppercase tracking-wide text-sidebar-foreground/40">
+                        Device
+                      </p>
+                      <ul className="max-h-28 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        {devices.length === 0 ? (
+                          <li className="px-2.5 py-1 text-sidebar-foreground/45">No devices</li>
+                        ) : (
+                          devices.map((dev) => (
+                            <li key={dev.value}>
+                              <button
+                                type="button"
+                                className={`w-full truncate px-2.5 py-1 text-left outline-none focus:outline-none ${
+                                  listeningDeviceId === dev.value
+                                    ? "text-sidebar-foreground"
+                                    : "text-sidebar-foreground/65 hover:text-sidebar-foreground"
+                                }`}
+                                onClick={() => {
+                                  setListeningDeviceId(dev.value);
+                                  requestMicList(dev.value);
+                                }}
+                              >
+                                {dev.label || dev.value}
+                                {dev.status === "online" ? "" : " · offline"}
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+
+                      <p className="mt-1.5 px-2.5 pb-1 pt-1.5 text-[10px] uppercase tracking-wide text-sidebar-foreground/40">
+                        Microphone
+                      </p>
+                      {!listeningDeviceId ? (
+                        <p className="px-2.5 py-1 text-sidebar-foreground/45">Pick a device first</p>
+                      ) : micsLoading && audioDevices.length === 0 ? (
+                        <p className="px-2.5 py-1 text-sidebar-foreground/45">Loading mics…</p>
                       ) : (
-                        <ul className="space-y-1 max-h-32 overflow-y-auto">
-                          {audioDevices.map(dev => (
+                        <ul className="max-h-28 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                          <li>
+                            <button
+                              type="button"
+                              className="w-full truncate px-2.5 py-1 text-left text-sidebar-foreground/65 outline-none hover:text-sidebar-foreground focus:outline-none"
+                              onClick={() => toggleAudioStream()}
+                            >
+                              Default microphone
+                            </button>
+                          </li>
+                          {audioDevices.map((dev) => (
                             <li key={dev.id}>
                               <button
-                                className="w-full text-left px-2 py-1.5 hover:bg-muted rounded truncate"
-                                onClick={() => {
-                                  setMicDropdownOpen(false);
-                                  toggleAudioStream(dev.id);
-                                }}
+                                type="button"
+                                className="w-full truncate px-2.5 py-1 text-left text-sidebar-foreground/65 outline-none hover:text-sidebar-foreground focus:outline-none"
+                                onClick={() => toggleAudioStream(dev.id)}
                               >
                                 {dev.label}
                               </button>
                             </li>
                           ))}
+                          {!micsLoading && audioDevices.length === 0 ? (
+                            <li className="px-2.5 py-1 text-sidebar-foreground/40">No mics reported</li>
+                          ) : null}
                         </ul>
                       )}
                     </div>
@@ -380,28 +488,62 @@ function AppSidebarContent() {
               </nav>
             </div>
           )}
-        </div>
 
-        {/* Footer */}
-        <div className="bottom-0 left-0 right-0 p-6 border-t border-sidebar-border">
-          <button
-            type="button"
-            onClick={() => void handleLogout()}
-            disabled={loggingOut}
-            className="flex items-center gap-3 text-sm text-sidebar-foreground hover:text-sidebar-foreground/70 transition-colors w-full disabled:opacity-60"
-          >
-            <LogOut className="w-4 h-4" />
-            <span>{loggingOut ? "Logging out..." : "Logout"}</span>
-          </button>
+          <div className="relative mt-8" ref={accountMenuRef}>
+            {accountMenuOpen && (
+              <div className="absolute bottom-full left-0 mb-1 w-36 py-1 text-xs bg-[#fafaf9] shadow-[1px_1px_0px_#00000021]">
+                <Link
+                  href="/settings"
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    setIsOpen(false);
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1.5 text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Settings</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  disabled={loggingOut}
+                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors disabled:opacity-60"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>{loggingOut ? "Logging out..." : "Logout"}</span>
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setAccountMenuOpen((open) => !open)}
+              className="flex w-full items-center gap-2.5 px-4 text-left text-sidebar-foreground outline-none focus:outline-none"
+            >
+              <Avatar className="h-8 w-8 shrink-0">
+                <AvatarImage src={userProfile?.avatarUrl || undefined} alt={userProfile?.name || "User"} />
+                <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium leading-tight">{userProfile?.name || "Signed in"}</p>
+                <p className="truncate text-[11px] leading-tight text-sidebar-foreground/55">
+                  {userProfile?.email || "Account"}
+                </p>
+              </div>
+              {accountMenuOpen ? (
+                <ChevronUp className="w-3.5 h-3.5 shrink-0 text-sidebar-foreground/40" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 shrink-0 text-sidebar-foreground/40" />
+              )}
+            </button>
+          </div>
         </div>
       </aside>
 
-      {/* Overlay */}
       {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/20 z-30 lg:hidden"
-          onClick={() => setIsOpen(false)}
-        />
+        <div className="fixed inset-0 bg-black/20 z-30 lg:hidden" onClick={() => setIsOpen(false)} />
       )}
     </>
   );

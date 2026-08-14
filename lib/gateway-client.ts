@@ -168,6 +168,17 @@ function toDeviceOption(record: DeviceRecord): DeviceOption {
   };
 }
 
+function metricPercent(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.min(100, value));
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
+  }
+  return null;
+}
+
 function normalizeDeviceRecord(raw: Record<string, unknown>): DeviceRecord {
   return {
     deviceId: String(raw.deviceId || raw.value || ""),
@@ -176,8 +187,8 @@ function normalizeDeviceRecord(raw: Record<string, unknown>): DeviceRecord {
     clientPort: typeof raw.clientPort === "number" ? raw.clientPort : 8080,
     localIp: String(raw.localIp || ""),
     publicIp: String(raw.publicIp || ""),
-    battery: typeof raw.battery === "number" ? raw.battery : null,
-    storage: typeof raw.storage === "number" ? raw.storage : null,
+    battery: metricPercent(raw.battery),
+    storage: metricPercent(raw.storage),
     network: String(raw.network || ""),
     latitude: typeof raw.latitude === "number" ? raw.latitude : null,
     longitude: typeof raw.longitude === "number" ? raw.longitude : null,
@@ -509,6 +520,29 @@ class GatewayClient {
           // Immediately reconnect with a fresh ticket (don't wait full backoff).
           this.reconnectAttempt = 0;
           setTimeout(() => this.ensureConnected(), 300);
+          return;
+        }
+
+        // Another browser/device signed into the same account.
+        if (packet.type === "force_logout") {
+          logMsg(Z.SESSION_REPLACED, String(packet.message || packet.reason || ""));
+          try {
+            sessionStorage.setItem(
+              "zenvora_session_kick",
+              String(packet.message || "Signed in elsewhere — this session was closed.")
+            );
+          } catch {
+            // ignore
+          }
+          stopHeartbeat();
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+          if (typeof window !== "undefined") {
+            window.location.href = "/login?error=session-replaced";
+          }
           return;
         }
 
