@@ -281,7 +281,7 @@ export class MediaGatewayClient {
     };
 
     ws.onerror = () => {
-      logMsg(Z.MEDIA_NOT_READY, `device=${this.deviceId} channel=${this.channel}`);
+      // logMsg(Z.MEDIA_NOT_READY, `device=${this.deviceId} channel=${this.channel}`);
       this.emitState("error");
     };
   }
