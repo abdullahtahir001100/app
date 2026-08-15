@@ -3,9 +3,17 @@ const AppHistory = require('../models/AppHistory');
 const Notification = require('../models/Notification');
 
 function parseFlexibleDate(value) {
-    if (!value) return new Date();
+    if (!value && value !== 0) return new Date();
     if (value instanceof Date) return value;
-    const normalized = String(value).replace(' ', 'T');
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return new Date(value < 1e12 ? value * 1000 : value);
+    }
+    const raw = String(value).trim();
+    if (/^\d+$/.test(raw)) {
+        const num = Number(raw);
+        return new Date(num < 1e12 ? num * 1000 : num);
+    }
+    const normalized = raw.replace(' ', 'T');
     const parsed = new Date(normalized);
     return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
