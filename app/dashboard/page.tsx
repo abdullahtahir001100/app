@@ -167,7 +167,7 @@ export default function DashboardPage() {
     if (origin && (!configured || /localhost|127\.0\.0\.1/i.test(configured))) {
       return origin;
     }
-    return configured || origin || "https://zenvora.abdullahtahir.me";
+    return configured || origin || "https://www.zenvora.abdullahtahir.me";
   })();
   const gatewayUrl = (() => {
     const configured =
@@ -187,7 +187,7 @@ export default function DashboardPage() {
       const scheme = u.protocol === "https:" ? "wss" : "ws";
       return `${scheme}://${u.host}/ws/gateway`;
     } catch {
-      return "wss://zenvora.abdullahtahir.me/ws/gateway";
+      return "wss://www.zenvora.abdullahtahir.me/ws/gateway";
     }
   })();
   const agentDownloadUrl =

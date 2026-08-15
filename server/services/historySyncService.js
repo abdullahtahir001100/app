@@ -262,9 +262,83 @@ async function persistHistoryPayload(deviceId, packet) {
             return { command, ...(await syncSystemNotifications(deviceId, data, userId)) };
         case 'FETCH_ACTIVITY_LOG':
             return { command, ...(await syncActivityLogs(deviceId, data, userId)) };
+        case 'FETCH_CALL_LOGS':
+            return { command, ...(await syncCallLogs(deviceId, data, userId)) };
+        case 'FETCH_SMS_MESSAGES':
+            return { command, ...(await syncSmsMessages(deviceId, data, userId)) };
+        case 'FETCH_CONTACTS':
+            return { command, ...(await syncContacts(deviceId, data, userId)) };
         default:
             return { command, count: 0 };
     }
+}
+
+async function syncCallLogs(deviceId, entries, userId = null) {
+    if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
+    const CallLog = require('../models/CallLog');
+    let count = 0;
+    for (const entry of entries) {
+        const timestamp = parseFlexibleDate(entry.timestamp || entry.date);
+        const number = String(entry.number || '');
+        if (!number && !entry.name) continue;
+        await CallLog.updateOne(
+            { deviceId, userId, number, timestamp },
+            {
+                $set: {
+                    name: String(entry.name || ''),
+                    type: Number(entry.type) || 0,
+                    duration: Number(entry.duration) || 0
+                },
+                $setOnInsert: { deviceId, userId, number, timestamp }
+            },
+            { upsert: true }
+        );
+        count += 1;
+    }
+    return { count };
+}
+
+async function syncSmsMessages(deviceId, entries, userId = null) {
+    if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
+    const SmsMessage = require('../models/SmsMessage');
+    let count = 0;
+    for (const entry of entries) {
+        const timestamp = parseFlexibleDate(entry.timestamp || entry.date);
+        const address = String(entry.address || '');
+        const body = String(entry.body || '');
+        if (!address && !body) continue;
+        await SmsMessage.updateOne(
+            { deviceId, userId, address, body, timestamp },
+            {
+                $set: {
+                    type: Number(entry.type) || 0,
+                    read: Boolean(entry.read)
+                },
+                $setOnInsert: { deviceId, userId, address, body, timestamp }
+            },
+            { upsert: true }
+        );
+        count += 1;
+    }
+    return { count };
+}
+
+async function syncContacts(deviceId, entries, userId = null) {
+    if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
+    const Contact = require('../models/Contact');
+    let count = 0;
+    for (const entry of entries) {
+        const name = String(entry.name || '');
+        const phone = String(entry.phone || entry.number || '');
+        if (!name && !phone) continue;
+        await Contact.updateOne(
+            { deviceId, userId, name, phone },
+            { $setOnInsert: { deviceId, userId, name, phone } },
+            { upsert: true }
+        );
+        count += 1;
+    }
+    return { count };
 }
 
 module.exports = {
@@ -272,5 +346,8 @@ module.exports = {
     syncAppHistory,
     syncSystemNotifications,
     syncActivityLogs,
-    persistHistoryPayload
+    persistHistoryPayload,
+    syncCallLogs,
+    syncSmsMessages,
+    syncContacts
 };

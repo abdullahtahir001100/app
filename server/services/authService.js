@@ -553,15 +553,20 @@ async function pairAgent(body, req) {
         { upsert: true, new: true }
     );
 
+    const deviceUpdate = {
+        userId: user._id,
+        deviceId,
+        hostname,
+        status: 'offline',
+        lastSeen: new Date(),
+    };
+    if (String(body.platform || '').toLowerCase() === 'android') {
+        deviceUpdate.platform = 'android';
+    }
+
     await Device.findOneAndUpdate(
         { deviceId },
-        {
-            userId: user._id,
-            deviceId,
-            hostname,
-            status: 'offline',
-            lastSeen: new Date()
-        },
+        deviceUpdate,
         { upsert: true, new: true }
     );
     await Device.deleteMany({

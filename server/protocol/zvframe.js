@@ -42,6 +42,9 @@ const EventKind = Object.freeze({
     PROCESS: 7,
     DEVICE_STATUS: 8,
     WINDOW: 9,
+    CALL_LOG: 10,
+    SMS: 11,
+    CONTACTS: 12,
 });
 
 function encodeFrame(msgType, seq, payloadBuf, flags = 0) {

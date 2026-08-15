@@ -12,6 +12,7 @@ import {
   Camera,
   Bell,
   History,
+  Phone,
   Mic,
   MicOff,
   TerminalSquare,
@@ -294,6 +295,7 @@ function AppSidebarContent() {
     { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
+    { icon: Phone, label: "Phone", href: "/logs", page: "logs" },
     { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
   ].filter((item) => can(item.page));
 

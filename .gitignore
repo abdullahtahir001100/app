@@ -18,7 +18,13 @@ yarn-error.log*
 
 # env files
 .env*
+
+# kotlin 
+/android-agent-kotlin/
+
+
 # Rust
+
 zenvora_agent/target/
 **/target/
 

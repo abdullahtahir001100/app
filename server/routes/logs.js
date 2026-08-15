@@ -331,4 +331,43 @@ router.get('/top-apps', attachUser, requirePagePermission('logs'), requireDevice
 
 
 
+router.get('/call-logs', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+    try {
+        const CallLog = require('../models/CallLog');
+        const { deviceId, limit = 100, offset = 0 } = req.query;
+        const query = { userId: req.user.id };
+        if (deviceId) query.deviceId = deviceId;
+        const logs = await CallLog.find(query).sort({ timestamp: -1 }).limit(parseInt(limit)).skip(parseInt(offset)).exec();
+        res.status(200).json({ success: true, count: logs.length, logs });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.get('/sms', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+    try {
+        const SmsMessage = require('../models/SmsMessage');
+        const { deviceId, limit = 100, offset = 0 } = req.query;
+        const query = { userId: req.user.id };
+        if (deviceId) query.deviceId = deviceId;
+        const messages = await SmsMessage.find(query).sort({ timestamp: -1 }).limit(parseInt(limit)).skip(parseInt(offset)).exec();
+        res.status(200).json({ success: true, count: messages.length, messages });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.get('/contacts', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+    try {
+        const Contact = require('../models/Contact');
+        const { deviceId, limit = 300, offset = 0 } = req.query;
+        const query = { userId: req.user.id };
+        if (deviceId) query.deviceId = deviceId;
+        const contacts = await Contact.find(query).sort({ name: 1 }).limit(parseInt(limit)).skip(parseInt(offset)).exec();
+        res.status(200).json({ success: true, count: contacts.length, contacts });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

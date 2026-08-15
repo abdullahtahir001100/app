@@ -49,7 +49,7 @@ function resolvePublicApiBase(req, preferred) {
 
     if (publicHost) return `${proto}://${publicHost}`;
     if (allowLoopback) return 'http://localhost:3000';
-    return 'https://zenvora.abdullahtahir.me';
+    return 'https://www.zenvora.abdullahtahir.me';
 }
 
 /**
@@ -85,7 +85,7 @@ function resolvePublicGatewayUrl(req, preferred) {
 
     if (publicHost) return `${wsScheme}://${publicHost}/ws/gateway`;
     if (allowLoopback) return 'ws://localhost:3000/ws/gateway';
-    return 'wss://zenvora.abdullahtahir.me/ws/gateway';
+    return 'wss://www.zenvora.abdullahtahir.me/ws/gateway';
 }
 
 module.exports = {

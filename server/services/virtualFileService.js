@@ -50,7 +50,7 @@ function getBaseUrl(req) {
     if (req && typeof req.get === 'function' && req.protocol) {
         return `${req.protocol}://${req.get('host')}`;
     }
-    const host = req?.headers?.get?.('host') || 'zenvora.abdullahtahir.me';
+    const host = req?.headers?.get?.('host') || 'www.zenvora.abdullahtahir.me';
     const proto = req?.headers?.get?.('x-forwarded-proto') || 'http';
     return `${proto}://${host}`;
 }
