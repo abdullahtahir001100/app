@@ -1,7 +1,8 @@
 const {
     verifyUserToken,
     userOwnsDevice,
-    AUTH_COOKIE
+    AUTH_COOKIE,
+    isAdminUnlocked
 } = require('../services/authService');
 
 function parseCookies(header) {
@@ -48,6 +49,7 @@ function isPublicApiRoute(pathname = "") {
         '/api/install-logs',
         '/api/agent/download',
         '/api/health',
+        '/api/network/android-beat',
         '/downloads/',
         '/r/',
     ];
@@ -80,7 +82,7 @@ function userHasPage(pages, pageKey) {
 
 async function userCanAccessAnyDevice(user) {
     if (!user) return false;
-    if (user.role === 'admin') return true;
+    if (user.role === 'admin') return user.adminUnlocked === true;
     const pages = user.pages || await loadUserPermissions(user.id, user.role);
     return Array.isArray(pages) && pages.includes('devices.any');
 }
@@ -99,6 +101,7 @@ async function attachUser(req, res, next) {
         role: payload.role,
         name: payload.name,
         pages,
+        adminUnlocked: isAdminUnlocked(payload),
     };
     req.authToken = token;
     return next();
@@ -115,8 +118,30 @@ async function optionalUser(req, res, next) {
             role: payload.role,
             name: payload.name,
             pages,
+            adminUnlocked: isAdminUnlocked(payload),
         };
         req.authToken = token;
+    }
+    return next();
+}
+
+function isAdminPinExempt(pathname = '') {
+    pathname = String(pathname).split('?')[0];
+    const exempt = [
+        '/api/auth/session',
+        '/api/auth/admin-pin',
+        '/api/auth/logout',
+    ];
+    return exempt.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function rejectIfAdminLocked(req, res, next) {
+    if (req.user?.role === 'admin' && req.user.adminUnlocked !== true) {
+        return res.status(403).json({
+            success: false,
+            code: 'admin_pin_required',
+            message: 'Admin PIN required.',
+        });
     }
     return next();
 }
@@ -126,12 +151,23 @@ async function requireAuthUnlessPublic(req, res, next) {
         return next();
     }
 
-    return attachUser(req, res, next);
+    return attachUser(req, res, (err) => {
+        if (err) return next(err);
+        if (isAdminPinExempt(req.originalUrl)) return next();
+        return rejectIfAdminLocked(req, res, next);
+    });
 }
 
 function requireAdmin(req, res, next) {
     if (!req.user?.id) {
         return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    if (req.user.role === 'admin' && req.user.adminUnlocked !== true) {
+        return res.status(403).json({
+            success: false,
+            code: 'admin_pin_required',
+            message: 'Admin PIN required.',
+        });
     }
     if (req.user.role !== 'admin' && !userHasPage(req.user.pages, 'admin')) {
         return res.status(403).json({ success: false, message: 'Admin access required.' });
@@ -144,7 +180,17 @@ function requirePagePermission(pageKey) {
         if (!req.user?.id) {
             return res.status(401).json({ success: false, message: 'Authentication required.' });
         }
-        if (req.user.role === 'admin' || userHasPage(req.user.pages, pageKey)) {
+        if (req.user.role === 'admin') {
+            if (req.user.adminUnlocked !== true) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'admin_pin_required',
+                    message: 'Admin PIN required.',
+                });
+            }
+            return next();
+        }
+        if (userHasPage(req.user.pages, pageKey)) {
             return next();
         }
         return res.status(403).json({ success: false, message: `Missing permission: ${pageKey}` });
@@ -250,13 +296,18 @@ async function verifyRequestAuth(request) {
     const payload = await verifyUserToken(token);
     if (!payload?.sub) return null;
     const pages = await loadUserPermissions(payload.sub, payload.role);
-    return {
+    const user = {
         id: payload.sub,
         email: payload.email,
         role: payload.role,
         name: payload.name,
         pages,
+        adminUnlocked: isAdminUnlocked(payload),
     };
+    if (payload.role === 'admin' && user.adminUnlocked !== true) {
+        return null;
+    }
+    return user;
 }
 
 async function verifyRequestDeviceAccess(request, deviceId) {
@@ -287,4 +338,5 @@ module.exports = {
     parseCookies,
     loadUserPermissions,
     userCanAccessAnyDevice,
+    rejectIfAdminLocked,
 };

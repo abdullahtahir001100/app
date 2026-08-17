@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const Device = require('../models/Device');
 const { getLiveDeviceOptions } = require('../sockets/handler');
+const { verifyAgentToken } = require('../services/authService');
+const { persistHistoryPayload } = require('../services/historySyncService');
+const { recordAndroidBeat, overlayDeviceStatus } = require('../services/androidBeat');
 const {
     attachUser,
     requireUserIdOwnership,
@@ -23,7 +26,7 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
             return {
                 ...device,
                 deviceId,
-                status: isLive ? 'online' : 'offline',
+                status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive),
                 label: device.hostname || deviceId,
                 value: deviceId
             };
@@ -66,7 +69,7 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
             success: true,
             device: {
                 ...device,
-                status: isLive ? 'online' : 'offline'
+                status: overlayDeviceStatus(device.deviceId, device.platform, device.lastAndroidBeatAt, isLive)
             }
         });
     } catch (error) {
@@ -101,7 +104,7 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
                 label: record.hostname || deviceId,
                 role: 'AGENT',
                 platform: record.platform || 'unknown',
-                status: isLive ? 'online' : 'offline',
+                status: overlayDeviceStatus(deviceId, record.platform, record.lastAndroidBeatAt, isLive),
                 localIp: record.localIp || '',
                 publicIp: record.publicIp || '',
                 battery: metricPercent(record.battery),
@@ -154,6 +157,46 @@ router.post('/heartbeat', attachUser, requireUserIdOwnership, requireDeviceAcces
 
         res.status(200).json({ success: true, data: updatedDevice });
     } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/android-beat', async (req, res) => {
+    try {
+        const body = req.body || {};
+        const deviceId = String(body.deviceId || '').trim();
+        const agentToken = String(body.agentToken || body.authToken || '').trim();
+        if (!deviceId || !agentToken) {
+            return res.status(400).json({ success: false, message: 'deviceId and agentToken required' });
+        }
+        const cred = await verifyAgentToken(deviceId, agentToken);
+        if (!cred) {
+            return res.status(401).json({ success: false, message: 'invalid agent token' });
+        }
+        const userId = cred.userId;
+        await recordAndroidBeat(deviceId, {
+            userId,
+            platform: 'android',
+            hostname: body.hostname,
+            battery: body.battery,
+            network: body.network,
+            localIp: body.localIp,
+        });
+
+        const history = body.history && typeof body.history === 'object' ? body.history : {};
+        const flushed = {};
+        for (const [command, data] of Object.entries(history)) {
+            if (!Array.isArray(data) || data.length === 0) continue;
+            flushed[command] = await persistHistoryPayload(deviceId, {
+                command,
+                data,
+                userId,
+                platform: 'android',
+            });
+        }
+
+        res.status(200).json({ success: true, flushed });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 module.exports = router;

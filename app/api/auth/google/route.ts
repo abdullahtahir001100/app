@@ -133,7 +133,8 @@ export async function GET(request: NextRequest) {
       // registry may be unavailable in some Next-only deployments
     }
 
-    const response = NextResponse.redirect(new URL("/dashboard", appOrigin));
+    const dest = user.role === "admin" ? "/admin-pin?next=%2Fdashboard" : "/dashboard";
+    const response = NextResponse.redirect(new URL(dest, appOrigin));
     response.cookies.set(AUTH_COOKIE, token, authCookieOptions());
     clearStateCookie(response);
     return response;

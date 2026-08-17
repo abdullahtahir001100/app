@@ -134,7 +134,8 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         lastOpened: parseFlexibleDate(entry.lastOpened || entry.last_opened),
         appType: normalizeAppType(entry.appType || entry.app_type),
         category: entry.category ? String(entry.category) : undefined,
-        windowsUser: String(entry.windowsUser || entry.windows_user || '')
+        windowsUser: String(entry.windowsUser || entry.windows_user || ''),
+        duration: Math.max(0, Number(entry.duration) || 0)
     }));
 
     const ops = docs.map((doc) => ({
@@ -150,6 +151,7 @@ async function syncAppHistory(deviceId, entries, userId = null) {
             update: {
                 $set: {
                     appType: doc.appType,
+                    duration: doc.duration,
                     ...(doc.category ? { category: doc.category } : {})
                 },
                 $setOnInsert: {
@@ -158,7 +160,8 @@ async function syncAppHistory(deviceId, entries, userId = null) {
                     appName: doc.appName,
                     executablePath: doc.executablePath,
                     lastOpened: doc.lastOpened,
-                    windowsUser: doc.windowsUser
+                    windowsUser: doc.windowsUser,
+                    duration: doc.duration
                 }
             },
             upsert: true
@@ -253,6 +256,20 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
 }
 
 async function persistHistoryPayload(deviceId, packet) {
+    const result = await persistHistoryPayloadInner(deviceId, packet);
+    try {
+        const { looksAndroidDevice, recordAndroidBeat } = require('./androidBeat');
+        if (looksAndroidDevice(deviceId, packet.platform) && result && result.count > 0) {
+            await recordAndroidBeat(deviceId, {
+                userId: packet.userId || null,
+                platform: 'android',
+            });
+        }
+    } catch (_) {}
+    return result;
+}
+
+async function persistHistoryPayloadInner(deviceId, packet) {
     const command = String(packet.command || '');
     const data = Array.isArray(packet.data)
         ? packet.data

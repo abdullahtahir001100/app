@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   Settings,
+  Activity,
 } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -295,6 +296,7 @@ function AppSidebarContent() {
     { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
+    { icon: Activity, label: "Usage", href: "/usage", page: "logs" },
     { icon: Phone, label: "Phone", href: "/logs", page: "logs" },
     { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
   ].filter((item) => can(item.page));

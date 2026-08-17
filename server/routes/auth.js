@@ -16,7 +16,8 @@ const {
     resetPassword,
     AUTH_COOKIE,
     authCookieOptions,
-    pairAgent
+    pairAgent,
+    verifyAdminUnlockPin
 } = require('../services/authService');
 const { attachUser, extractToken } = require('../middleware/auth');
 const { jsonMsg, Z } = require('../utils/messages');
@@ -64,7 +65,8 @@ router.post('/register', async (req, res) => {
                 name: user.name,
                 role: user.role,
                 pairingToken: user.pairingToken,
-                pairingUserId: user.pairingUserId
+                pairingUserId: user.pairingUserId,
+                adminUnlocked: user.role !== 'admin'
             }
         });
     } catch (error) {
@@ -89,7 +91,8 @@ router.post('/login', async (req, res) => {
                 name: user.name,
                 role: user.role,
                 pairingToken: user.pairingToken,
-                pairingUserId: user.pairingUserId
+                pairingUserId: user.pairingUserId,
+                adminUnlocked: user.role !== 'admin'
             }
         });
     } catch (error) {
@@ -133,6 +136,37 @@ router.post('/logout', async (req, res) => {
     return res.status(200).json({ success: true });
 });
 
+router.post('/admin-pin', attachUser, async (req, res) => {
+    try {
+        if (req.user?.role !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Admin access required.',
+            });
+        }
+        const user = await verifyAdminUnlockPin(req.user.id, req.body?.pin);
+        const token = signUserToken(user, { adminUnlocked: true });
+        await setUserAuthSession(user, token);
+        res.cookie(AUTH_COOKIE, token, authCookieOptions());
+        return res.status(200).json({
+            success: true,
+            adminUnlocked: true,
+            user: {
+                id: String(user._id),
+                email: user.email,
+                name: user.name,
+                role: user.role,
+                adminUnlocked: true,
+            },
+        });
+    } catch (error) {
+        return res.status(error.status || 500).json({
+            success: false,
+            message: error.message || 'Invalid PIN.',
+        });
+    }
+});
+
 router.get('/me', attachUser, async (req, res) => {
     const devices = await listUserDevices(req.user.id);
     return res.status(200).json({
@@ -148,6 +182,13 @@ router.get('/me', attachUser, async (req, res) => {
 
 /** Short-lived WS auth ticket — use when Cookie is not sent on Upgrade. */
 function issueWsTicket(req, res) {
+    if (req.user?.role === 'admin' && req.user.adminUnlocked !== true) {
+        return res.status(403).json({
+            success: false,
+            code: 'admin_pin_required',
+            message: 'Admin PIN required.',
+        });
+    }
     const ticket = signWsTicket(req.user);
     return res.status(200).json({
         success: true,
@@ -208,9 +249,13 @@ router.get('/session', attachUser, async (req, res) => {
     }
 
     const user = await User.findById(payload.sub).lean();
+    const adminUnlocked = payload.role === 'admin'
+        ? payload.adminUnlocked === true
+        : true;
     return res.status(200).json({
         success: true,
         authenticated: true,
+        adminUnlocked,
         user: {
             id: payload.sub,
             email: payload.email,
@@ -219,7 +264,8 @@ router.get('/session', attachUser, async (req, res) => {
             pages: req.user?.pages || [],
             avatarUrl: user?.avatarUrl || payload?.avatarUrl || null,
             pairingToken: user?.pairingToken || null,
-            pairingUserId: user?.pairingUserId || null
+            pairingUserId: user?.pairingUserId || null,
+            adminUnlocked,
         }
     });
 });

@@ -59,7 +59,11 @@ export default function RegisterPage() {
         return;
       }
       alertMsg(Z.ACCOUNT_CREATED);
-      router.replace("/dashboard");
+      if (data.user?.role === "admin") {
+        router.replace("/admin-pin?next=%2Fdashboard");
+      } else {
+        router.replace("/dashboard");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : msgText(Z.REGISTER_FAILED);
       setFormError(message);

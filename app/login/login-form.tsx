@@ -65,7 +65,12 @@ export default function LoginForm() {
         return;
       }
       alertMsg(Z.SIGNED_IN);
-      router.replace(nextPath);
+      if (data.user?.role === "admin") {
+        const next = nextPath.startsWith("/") ? nextPath : "/dashboard";
+        router.replace(`/admin-pin?next=${encodeURIComponent(next)}`);
+      } else {
+        router.replace(nextPath);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : msgText(Z.AUTH_FAILED);
       setFormError(message);

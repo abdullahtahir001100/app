@@ -25,6 +25,7 @@ const {
     extractDeviceIdFromAgentSocket
 } = require('./historyHandler');
 const { userOwnsDevice, verifyAgentToken } = require('../services/authService');
+const { overlayDeviceStatus, looksAndroidDevice, recordAndroidBeat } = require('../services/androidBeat');
 const { logMsg, msgText, Z } = require('../utils/messages');
 const {
     extractOwnerUserId,
@@ -167,18 +168,22 @@ async function getDeviceOptions(userId = null, opts = {}) {
     const cached = deviceOptionsCache.get(cacheKey);
     if (cached && Date.now() - cached.at < 8000) {
         const liveIds = new Set(getLiveDeviceOptions(userId, { seeAll }).map((d) => d.value));
-        return cached.devices.map((d) => ({
-            ...d,
-            status: liveIds.has(d.value) ? 'online' : 'offline',
-            role: liveIds.has(d.value) ? 'AGENT' : 'DEVICE',
-        }));
+        return cached.devices.map((d) => {
+            const live = liveIds.has(d.value);
+            const status = overlayDeviceStatus(d.value, d.platform, d.lastAndroidBeatAt, live);
+            return {
+                ...d,
+                status,
+                role: status === 'online' ? 'AGENT' : 'DEVICE',
+            };
+        });
     }
 
     const liveDevices = getLiveDeviceOptions(userId, { seeAll });
     const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
     const query = seeAll ? {} : { userId };
     const allDevices = await Device.find(query)
-        .select('deviceId hostname platform localIp publicIp battery storage lastSeen network username userId')
+        .select('deviceId hostname platform localIp publicIp battery storage lastSeen lastAndroidBeatAt network username userId')
         .sort({ lastSeen: -1 })
         .lean()
         .maxTimeMS(2500);
@@ -190,14 +195,15 @@ async function getDeviceOptions(userId = null, opts = {}) {
         return {
             value: deviceId,
             label: device.hostname || deviceId,
-            role: isLive ? 'AGENT' : 'DEVICE',
-            status: isLive ? 'online' : 'offline',
+            role: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive) === 'online' ? 'AGENT' : 'DEVICE',
+            status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive),
             platform: device.platform && device.platform !== 'unknown' ? device.platform : '',
             localIp: device.localIp || '',
             publicIp: device.publicIp || '',
             battery: typeof device.battery === 'number' ? device.battery : null,
             storage: typeof device.storage === 'number' ? device.storage : null,
             lastSeen: device.lastSeen ? new Date(device.lastSeen).toISOString() : null,
+            lastAndroidBeatAt: device.lastAndroidBeatAt || null,
             network: device.network || '',
             hostname: device.hostname || '',
             username: device.username || '',
@@ -622,6 +628,15 @@ async function handleSocketMessage(ws, message) {
                         type: 'sys_ack',
                         status: 'auth_failed',
                         message: 'dashboard authentication required'
+                    }));
+                    ws.close();
+                    return;
+                }
+                if (ws.authContext?.user?.role === 'admin' && ws.authContext?.user?.adminUnlocked !== true) {
+                    ws.send(JSON.stringify({
+                        type: 'sys_ack',
+                        status: 'auth_failed',
+                        message: 'admin PIN required'
                     }));
                     ws.close();
                     return;
@@ -1167,6 +1182,10 @@ function handleActivityLog(ws, packet, activeConnections) {
         log: liveLog,
     });
 
+    if (looksAndroidDevice(deviceId, packet.platform)) {
+        void recordAndroidBeat(deviceId, { userId, platform: 'android' });
+    }
+
     const writeQueue = require('../services/writeQueue');
     const ActivityLog = require('../models/ActivityLog');
     writeQueue.enqueue(async () => {
@@ -1185,6 +1204,17 @@ function handleActivityLog(ws, packet, activeConnections) {
             executablePath: liveLog.executablePath,
         });
         await log.save();
+        const duration = Math.max(0, Number(metadata.duration || packet.duration || 0));
+        if (duration > 0 && (appName || processName) && userId) {
+            const { syncAppHistory } = require('../services/historySyncService');
+            await syncAppHistory(deviceId, [{
+                appName: appName || processName,
+                executablePath: liveLog.executablePath || processName,
+                lastOpened: createdAt,
+                duration,
+                appType: 'app',
+            }], userId);
+        }
     });
 }
 
@@ -1254,7 +1284,7 @@ function handleSocketClose(ws) {
     if (wasAgent && deviceId) {
         const ownerUserId = extractOwnerUserId(ws);
         // Debounce offline: only mark offline if still no live socket after grace.
-        const graceMs = 8000;
+        const graceMs = 45_000;
         setTimeout(() => {
             const live = activeConnections.get(key);
             if (live && live.readyState === 1) {

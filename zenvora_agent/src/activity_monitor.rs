@@ -7,6 +7,7 @@ use std::os::windows::process::CommandExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use serde_json::json;
 use tokio::time::{sleep, Duration};
@@ -69,6 +70,8 @@ pub fn start_activity_monitor(logger: Arc<ActivityLogger>) {
 async fn foreground_window_monitor() {
     let mut last_window = String::new();
     let mut last_process = String::new();
+    let mut session_start = Instant::now();
+    let mut last_usage_flush = Instant::now();
 
     loop {
         let Some(logger) = current_logger() else {
@@ -86,12 +89,60 @@ async fn foreground_window_monitor() {
             }
 
             if process_path != last_process {
+                if !last_process.is_empty() {
+                    let duration = session_start.elapsed().as_secs();
+                    let app_name = last_process
+                        .rsplit(['\\', '/'])
+                        .next()
+                        .unwrap_or(last_process.as_str())
+                        .to_string();
+                    logger.log(
+                        "app_closed",
+                        "application",
+                        "success",
+                        "Windows",
+                        &last_process,
+                        json!({
+                            "process": last_process,
+                            "appName": app_name,
+                            "executablePath": last_process,
+                            "duration": duration,
+                            "windowTitle": last_window,
+                        }),
+                    );
+                }
                 logger.log_app_opened(
                     "Windows",
                     &process_path,
                     json!({"windowTitle": window_title.clone()}),
                 );
                 last_process = process_path;
+                session_start = Instant::now();
+                last_usage_flush = Instant::now();
+            } else if session_start.elapsed().as_secs() >= 15 * 60
+                && last_usage_flush.elapsed().as_secs() >= 15 * 60
+            {
+                let duration = session_start.elapsed().as_secs();
+                let app_name = last_process
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or(last_process.as_str())
+                    .to_string();
+                logger.log(
+                    "app_session",
+                    "application",
+                    "success",
+                    "Windows",
+                    &last_process,
+                    json!({
+                        "process": last_process,
+                        "appName": app_name,
+                        "executablePath": last_process,
+                        "duration": duration,
+                        "windowTitle": window_title,
+                    }),
+                );
+                last_usage_flush = Instant::now();
             }
         }
 

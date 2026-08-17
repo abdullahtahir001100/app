@@ -22,7 +22,8 @@ export async function POST(request: NextRequest) {
         id: String(user._id),
         email: user.email,
         name: user.name,
-        role: user.role
+        role: user.role,
+        adminUnlocked: user.role !== "admin"
       }
     });
     response.cookies.set(AUTH_COOKIE, token, authCookieOptions());

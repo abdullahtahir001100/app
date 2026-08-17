@@ -130,6 +130,11 @@ const DeviceSchema = new mongoose.Schema(
     lastSeen: {
         type: Date,
         default: Date.now
+    },
+
+    lastAndroidBeatAt: {
+        type: Date,
+        default: null
     }
 },
 {

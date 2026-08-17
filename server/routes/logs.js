@@ -370,4 +370,56 @@ router.get('/contacts', attachUser, requirePagePermission('logs'), requireUserId
     }
 });
 
+router.get('/usage', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+    try {
+        const { deviceId, from, to } = req.query;
+        const query = { userId: req.user.id };
+        if (deviceId) query.deviceId = String(deviceId);
+        const start = from ? new Date(String(from)) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const end = to ? new Date(String(to)) : new Date();
+        query.lastOpened = { $gte: start, $lte: end };
+
+        const rows = await AppHistory.find(query).sort({ lastOpened: -1 }).limit(2000).lean();
+        const byApp = new Map();
+        const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, duration: 0, sessions: 0 }));
+        const timeline = [];
+
+        for (const row of rows) {
+            const duration = Math.max(0, Number(row.duration) || 0);
+            const name = String(row.appName || 'Unknown');
+            const opened = row.lastOpened ? new Date(row.lastOpened) : null;
+            const prev = byApp.get(name) || { appName: name, duration: 0, sessions: 0, lastOpened: row.lastOpened };
+            prev.duration += duration;
+            prev.sessions += 1;
+            if (row.lastOpened && (!prev.lastOpened || row.lastOpened > prev.lastOpened)) {
+                prev.lastOpened = row.lastOpened;
+            }
+            byApp.set(name, prev);
+            if (opened && !Number.isNaN(opened.getTime())) {
+                const hour = opened.getHours();
+                hourly[hour].duration += duration;
+                hourly[hour].sessions += 1;
+            }
+            timeline.push({
+                appName: name,
+                duration,
+                lastOpened: row.lastOpened,
+                executablePath: row.executablePath || '',
+            });
+        }
+
+        const apps = [...byApp.values()].sort((a, b) => b.duration - a.duration).slice(0, 40);
+        res.status(200).json({
+            success: true,
+            from: start.toISOString(),
+            to: end.toISOString(),
+            apps,
+            hourly,
+            timeline: timeline.slice(0, 200),
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

@@ -18,30 +18,43 @@ function getJwtSecret() {
     return JWT_SECRET;
 }
 
-function signUserToken(user) {
-    return jwt.sign(
-        {
-            sub: String(user._id),
-            email: user.email,
-            role: user.role,
-            name: user.name,
-            avatarUrl: user.avatarUrl || ''
-        },
-        getJwtSecret(),
-        { expiresIn: JWT_EXPIRES }
-    );
+function isAdminRole(role) {
+    return role === 'admin';
+}
+
+function isAdminUnlocked(payload) {
+    if (!payload || !isAdminRole(payload.role)) return true;
+    return payload.adminUnlocked === true;
+}
+
+function signUserToken(user, options = {}) {
+    const payload = {
+        sub: String(user._id || user.id || user.sub),
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        avatarUrl: user.avatarUrl || ''
+    };
+    if (isAdminRole(user.role)) {
+        payload.adminUnlocked = options.adminUnlocked === true;
+    }
+    return jwt.sign(payload, getJwtSecret(), { expiresIn: JWT_EXPIRES });
 }
 
 /** Short-lived ticket for browser WebSocket auth (cookie may not ride Upgrade). */
 function signWsTicket(user) {
+    const payload = {
+        sub: String(user.id || user._id || user.sub),
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        purpose: 'ws'
+    };
+    if (isAdminRole(user.role)) {
+        payload.adminUnlocked = user.adminUnlocked === true;
+    }
     return jwt.sign(
-        {
-            sub: String(user.id || user._id || user.sub),
-            email: user.email,
-            role: user.role,
-            name: user.name,
-            purpose: 'ws'
-        },
+        payload,
         getJwtSecret(),
         // 2m was too short under reconnect storms → expired ticket → pending →
         // "dashboard authentication required".
@@ -54,6 +67,7 @@ function verifyWsTicket(token) {
     try {
         const payload = jwt.verify(token, getJwtSecret());
         if (!payload?.sub || payload.purpose !== 'ws') return null;
+        if (!isAdminUnlocked(payload)) return null;
         return payload;
     } catch {
         return null;
@@ -91,6 +105,7 @@ function verifyUserTokenFast(token) {
     try {
         const payload = jwt.verify(token, getJwtSecret());
         if (!payload?.sub) return null;
+        if (!isAdminUnlocked(payload)) return null;
         return payload;
     } catch {
         return null;
@@ -623,6 +638,90 @@ async function ensureDefaultAdmin() {
     console.log('=> Default admin account created.');
     console.log(`=> Email: ${user.email}`);
     console.log('=> Password: (see DEFAULT_ADMIN_PASSWORD or admin123) — change after first login.');
+    console.log('=> Admin PIN: set ADMIN_UNLOCK_PIN (6 digits) before first dashboard unlock.');
+    return user;
+}
+
+const ADMIN_PIN_WINDOW_MS = 10 * 60 * 1000;
+const ADMIN_PIN_MAX_ATTEMPTS = 5;
+const adminPinAttempts = new Map();
+
+function normalizeAdminPin(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
+function checkAdminPinRateLimit(userId) {
+    const now = Date.now();
+    const rec = adminPinAttempts.get(String(userId));
+    if (!rec || now > rec.resetAt) {
+        adminPinAttempts.set(String(userId), { count: 0, resetAt: now + ADMIN_PIN_WINDOW_MS });
+        return { ok: true };
+    }
+    if (rec.count >= ADMIN_PIN_MAX_ATTEMPTS) {
+        return { ok: false, retryAfterMs: rec.resetAt - now };
+    }
+    return { ok: true };
+}
+
+function recordAdminPinFailure(userId) {
+    const now = Date.now();
+    const key = String(userId);
+    const rec = adminPinAttempts.get(key) || { count: 0, resetAt: now + ADMIN_PIN_WINDOW_MS };
+    rec.count += 1;
+    adminPinAttempts.set(key, rec);
+}
+
+function clearAdminPinFailures(userId) {
+    adminPinAttempts.delete(String(userId));
+}
+
+function bootstrapAdminPin() {
+    const pin = normalizeAdminPin(process.env.ADMIN_UNLOCK_PIN);
+    return /^\d{6}$/.test(pin) ? pin : '';
+}
+
+async function verifyAdminUnlockPin(userId, pin) {
+    const digits = normalizeAdminPin(pin);
+    if (!/^\d{6}$/.test(digits)) {
+        const err = new Error('Invalid PIN.');
+        err.status = 400;
+        throw err;
+    }
+
+    const rate = checkAdminPinRateLimit(userId);
+    if (!rate.ok) {
+        const err = new Error('Too many PIN attempts. Try again later.');
+        err.status = 429;
+        throw err;
+    }
+
+    const user = await User.findById(userId);
+    if (!user || user.role !== 'admin') {
+        const err = new Error('Admin access required.');
+        err.status = 403;
+        throw err;
+    }
+
+    let ok = false;
+    if (user.adminPinHash) {
+        ok = await bcrypt.compare(digits, user.adminPinHash);
+    } else {
+        const bootstrap = bootstrapAdminPin();
+        if (bootstrap && bootstrap === digits) {
+            ok = true;
+            user.adminPinHash = await bcrypt.hash(digits, 12);
+            await user.save();
+        }
+    }
+
+    if (!ok) {
+        recordAdminPinFailure(userId);
+        const err = new Error('Invalid PIN.');
+        err.status = 401;
+        throw err;
+    }
+
+    clearAdminPinFailures(userId);
     return user;
 }
 
@@ -634,6 +733,7 @@ module.exports = {
     verifyWsTicket,
     verifyUserToken,
     verifyUserTokenFast,
+    isAdminUnlocked,
     setUserAuthSession,
     clearUserAuthSession,
     ensureAuthDatabase,
@@ -651,4 +751,5 @@ module.exports = {
     pairAgent,
     rotateUserPairingFields,
     updateUserPairingFields,
+    verifyAdminUnlockPin,
 };

@@ -66,6 +66,10 @@ const UserSchema = new mongoose.Schema({
     passwordResetOtpExpiresAt: {
         type: Date,
         default: null
+    },
+    adminPinHash: {
+        type: String,
+        default: ''
     }
 }, {
     timestamps: true

@@ -6,6 +6,7 @@ const Device = require('../models/Device');
 const AgentCredential = require('../models/AgentCredential');
 const { attachUser, requireAdmin } = require('../middleware/auth');
 const { getConnectionRegistry } = require('../sockets/registry');
+const { overlayDeviceStatus } = require('../services/androidBeat');
 
 router.use(attachUser, requireAdmin);
 
@@ -191,7 +192,7 @@ router.get('/devices', async (_req, res) => {
                 userId: String(d.userId || ''),
                 hostname: d.hostname || d.deviceId,
                 platform: d.platform,
-                status: online.has(String(d.deviceId)) ? 'online' : (d.status || 'offline'),
+                status: overlayDeviceStatus(String(d.deviceId), d.platform, d.lastAndroidBeatAt, online.has(String(d.deviceId))),
                 lastSeen: d.lastSeen || d.updatedAt,
                 battery: metricPercent(d.battery),
                 storage: metricPercent(d.storage),

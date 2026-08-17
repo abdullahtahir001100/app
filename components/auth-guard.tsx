@@ -11,16 +11,28 @@ function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
+function isAdminPinPath(pathname: string) {
+  return pathname === "/admin-pin" || pathname.startsWith("/admin-pin/");
+}
+
+function safeNextPath(pathname: string) {
+  if (!pathname.startsWith("/") || pathname.startsWith("//") || isAdminPinPath(pathname)) {
+    return "/dashboard";
+  }
+  return pathname;
+}
+
 /** Map URL path → Permission page key. null = no page ACL (auth only). */
 export function pathToPageKey(pathname: string): string | null {
   if (!pathname || pathname === "/") return null;
+  if (pathname.startsWith("/admin-pin")) return null;
   if (pathname.startsWith("/admin")) return "admin";
   if (pathname.startsWith("/console")) return "console";
   if (pathname.startsWith("/screen")) return "screen";
   if (pathname.startsWith("/camera")) return "camera";
   if (pathname.startsWith("/files")) return "files";
   if (pathname.startsWith("/shell")) return "shell";
-  if (pathname.startsWith("/logs")) return "logs";
+  if (pathname.startsWith("/logs") || pathname.startsWith("/usage")) return "logs";
   if (pathname.startsWith("/notifications")) return "notifications";
   if (pathname.startsWith("/settings")) return null;
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/devices")) return "dashboard";
@@ -73,6 +85,32 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
         if (response.ok && data?.authenticated) {
           const userId = data?.user?.id ? String(data.user.id) : null;
+          const role = data?.user?.role as string | undefined;
+          const pages = (data?.user?.pages || []) as string[];
+          const adminUnlocked =
+            role !== "admin" || data?.user?.adminUnlocked === true || data?.adminUnlocked === true;
+
+          if (role === "admin" && !adminUnlocked) {
+            gatewayClient.setAuthEnabled(false);
+            if (isAdminPinPath(pathname)) {
+              bindDeviceCacheUser(userId);
+              setAuthorized(true);
+              return;
+            }
+            router.replace(`/admin-pin?next=${encodeURIComponent(safeNextPath(pathname))}`);
+            return;
+          }
+
+          if (isAdminPinPath(pathname)) {
+            const next = safeNextPath(
+              typeof window !== "undefined"
+                ? new URLSearchParams(window.location.search).get("next") || "/dashboard"
+                : "/dashboard"
+            );
+            router.replace(next);
+            return;
+          }
+
           bindDeviceCacheUser(userId);
           gatewayClient.setAuthEnabled(true);
           gatewayClient.bindUser(userId);
@@ -82,8 +120,6 @@ export function AuthGuard({ children }: { children: ReactNode }) {
           }
 
           const pageKey = pathToPageKey(pathname);
-          const role = data?.user?.role as string | undefined;
-          const pages = (data?.user?.pages || []) as string[];
           if (pageKey && !userCanAccessPage(role, pages, pageKey)) {
             setAuthorized(false);
             setForbidden(true);

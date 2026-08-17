@@ -369,6 +369,7 @@ const { handleSocketMessage, handleSocketClose } = require('./handler');
 const {
     verifyUserTokenFast,
     verifyWsTicket,
+    isAdminUnlocked,
     AUTH_COOKIE,
 } = require('../services/authService');
 
@@ -785,6 +786,15 @@ function authenticateGatewayRequest(req) {
             normalUser;
 
         if (user?.sub) {
+            if (!isAdminUnlocked(user)) {
+                return {
+                    ok: false,
+                    kind: 'reject',
+                    reason: 'admin_pin_required',
+                    ip: clientIp(req),
+                };
+            }
+
             wsDebug(
                 'AUTH',
                 'authentication successful',
@@ -805,6 +815,7 @@ function authenticateGatewayRequest(req) {
                     email: user.email,
                     role: user.role,
                     name: user.name,
+                    adminUnlocked: true,
                 },
             };
         }

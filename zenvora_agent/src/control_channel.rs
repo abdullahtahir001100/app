@@ -409,6 +409,7 @@ fn push_full_history_batches(
                     "lastOpened": e.last_opened,
                     "appType": e.app_type,
                     "windowsUser": e.windows_user,
+                    "duration": e.duration,
                 })
             })
             .collect();
@@ -531,6 +532,7 @@ fn push_app_delta(tx: &ControlTx, seq_out: &mut u64, cursors: &mut SyncCursors) 
                 "lastOpened": e.last_opened,
                 "appType": e.app_type,
                 "windowsUser": e.windows_user,
+                "duration": e.duration,
             })
         })
         .collect();

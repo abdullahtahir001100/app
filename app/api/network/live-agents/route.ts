@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     const { getConnectionRegistry } = require("../../../../server/sockets/registry");
     const { getLiveDeviceOptions } = require("../../../../server/sockets/handler");
     const { verifyRequestAuth } = require("../../../../server/middleware/auth");
-    const Device = require("../../../../server/models/Device");
+    const { overlayDeviceStatus } = require("../../../../server/services/androidBeat");
 
     const user = await verifyRequestAuth(request);
     if (!user?.id) {
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
         platform: record.platform || null,
         localIp: record.localIp || null,
         publicIp: record.publicIp || null,
-        status: isLive ? "online" : "offline",
+        status: overlayDeviceStatus(deviceId, record.platform, (record as { lastAndroidBeatAt?: Date }).lastAndroidBeatAt, isLive),
         battery: typeof record.battery === "number" ? record.battery : null,
         storage: typeof record.storage === "number" ? record.storage : null,
         lastSeen: record.lastSeen ? record.lastSeen.toISOString() : null,

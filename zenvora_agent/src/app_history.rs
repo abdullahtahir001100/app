@@ -19,6 +19,8 @@ pub struct AppHistory {
     pub app_type: String, // "app" or "file"
     #[serde(default)]
     pub windows_user: String,
+    #[serde(default)]
+    pub duration: u64,
 }
 
 pub struct AppHistoryCollector;
@@ -102,6 +104,7 @@ impl AppHistoryCollector {
                             last_opened,
                             app_type: "file".to_string(),
                             windows_user: windows_user.to_string(),
+                            duration: 0,
                         });
                     }
                 }
@@ -139,6 +142,7 @@ impl AppHistoryCollector {
                                 last_opened: now.clone(),
                                 app_type: "process".to_string(),
                                 windows_user: user.clone(),
+                                duration: 0,
                             });
                         }
                     }
@@ -174,6 +178,7 @@ impl AppHistoryCollector {
                             last_opened: now.clone(),
                             app_type: "app".to_string(),
                             windows_user: user.clone(),
+                            duration: 0,
                         });
                     }
                 }
@@ -217,6 +222,7 @@ impl AppHistoryCollector {
             "lastOpened": a.last_opened,
             "appType": a.app_type,
             "windowsUser": a.windows_user,
+            "duration": a.duration,
         })).collect::<Vec<_>>())
     }
 }
