@@ -234,6 +234,7 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
     for (const entry of entries) {
         const action = String(entry.action || entry.event || entry.type || '').trim();
         if (!action) continue;
+        const duration = Math.max(0, Number(entry.duration) || Number(entry.metadata?.duration) || 0);
         await ActivityLog.create({
             deviceId,
             userId,
@@ -248,8 +249,19 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
             device: String(entry.device || deviceId),
             details: String(entry.details || entry.message || ''),
             status: String(entry.status || 'success'),
+            duration,
             metadata: entry.metadata || entry,
         });
+        if (action === 'app_closed' && duration > 0) {
+            await syncAppHistory(deviceId, [{
+                appName: String(entry.appName || entry.app_name || entry.processName || 'Unknown'),
+                executablePath: String(entry.executablePath || entry.executable_path || entry.processName || ''),
+                lastOpened: entry.lastOpened || entry.timestamp || new Date(),
+                duration,
+                appType: 'app',
+                category: 'session',
+            }], userId);
+        }
         count += 1;
     }
     return { count };

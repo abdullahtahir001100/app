@@ -373,42 +373,68 @@ router.get('/contacts', attachUser, requirePagePermission('logs'), requireUserId
 router.get('/usage', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, from, to } = req.query;
-        const query = { userId: req.user.id };
-        if (deviceId) query.deviceId = String(deviceId);
         const start = from ? new Date(String(from)) : new Date(Date.now() - 24 * 60 * 60 * 1000);
         const end = to ? new Date(String(to)) : new Date();
-        query.lastOpened = { $gte: start, $lte: end };
+        const scope = { userId: req.user.id };
+        if (deviceId) scope.deviceId = String(deviceId);
 
-        const rows = await AppHistory.find(query).sort({ lastOpened: -1 }).limit(2000).lean();
+        const [historyRows, activityRows] = await Promise.all([
+            AppHistory.find({
+                ...scope,
+                lastOpened: { $gte: start, $lte: end },
+                duration: { $gt: 0 },
+                category: { $ne: 'usagestats' },
+            }).sort({ lastOpened: -1 }).limit(2000).lean(),
+            ActivityLog.find({
+                ...scope,
+                createdAt: { $gte: start, $lte: end },
+                action: 'app_closed',
+            }).sort({ createdAt: -1 }).limit(2000).lean(),
+        ]);
+
         const byApp = new Map();
         const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, duration: 0, sessions: 0 }));
         const timeline = [];
 
-        for (const row of rows) {
-            const duration = Math.max(0, Number(row.duration) || 0);
-            const name = String(row.appName || 'Unknown');
-            const opened = row.lastOpened ? new Date(row.lastOpened) : null;
-            const prev = byApp.get(name) || { appName: name, duration: 0, sessions: 0, lastOpened: row.lastOpened };
-            prev.duration += duration;
+        const add = (name, duration, at) => {
+            const seconds = Math.max(0, Number(duration) || 0);
+            if (seconds <= 0) return;
+            const appName = String(name || 'Unknown').trim() || 'Unknown';
+            const prev = byApp.get(appName) || { appName, duration: 0, sessions: 0, lastOpened: at };
+            prev.duration += seconds;
             prev.sessions += 1;
-            if (row.lastOpened && (!prev.lastOpened || row.lastOpened > prev.lastOpened)) {
-                prev.lastOpened = row.lastOpened;
-            }
-            byApp.set(name, prev);
+            if (at && (!prev.lastOpened || at > prev.lastOpened)) prev.lastOpened = at;
+            byApp.set(appName, prev);
+            const opened = at ? new Date(at) : null;
             if (opened && !Number.isNaN(opened.getTime())) {
-                const hour = opened.getHours();
-                hourly[hour].duration += duration;
-                hourly[hour].sessions += 1;
+                hourly[opened.getHours()].duration += seconds;
+                hourly[opened.getHours()].sessions += 1;
             }
-            timeline.push({
-                appName: name,
-                duration,
-                lastOpened: row.lastOpened,
-                executablePath: row.executablePath || '',
-            });
+            timeline.push({ appName, duration: seconds, lastOpened: at });
+        };
+
+        const closed = activityRows.filter((row) => {
+            const seconds = Math.max(0, Number(row.duration) || Number(row.metadata?.duration) || 0);
+            return seconds > 0;
+        });
+
+        if (closed.length > 0) {
+            for (const row of closed) {
+                add(
+                    row.appName || row.processName || row.details,
+                    Number(row.duration) || Number(row.metadata?.duration) || 0,
+                    row.createdAt
+                );
+            }
+        } else {
+            for (const row of historyRows) {
+                add(row.appName, row.duration, row.lastOpened);
+            }
         }
 
         const apps = [...byApp.values()].sort((a, b) => b.duration - a.duration).slice(0, 40);
+        timeline.sort((a, b) => b.duration - a.duration);
+
         res.status(200).json({
             success: true,
             from: start.toISOString(),

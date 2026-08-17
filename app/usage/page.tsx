@@ -97,29 +97,36 @@ export default function UsagePage() {
 
   const barData = useMemo(
     () =>
-      (data?.apps || []).slice(0, 12).map((app) => ({
-        name: app.appName.length > 18 ? `${app.appName.slice(0, 16)}…` : app.appName,
-        minutes: Math.round(app.duration / 60),
-        duration: app.duration,
-      })),
+      [...(data?.apps || [])]
+        .sort((a, b) => b.duration - a.duration)
+        .slice(0, 12)
+        .map((app) => ({
+          name: app.appName.length > 22 ? `${app.appName.slice(0, 20)}…` : app.appName,
+          seconds: app.duration,
+          label: formatDuration(app.duration),
+        })),
     [data]
   );
 
-  const pieData = useMemo(
-    () =>
-      (data?.apps || []).slice(0, 8).map((app) => ({
-        name: app.appName,
-        value: Math.max(1, Math.round(app.duration / 60)),
-      })),
-    [data]
-  );
+  const pieData = useMemo(() => {
+    const apps = [...(data?.apps || [])].sort((a, b) => b.duration - a.duration).slice(0, 8);
+    const total = apps.reduce((sum, app) => sum + app.duration, 0) || 1;
+    return apps.map((app) => ({
+      name: app.appName,
+      value: app.duration,
+      percent: Math.round((app.duration / total) * 100),
+    }));
+  }, [data]);
 
   const threeData = useMemo(
     () =>
-      (data?.apps || []).slice(0, 10).map((app) => ({
-        label: app.appName,
-        count: Math.max(1, Math.round(app.duration / 60)),
-      })),
+      [...(data?.apps || [])]
+        .sort((a, b) => b.duration - a.duration)
+        .slice(0, 10)
+        .map((app) => ({
+          label: app.appName,
+          count: Math.max(1, app.duration),
+        })),
     [data]
   );
 
@@ -127,7 +134,7 @@ export default function UsagePage() {
     () =>
       (data?.hourly || []).map((row) => ({
         hour: `${String(row.hour).padStart(2, "0")}:00`,
-        minutes: Math.round(row.duration / 60),
+        seconds: row.duration,
       })),
     [data]
   );
@@ -139,7 +146,7 @@ export default function UsagePage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-semibold">Usage</h1>
-            <p className="text-sm text-muted-foreground">Time spent in apps over the last 24 hours</p>
+            <p className="text-sm text-muted-foreground">Time spent from Activity and App History</p>
           </div>
           <div className="w-72">
             <Select
@@ -183,22 +190,22 @@ export default function UsagePage() {
         {tab === "charts" ? (
           <div className="grid gap-6 lg:grid-cols-2">
             <Card className="p-4">
-              <h2 className="mb-4 text-sm font-medium">Time by app (minutes)</h2>
-              <div className="h-72">
+              <h2 className="mb-4 text-sm font-medium">Longest apps (seconds)</h2>
+              <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={barData}>
+                  <BarChart data={barData} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-25} textAnchor="end" height={70} />
-                    <YAxis />
-                    <Tooltip formatter={(value) => [`${value} min`, "Time"]} />
-                    <Bar dataKey="minutes" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(value) => [formatDuration(Number(value) || 0), "Time"]} />
+                    <Bar dataKey="seconds" fill="#10b981" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
             <Card className="p-4">
-              <h2 className="mb-4 text-sm font-medium">Share of time</h2>
-              <div className="h-72">
+              <h2 className="mb-4 text-sm font-medium">Share of time (%)</h2>
+              <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={90}>
@@ -206,27 +213,33 @@ export default function UsagePage() {
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value, name) => [`${value} min`, String(name)]} />
+                    <Tooltip
+                      formatter={(value, name) => {
+                        const seconds = Number(value) || 0;
+                        const row = pieData.find((p) => p.name === String(name));
+                        return [`${formatDuration(seconds)} (${row?.percent ?? 0}%)`, String(name)];
+                      }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
             </Card>
             <Card className="p-4 lg:col-span-2">
-              <h2 className="mb-4 text-sm font-medium">Hourly activity</h2>
+              <h2 className="mb-4 text-sm font-medium">Time spent by hour</h2>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hourlyData}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                     <XAxis dataKey="hour" tick={{ fontSize: 11 }} />
                     <YAxis />
-                    <Tooltip formatter={(value) => [`${value} min`, "Time"]} />
-                    <Bar dataKey="minutes" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Tooltip formatter={(value) => [formatDuration(Number(value) || 0), "Time"]} />
+                    <Bar dataKey="seconds" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
             <Card className="p-4 lg:col-span-2">
-              <h2 className="mb-4 text-sm font-medium">Recent sessions</h2>
+              <h2 className="mb-4 text-sm font-medium">Time spent</h2>
               <div className="max-h-80 overflow-auto text-sm">
                 {(data?.timeline || []).slice(0, 40).map((row, i) => (
                   <div key={`${row.appName}-${i}`} className="flex justify-between border-b border-border/40 py-2">
@@ -242,7 +255,7 @@ export default function UsagePage() {
           </div>
         ) : (
           <Card className="p-4">
-            <h2 className="mb-4 text-sm font-medium">3D time spent (minutes)</h2>
+            <h2 className="mb-4 text-sm font-medium">3D time spent (seconds)</h2>
             <DeviceUserDataThreeChart data={threeData} />
           </Card>
         )}

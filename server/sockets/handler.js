@@ -1202,10 +1202,12 @@ function handleActivityLog(ws, packet, activeConnections) {
             processName,
             windowTitle,
             executablePath: liveLog.executablePath,
+            duration: Math.max(0, Number(metadata.duration || packet.duration || 0)),
         });
         await log.save();
-        const duration = Math.max(0, Number(metadata.duration || packet.duration || 0));
-        if (duration > 0 && (appName || processName) && userId) {
+        const duration = Math.max(0, Number(log.duration) || 0);
+        const closed = String(liveLog.action) === 'app_closed';
+        if (closed && duration > 0 && (appName || processName) && userId) {
             const { syncAppHistory } = require('../services/historySyncService');
             await syncAppHistory(deviceId, [{
                 appName: appName || processName,
@@ -1213,6 +1215,7 @@ function handleActivityLog(ws, packet, activeConnections) {
                 lastOpened: createdAt,
                 duration,
                 appType: 'app',
+                category: 'session',
             }], userId);
         }
     });
