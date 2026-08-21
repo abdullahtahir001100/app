@@ -69,21 +69,21 @@ export function OpsCanvasWindowView({
 
   return (
     <div
-      className="absolute overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-lg backdrop-blur-md transition-[opacity,transform] duration-300 ease-out"
+      className="absolute overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white/90 via-purple-50/30 to-blue-50/40 p-4 shadow-md backdrop-blur-md"
       style={{
         left: win.x,
         top: win.y,
         width: win.w,
-        height: win.h,
+        
         zIndex: win.z,
         opacity: entered ? 1 : 0,
-        transform: entered ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
+        transform: entered ? "translateY(0) translateX(23rem) scale(1)" : "translateY(12px) translateX(0) scale(0.97)",
       }}
       onPointerDown={() => onFocus(win.id)}
     >
       {/* Window Title Bar */}
       <div
-        className="flex cursor-grab items-center gap-2 border-b border-slate-100 bg-slate-50/50 px-3.5 py-2.5 active:cursor-grabbing"
+        className="flex cursor-grab items-center gap-2 border-b border-slate-100 bg-slate-50/50  active:cursor-grabbing px-[11px]"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -103,7 +103,7 @@ export function OpsCanvasWindowView({
       </div>
 
       {/* Window Body */}
-      <div className="h-[calc(100%-41px)] overflow-auto p-3.5 text-sm text-slate-700">
+      <div className="">
         {renderBody(win, screenCanvasRef, camImgRef, screenMeta)}
       </div>
     </div>
@@ -140,7 +140,7 @@ function renderBody(
   if (win.type === "screen") {
     return (
       <div className="flex h-full flex-col">
-        <p className="mb-2 text-[11px] font-medium text-slate-400">
+        <p className="absolute text-[#ff0000] right-[7px] top-[52px]">
           {screenMeta?.status || "connecting"} · {screenMeta?.fps || "0"} fps ·{" "}
           {screenMeta?.live ? "live" : "waiting"}
         </p>
