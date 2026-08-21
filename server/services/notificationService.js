@@ -1,7 +1,7 @@
 const Notification = require('../models/Notification');
 
 async function getNotifications(userId, { filter, search, page = 1, limit = 20 }) {
-    const query = { userId };
+    const query = { userId, isDeleted: { $ne: true } };
     if (filter && filter !== 'all') {
         query.category = filter;
     }
@@ -21,7 +21,7 @@ async function getNotifications(userId, { filter, search, page = 1, limit = 20 }
 }
 
 async function getNotificationById(userId, notificationId) {
-    return Notification.findOne({ _id: notificationId, userId }).lean();
+    return Notification.findOne({ _id: notificationId, userId, isDeleted: { $ne: true } }).lean();
 }
 
 async function createNotification(userId, notificationData) {
@@ -42,7 +42,8 @@ async function markAllNotificationsAsRead(deviceId) {
     return Notification.updateMany(
         {
             deviceId,
-            read: false
+            read: false,
+            isDeleted: { $ne: true }
         },
         {
             $set: {
@@ -53,11 +54,18 @@ async function markAllNotificationsAsRead(deviceId) {
 }
 
 async function deleteNotification(userId, notificationId) {
-    return Notification.findOneAndDelete({ _id: notificationId, userId });
+    return Notification.findOneAndUpdate(
+        { _id: notificationId, userId },
+        { $set: { isDeleted: true } },
+        { new: true }
+    );
 }
 
 async function deleteNotifications(userId, notificationIds) {
-    return Notification.deleteMany({ _id: { $in: notificationIds }, userId });
+    return Notification.updateMany(
+        { _id: { $in: notificationIds }, userId },
+        { $set: { isDeleted: true } }
+    );
 }
 
 module.exports = {

@@ -1,6 +1,7 @@
 use crate::agent::AgentState;
 use crate::commands::{handle_command, CommandResponse, IncomingPacket};
 use crate::file_commands::{handle_file_command, is_file_action};
+use crate::heal_ai::{handle_heal_command, is_heal_action};
 use crate::screen_commands::{handle_screen_command, is_screen_action};
 use crate::history_commands::HistoryCommand;
 use crate::shell_commands::{handle_shell_command, is_shell_action};
@@ -143,6 +144,8 @@ pub fn is_audio_action(action: &str) -> bool {
 pub fn dispatch_command(packet: IncomingPacket, agent: &mut AgentState) -> Option<CommandResponse> {
     if is_agent_control_action(&packet.action) {
         handle_agent_control_command(&packet.action, &packet.payload)
+    } else if is_heal_action(&packet.action) {
+        handle_heal_command(&packet.action, &packet.payload)
     } else if is_history_action(&packet.action) {
         handle_history_command(&packet.action)
     } else if is_shell_action(&packet.action) {

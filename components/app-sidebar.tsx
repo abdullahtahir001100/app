@@ -21,6 +21,7 @@ import {
   ChevronUp,
   Settings,
   Activity,
+  Sparkles,
 } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -294,6 +295,7 @@ function AppSidebarContent() {
     { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
     { icon: FileText, label: "File Manager", href: "/files", page: "files" },
     { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
+    { icon: Sparkles, label: "Agent Ops", href: "/ops", page: "shell" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
     { icon: Activity, label: "Usage", href: "/usage", page: "logs" },

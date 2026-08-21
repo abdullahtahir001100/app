@@ -209,6 +209,7 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
                     icon: String(entry.icon || ""),
                     category: String(entry.category || "other"),
                     read: false,
+                    isDeleted: false,
                     createdAt: new Date()
                 }
             },

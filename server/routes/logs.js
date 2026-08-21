@@ -448,4 +448,63 @@ router.get('/usage', attachUser, requirePagePermission('logs'), requireUserIdOwn
     }
 });
 
+/** App drill-down: activity + browser visits related to one app name (Chrome, etc.). */
+router.get('/usage/detail', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+    try {
+        const deviceId = req.query.deviceId ? String(req.query.deviceId) : '';
+        const appName = String(req.query.appName || req.query.app || '').trim();
+        if (!deviceId || !appName) {
+            return res.status(400).json({ success: false, message: 'deviceId and appName required' });
+        }
+        const start = req.query.from
+            ? new Date(String(req.query.from))
+            : new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const end = req.query.to ? new Date(String(req.query.to)) : new Date();
+        const scope = { userId: req.user.id, deviceId };
+        const appRe = new RegExp(appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+        const isBrowser = /chrome|edge|firefox|brave|opera|safari|browser|msedge/i.test(appName);
+
+        const [activity, appSessions, browser] = await Promise.all([
+            ActivityLog.find({
+                ...scope,
+                createdAt: { $gte: start, $lte: end },
+                $or: [
+                    { appName: appRe },
+                    { processName: appRe },
+                    { executablePath: appRe },
+                    { details: appRe },
+                    { windowTitle: appRe },
+                ],
+            }).sort({ createdAt: -1 }).limit(300).lean(),
+            AppHistory.find({
+                ...scope,
+                lastOpened: { $gte: start, $lte: end },
+                appName: appRe,
+                duration: { $gt: 0 },
+            }).sort({ lastOpened: -1 }).limit(100).lean(),
+            isBrowser
+                ? BrowserHistory.find({
+                    ...scope,
+                    visitTime: { $gte: start, $lte: end },
+                }).sort({ visitTime: -1 }).limit(200).lean()
+                : Promise.resolve([]),
+        ]);
+
+        res.status(200).json({
+            success: true,
+            appName,
+            deviceId,
+            from: start.toISOString(),
+            to: end.toISOString(),
+            isBrowser,
+            activity,
+            appSessions,
+            browserHistory: browser,
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

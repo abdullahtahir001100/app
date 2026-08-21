@@ -909,6 +909,22 @@ async function handleSocketMessage(ws, message) {
             return;
         }
 
+        if (packet.type === 'heal_result' && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
+            const ownerUserId = extractOwnerUserId(ws);
+            const deviceId = extractDeviceIdFromAgentSocket(ws);
+            forwardPacketToDashboards(
+                { ...packet, deviceId, senderAgentId: deviceId },
+                activeConnections,
+                ownerUserId
+            );
+            // History payloads embedded in heal results should still persist.
+            const nested = packet.result?.payload;
+            if (nested && (nested.command || nested.data)) {
+                void handleHistoryAgentResponse(ws, nested, activeConnections);
+            }
+            return;
+        }
+
         if (isHistoryAgentResponse(packet) && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
             void handleHistoryAgentResponse(ws, packet, activeConnections);
             return;

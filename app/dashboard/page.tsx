@@ -804,6 +804,15 @@ export default function DashboardPage() {
                                 >
                                   Screen
                                 </button>
+                                <button
+                                  className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                                  onClick={() => {
+                                    setOpenControlMenu(null);
+                                    router.push(`/ops?device=${device.id}`);
+                                  }}
+                                >
+                                  Agent Ops
+                                </button>
                               </div>
                             )}
                           </div>

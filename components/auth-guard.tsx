@@ -31,7 +31,7 @@ export function pathToPageKey(pathname: string): string | null {
   if (pathname.startsWith("/screen")) return "screen";
   if (pathname.startsWith("/camera")) return "camera";
   if (pathname.startsWith("/files")) return "files";
-  if (pathname.startsWith("/shell")) return "shell";
+  if (pathname.startsWith("/shell") || pathname.startsWith("/ops")) return "shell";
   if (pathname.startsWith("/logs") || pathname.startsWith("/usage")) return "logs";
   if (pathname.startsWith("/notifications")) return "notifications";
   if (pathname.startsWith("/settings")) return null;

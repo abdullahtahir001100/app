@@ -22,6 +22,7 @@ mod notifications;
 mod browser_history;
 mod app_history;
 mod history_commands;
+mod heal_ai;
 mod shell_commands;
 mod service;
 mod ui_notify;
