@@ -3,13 +3,24 @@
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ArrowLeft,
   Camera,
-  Globe,
-  Info,
+  Eraser,
   Monitor,
-  Send,
-  SquareTerminal,
-  Terminal,
+  Sparkles,
+  Plus,
+  Globe,
+  Palette,
+  Mic,
+  ArrowUp,
+  CheckCircle2,
+  Loader2,
+  X,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Cpu,
+  Copy,
 } from "lucide-react";
 import { useGateway } from "@/hooks/use-gateway";
 import { useScreenRemote } from "@/hooks/use-screen-remote";
@@ -24,12 +35,13 @@ function OpsPageInner() {
   const selectedDeviceRef = useRef("");
   const camImgRef = useRef<HTMLImageElement | null>(null);
   const camUrlRef = useRef<string | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null);
   const canvasBoardRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedDevice, setSelectedDevice] = useState(
     searchParams.get("device") || ""
   );
+  const [isLogOpen, setIsLogOpen] = useState(true);
+
   const { devices, subscribe, resolveTarget } = useGateway();
 
   const {
@@ -44,6 +56,8 @@ function OpsPageInner() {
     focusWindow,
     closeWindow,
     moveWindow,
+    clearCanvas,
+    gatewayStatus,
   } = useAgentOps(selectedDevice);
 
   const hasScreenWin = windows.some((w) => w.type === "screen");
@@ -69,10 +83,7 @@ function OpsPageInner() {
       setSelectedDevice(requested);
       return;
     }
-    if (
-      selectedDeviceRef.current &&
-      known.includes(selectedDeviceRef.current)
-    )
+    if (selectedDeviceRef.current && known.includes(selectedDeviceRef.current))
       return;
     const next = resolveTarget() || known[0] || "";
     selectedDeviceRef.current = next;
@@ -82,10 +93,6 @@ function OpsPageInner() {
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
   }, [selectedDevice]);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, busy]);
 
   useEffect(() => {
     if (!hasCameraWin || !selectedDevice) return;
@@ -136,139 +143,257 @@ function OpsPageInner() {
     void send();
   };
 
-  const handleQuickAction = (promptText: string) => {
-    setDraft(promptText);
-  };
-
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#fafafa] text-slate-800">
-      {/* Light dot grid canvas atmosphere */}
+    <div className="relative min-h-screen overflow-hidden bg-[#fafafa] text-slate-800 font-sans">
+      {/* High Visibility Dot Grid Background */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-50"
+        className="pointer-events-none absolute inset-0 opacity-100"
         style={{
           backgroundImage:
-            "radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.35) 1px, transparent 0)",
+            "radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.18) 1.2px, transparent 0)",
           backgroundSize: "24px 24px",
         }}
       />
 
-      {/* Full Screen Canvas Container */}
-      <div className="absolute inset-0 overflow-auto">
+      {/* Top Header / Control Actions */}
+      <header className="relative z-30 flex items-center justify-between px-6 py-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back
+          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedDevice}
+              onChange={(e) => {
+                selectedDeviceRef.current = e.target.value;
+                setSelectedDevice(e.target.value);
+                router.replace(
+                  `/ops?device=${encodeURIComponent(e.target.value)}`
+                );
+              }}
+              className="rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm outline-none backdrop-blur focus:ring-2 focus:ring-slate-300"
+            >
+              {devices.length === 0 && <option value="">No agents</option>}
+              {devices.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label || d.value}
+                </option>
+              ))}
+            </select>
+            <span className="rounded-full bg-slate-200/70 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
+              {gatewayStatus}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void startMonitor("screen")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+          >
+            <Monitor className="h-3.5 w-3.5 text-slate-600" />
+            Screen
+          </button>
+          <button
+            type="button"
+            onClick={() => void startMonitor("camera")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+          >
+            <Camera className="h-3.5 w-3.5 text-slate-600" />
+            Camera
+          </button>
+          <button
+            type="button"
+            onClick={() => void clearCanvas()}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+          >
+            <Eraser className="h-3.5 w-3.5 text-slate-600" />
+            Clear
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/90 px-3.5 py-1.5 text-xs font-medium text-slate-800 shadow-sm backdrop-blur hover:bg-white"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </button>
+        </div>
+      </header>
+
+      {/* Main Canvas Area */}
+      <main className="relative z-10 h-[calc(100vh-73px)] w-full overflow-hidden">
+        {/* Floating Top-Left "Thinking" Widget */}
+        <div className="absolute left-6 top-4 z-20 w-80 rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white/90 via-purple-50/30 to-blue-50/40 p-4 shadow-md backdrop-blur-md">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-1 rounded-full bg-black px-2.5 py-1 text-[10px] text-white">
+              <span className="h-1.5 w-1.5 rounded-full bg-white"></span>
+              <span className="h-1.5 w-1.5 rounded-full bg-white"></span>
+            </div>
+            <button className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200/60 bg-white/60 p-2 text-xs text-slate-700">
+            <div className="flex items-center gap-2">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                A
+              </div>
+              <span className="font-medium">{selectedDevice || "agent-a"}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-slate-400">
+              <Copy className="h-3.5 w-3.5 cursor-pointer hover:text-slate-600" />
+              <ChevronDown className="h-3.5 w-3.5 cursor-pointer hover:text-slate-600" />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />
+            <span>
+              Agent &apos;{selectedDevice || "a"}&apos; - Status:{" "}
+              {busy ? "Thinking..." : "Ready"}
+            </span>
+          </div>
+        </div>
+
+        {/* Floating Bottom-Left "Query History & Agent Log" Widget */}
+        <div className="absolute left-6 bottom-24 z-20 w-80 rounded-2xl border border-slate-200/80 bg-white/80 shadow-md backdrop-blur-md">
+          <div className="border-b border-slate-100 p-3">
+            <h3 className="text-xs font-semibold text-slate-700">
+              Query History
+            </h3>
+          </div>
+
+          <div className="max-h-52 overflow-y-auto p-2 space-y-1">
+            <div className="flex items-center justify-between rounded-xl bg-slate-100/70 px-3 py-2 text-xs text-slate-700">
+              <span className="font-medium">Query</span>
+              <span className="text-slate-400">Status</span>
+            </div>
+
+            {messages.length === 0 ? (
+              <div className="flex items-center justify-between rounded-xl px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                    A
+                  </div>
+                  <span>Status query</span>
+                </div>
+                <CheckCircle2 className="h-4 w-4 text-slate-600" />
+              </div>
+            ) : (
+              messages.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between rounded-xl px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-500 text-[10px] font-bold text-white">
+                      {m.role === "user" ? "U" : "A"}
+                    </div>
+                    <span className="truncate">{m.text}</span>
+                  </div>
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-slate-600" />
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="border-t border-slate-100 p-2">
+            <button
+              onClick={() => setIsLogOpen(!isLogOpen)}
+              className="flex w-full items-center justify-between rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100/60"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-slate-600" />
+                <span>Agent log</span>
+              </div>
+              {isLogOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Floating Bottom Center Command Dock */}
+        <div className="absolute bottom-6 left-1/2 z-30 w-full max-w-2xl -translate-x-1/2 px-4">
+          <form
+            onSubmit={onSubmit}
+            className="flex items-center gap-2 rounded-2xl border border-slate-200/90 bg-white/90 p-2 shadow-lg backdrop-blur-md"
+          >
+            <button
+              type="button"
+              className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            <span className="text-slate-400 text-sm font-light">/</span>
+
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="What would you like to change or create?"
+              disabled={!selectedDevice || busy}
+              className="flex-1 bg-transparent px-2 text-sm text-slate-800 placeholder-slate-400 outline-none"
+            />
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Cpu className="h-4 w-4" />
+              </button>
+
+              <button
+                type="button"
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Globe className="h-4 w-4" />
+              </button>
+
+              <button
+                type="button"
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Palette className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                <span>3 Flash</span>
+                <ChevronDown className="h-3 w-3 text-slate-500" />
+              </div>
+
+              <button
+                type="button"
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <Mic className="h-4 w-4" />
+              </button>
+
+              <button
+                type="submit"
+                disabled={!selectedDevice || busy || !draft.trim()}
+                className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-200 text-slate-700 transition hover:bg-slate-300 disabled:opacity-40"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Dynamic Windows Canvas Board */}
         <div
           ref={canvasBoardRef}
-          className="relative min-h-full min-w-[1100px]"
-          style={{ height: "max(100%, 900px)" }}
+          className="relative h-full w-full overflow-auto"
         >
-          {/* Quick Options Grid when Canvas is Empty */}
-          {windows.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-6 pb-28">
-              <div className="grid w-full max-w-2xl grid-cols-2 gap-3.5 sm:grid-cols-3">
-                {/* Camera Card */}
-                <button
-                  type="button"
-                  onClick={() => void startMonitor("camera")}
-                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div className="mb-3 rounded-xl bg-blue-50 p-2.5 text-blue-600 transition group-hover:bg-blue-600 group-hover:text-white">
-                    <Camera className="h-5 w-5" />
-                  </div>
-                  <span className="text-sm font-semibold text-slate-800">
-                    Open Camera
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-400">
-                    Live camera stream
-                  </span>
-                </button>
-
-                {/* Screen Card */}
-                <button
-                  type="button"
-                  onClick={() => void startMonitor("screen")}
-                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div className="mb-3 rounded-xl bg-emerald-50 p-2.5 text-emerald-600 transition group-hover:bg-emerald-600 group-hover:text-white">
-                    <Monitor className="h-5 w-5" />
-                  </div>
-                  <span className="text-sm font-semibold text-slate-800">
-                    Screen View
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-400">
-                    Remote screen access
-                  </span>
-                </button>
-
-                {/* Logs Card */}
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction("logs dikhao")}
-                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div className="mb-3 rounded-xl bg-amber-50 p-2.5 text-amber-600 transition group-hover:bg-amber-600 group-hover:text-white">
-                    <Terminal className="h-5 w-5" />
-                  </div>
-                  <span className="text-sm font-semibold text-slate-800">
-                    Agent Logs
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-400">
-                    System activity & logs
-                  </span>
-                </button>
-
-                {/* Browser Card */}
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction("open Chrome")}
-                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div className="mb-3 rounded-xl bg-purple-50 p-2.5 text-purple-600 transition group-hover:bg-purple-600 group-hover:text-white">
-                    <Globe className="h-5 w-5" />
-                  </div>
-                  <span className="text-sm font-semibold text-slate-800">
-                    Browse Web
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-400">
-                    Launch browser window
-                  </span>
-                </button>
-
-                {/* Shell Card */}
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction("open terminal")}
-                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div className="mb-3 rounded-xl bg-indigo-50 p-2.5 text-indigo-600 transition group-hover:bg-indigo-600 group-hover:text-white">
-                    <SquareTerminal className="h-5 w-5" />
-                  </div>
-                  <span className="text-sm font-semibold text-slate-800">
-                    Shell Info
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-400">
-                    Terminal commands
-                  </span>
-                </button>
-
-                {/* Info Card */}
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction("usage dikhao")}
-                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                >
-                  <div className="mb-3 rounded-xl bg-rose-50 p-2.5 text-rose-600 transition group-hover:bg-rose-600 group-hover:text-white">
-                    <Info className="h-5 w-5" />
-                  </div>
-                  <span className="text-sm font-semibold text-slate-800">
-                    Usage Info
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-400">
-                    System specs & status
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Canvas Rendered Windows */}
           {windows.map((win) => (
             <OpsCanvasWindowView
               key={win.id}
@@ -290,56 +415,7 @@ function OpsPageInner() {
             />
           ))}
         </div>
-      </div>
-
-      {/* Stitch Floating Bottom Chat Dock */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center justify-end p-4 md:p-6">
-        <div className="pointer-events-auto flex w-full max-w-2xl flex-col rounded-2xl border border-slate-200/80 bg-white/95 p-3 shadow-xl backdrop-blur-md">
-          {/* Chat Messages Log */}
-          {messages.length > 0 && (
-            <div className="mb-3 max-h-48 space-y-2 overflow-y-auto px-1 text-sm">
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`rounded-xl px-3.5 py-2 text-xs leading-relaxed ${
-                    m.role === "user"
-                      ? "ml-auto max-w-[80%] bg-blue-600 text-white shadow-sm"
-                      : m.role === "system"
-                        ? "border border-dashed border-slate-300 bg-slate-50 text-slate-500"
-                        : "mr-auto max-w-[80%] bg-slate-100 text-slate-800"
-                  }`}
-                >
-                  <p className="whitespace-pre-wrap">{m.text}</p>
-                </div>
-              ))}
-              {busy && (
-                <p className="animate-pulse text-xs font-medium text-blue-600">
-                  Generating windows…
-                </p>
-              )}
-              <div ref={endRef} />
-            </div>
-          )}
-
-          {/* Input Bar */}
-          <form onSubmit={onSubmit} className="flex items-center gap-2">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="usage dikhao · screen on · history · open Chrome"
-              disabled={!selectedDevice || busy}
-              className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!selectedDevice || busy || !draft.trim()}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md transition hover:bg-blue-700 disabled:opacity-40"
-            >
-              <Send className="h-4 w-4" />
-            </button>
-          </form>
-        </div>
-      </div>
+      </main>
     </div>
   );
 }
@@ -348,7 +424,7 @@ export default function OpsPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-[#fafafa] text-slate-500">
+        <div className="flex min-h-screen items-center justify-center bg-[#fafafa] text-slate-500 font-sans">
           Loading canvas…
         </div>
       }
