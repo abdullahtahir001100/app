@@ -153,7 +153,7 @@ function renderBody(
 
   if (win.type === "camera") {
     return (
-      <div className="flex h-full items-center justify-center overflow-hidden rounded-xl bg-slate-950">
+      <div className="flex h-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-r from-white via-gray-200 to-white animate-pulse">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img ref={camImgRef} alt="Live camera" className="max-h-full max-w-full object-contain" />
       </div>
