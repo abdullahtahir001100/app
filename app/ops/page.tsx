@@ -262,65 +262,8 @@ function OpsPageInner() {
           </div>
         </div>
 
-        {/* Floating Bottom-Left "Query History & Agent Log" Widget */}
-        <div className="absolute left-6 bottom-24 z-20 w-80 rounded-2xl border border-slate-200/80 bg-white/80 shadow-md backdrop-blur-md">
-          <div className="border-b border-slate-100 p-3">
-            <h3 className="text-xs font-semibold text-slate-700">
-              Query History
-            </h3>
-          </div>
-
-          <div className="max-h-52 overflow-y-auto p-2 space-y-1">
-            <div className="flex items-center justify-between rounded-xl bg-slate-100/70 px-3 py-2 text-xs text-slate-700">
-              <span className="font-medium">Query</span>
-              <span className="text-slate-400">Status</span>
-            </div>
-
-            {messages.length === 0 ? (
-              <div className="flex items-center justify-between rounded-xl px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
-                    A
-                  </div>
-                  <span>Status query</span>
-                </div>
-                <CheckCircle2 className="h-4 w-4 text-slate-600" />
-              </div>
-            ) : (
-              messages.map((m) => (
-                <div
-                  key={m.id}
-                  className="flex items-center justify-between rounded-xl px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-500 text-[10px] font-bold text-white">
-                      {m.role === "user" ? "U" : "A"}
-                    </div>
-                    <span className="truncate">{m.text}</span>
-                  </div>
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-slate-600" />
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="border-t border-slate-100 p-2">
-            <button
-              onClick={() => setIsLogOpen(!isLogOpen)}
-              className="flex w-full items-center justify-between rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100/60"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-slate-600" />
-                <span>Agent log</span>
-              </div>
-              {isLogOpen ? (
-                <ChevronUp className="h-3.5 w-3.5 text-slate-400" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-              )}
-            </button>
-          </div>
-        </div>
+        
+    
 
         {/* Floating Bottom Center Command Dock */}
         <div className="absolute bottom-6 left-1/2 z-30 w-full max-w-2xl -translate-x-1/2 px-4">
