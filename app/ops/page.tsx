@@ -2,7 +2,15 @@
 
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Send } from "lucide-react";
+import {
+  Camera,
+  Globe,
+  Info,
+  Monitor,
+  Send,
+  SquareTerminal,
+  Terminal,
+} from "lucide-react";
 import { useGateway } from "@/hooks/use-gateway";
 import { useScreenRemote } from "@/hooks/use-screen-remote";
 import { useAgentOps } from "@/hooks/use-agent-ops";
@@ -31,6 +39,7 @@ function OpsPageInner() {
     busy,
     send,
     monitor,
+    startMonitor,
     windows,
     focusWindow,
     closeWindow,
@@ -127,36 +136,139 @@ function OpsPageInner() {
     void send();
   };
 
+  const handleQuickAction = (promptText: string) => {
+    setDraft(promptText);
+  };
+
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-slate-50 text-slate-800">
+    <div className="relative h-screen w-screen overflow-hidden bg-[#fafafa] text-slate-800">
       {/* Light dot grid canvas atmosphere */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-40"
+        className="pointer-events-none absolute inset-0 opacity-50"
         style={{
           backgroundImage:
-            "radial-gradient(circle at 1px 1px, rgba(100, 116, 139, 0.3) 1px, transparent 0)",
+            "radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.35) 1px, transparent 0)",
           backgroundSize: "24px 24px",
         }}
       />
 
-      {/* Full Screen Infinite Canvas */}
+      {/* Full Screen Canvas Container */}
       <div className="absolute inset-0 overflow-auto">
         <div
           ref={canvasBoardRef}
           className="relative min-h-full min-w-[1100px]"
           style={{ height: "max(100%, 900px)" }}
         >
+          {/* Quick Options Grid when Canvas is Empty */}
           {windows.length === 0 && (
-            <div className="pointer-events-none absolute left-1/2 top-[40%] w-full max-w-md -translate-x-1/2 -translate-y-1/2 px-6 text-center">
-              <p className="text-2xl font-semibold tracking-tight text-slate-400">
-                Canvas is empty
-              </p>
-              <p className="mt-2 text-sm text-slate-500">
-                Prompt dein — jaise Stitch screens kholti hai, AI windows yahan live display karega.
-              </p>
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-6 pb-28">
+              <div className="grid w-full max-w-2xl grid-cols-2 gap-3.5 sm:grid-cols-3">
+                {/* Camera Card */}
+                <button
+                  type="button"
+                  onClick={() => void startMonitor("camera")}
+                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <div className="mb-3 rounded-xl bg-blue-50 p-2.5 text-blue-600 transition group-hover:bg-blue-600 group-hover:text-white">
+                    <Camera className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800">
+                    Open Camera
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-400">
+                    Live camera stream
+                  </span>
+                </button>
+
+                {/* Screen Card */}
+                <button
+                  type="button"
+                  onClick={() => void startMonitor("screen")}
+                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <div className="mb-3 rounded-xl bg-emerald-50 p-2.5 text-emerald-600 transition group-hover:bg-emerald-600 group-hover:text-white">
+                    <Monitor className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800">
+                    Screen View
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-400">
+                    Remote screen access
+                  </span>
+                </button>
+
+                {/* Logs Card */}
+                <button
+                  type="button"
+                  onClick={() => handleQuickAction("logs dikhao")}
+                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <div className="mb-3 rounded-xl bg-amber-50 p-2.5 text-amber-600 transition group-hover:bg-amber-600 group-hover:text-white">
+                    <Terminal className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800">
+                    Agent Logs
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-400">
+                    System activity & logs
+                  </span>
+                </button>
+
+                {/* Browser Card */}
+                <button
+                  type="button"
+                  onClick={() => handleQuickAction("open Chrome")}
+                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <div className="mb-3 rounded-xl bg-purple-50 p-2.5 text-purple-600 transition group-hover:bg-purple-600 group-hover:text-white">
+                    <Globe className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800">
+                    Browse Web
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-400">
+                    Launch browser window
+                  </span>
+                </button>
+
+                {/* Shell Card */}
+                <button
+                  type="button"
+                  onClick={() => handleQuickAction("open terminal")}
+                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <div className="mb-3 rounded-xl bg-indigo-50 p-2.5 text-indigo-600 transition group-hover:bg-indigo-600 group-hover:text-white">
+                    <SquareTerminal className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800">
+                    Shell Info
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-400">
+                    Terminal commands
+                  </span>
+                </button>
+
+                {/* Info Card */}
+                <button
+                  type="button"
+                  onClick={() => handleQuickAction("usage dikhao")}
+                  className="group flex flex-col items-start rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                >
+                  <div className="mb-3 rounded-xl bg-rose-50 p-2.5 text-rose-600 transition group-hover:bg-rose-600 group-hover:text-white">
+                    <Info className="h-5 w-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-slate-800">
+                    Usage Info
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-400">
+                    System specs & status
+                  </span>
+                </button>
+              </div>
             </div>
           )}
 
+          {/* Canvas Rendered Windows */}
           {windows.map((win) => (
             <OpsCanvasWindowView
               key={win.id}
@@ -180,10 +292,10 @@ function OpsPageInner() {
         </div>
       </div>
 
-      {/* Floating Bottom Chat Dock */}
+      {/* Stitch Floating Bottom Chat Dock */}
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center justify-end p-4 md:p-6">
-        <div className="pointer-events-auto flex w-full max-w-2xl flex-col rounded-2xl border border-slate-200/80 bg-white/90 p-3 shadow-xl backdrop-blur-md">
-          {/* Messages Overlay Area */}
+        <div className="pointer-events-auto flex w-full max-w-2xl flex-col rounded-2xl border border-slate-200/80 bg-white/95 p-3 shadow-xl backdrop-blur-md">
+          {/* Chat Messages Log */}
           {messages.length > 0 && (
             <div className="mb-3 max-h-48 space-y-2 overflow-y-auto px-1 text-sm">
               {messages.map((m) => (
@@ -201,7 +313,7 @@ function OpsPageInner() {
                 </div>
               ))}
               {busy && (
-                <p className="animate-pulse text-xs text-blue-600 font-medium">
+                <p className="animate-pulse text-xs font-medium text-blue-600">
                   Generating windows…
                 </p>
               )}
@@ -209,7 +321,7 @@ function OpsPageInner() {
             </div>
           )}
 
-          {/* Chat Input */}
+          {/* Input Bar */}
           <form onSubmit={onSubmit} className="flex items-center gap-2">
             <input
               value={draft}
@@ -236,7 +348,7 @@ export default function OpsPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
+        <div className="flex min-h-screen items-center justify-center bg-[#fafafa] text-slate-500">
           Loading canvas…
         </div>
       }
