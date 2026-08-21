@@ -69,7 +69,7 @@ export function OpsCanvasWindowView({
 
   return (
     <div
-      className="absolute overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white/90 via-purple-50/30 to-blue-50/40 p-4 shadow-md backdrop-blur-md"
+      className="absolute overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white/90 via-purple-50/30 to-blue-50/40  shadow-md backdrop-blur-md"
       style={{
         left: win.x,
         top: win.y,
@@ -140,11 +140,11 @@ function renderBody(
   if (win.type === "screen") {
     return (
       <div className="flex h-full flex-col">
-        <p className="absolute text-[#ff0000] right-[7px] top-[52px]">
+        <p className="absolute text-[#ff0000] right-[25px] top-[52px] text-[10px]">
           {screenMeta?.status || "connecting"} · {screenMeta?.fps || "0"} fps ·{" "}
           {screenMeta?.live ? "live" : "waiting"}
         </p>
-        <div className="flex flex-1 items-center justify-center overflow-hidden rounded-xl bg-slate-950">
+        <div className="flex flex-1 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-r from-white via-gray-200 to-white animate-pulse">
           <canvas ref={screenCanvasRef} className="max-h-full max-w-full object-contain" />
         </div>
       </div>
