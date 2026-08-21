@@ -51,14 +51,12 @@ export type AgentSettings = {
   manualApproval: boolean;
 };
 
-const STORAGE_KEY = "zenvora-agent-chat-state";
-const SETTINGS_KEY = "zenvora-agent-settings";
-const CAPABILITIES_KEY = "zenvora-agent-capabilities";
+import { getShellApiConfig, getActiveProviderConfig } from "@/hooks/use-api-config";
 
 const DEFAULT_SETTINGS: AgentSettings = {
-  provider: "anthropic",
+  provider: "gemini",
   apiKey: "",
-  model: "claude-3.5-sonnet",
+  model: "gemini-2.0-flash",
   temperature: 0.2,
   maxTokens: 1024,
   streaming: true,
@@ -66,6 +64,24 @@ const DEFAULT_SETTINGS: AgentSettings = {
   autoApproval: true,
   manualApproval: false,
 };
+
+function getInitialSettings(): AgentSettings {
+  const stored = getStoredState<AgentSettings | null>(SETTINGS_KEY, null);
+  if (stored && stored.apiKey) return stored;
+
+  const opsConfig = getShellApiConfig();
+  const active = getActiveProviderConfig(opsConfig);
+  if (active) {
+    return {
+      ...DEFAULT_SETTINGS,
+      provider: active.provider,
+      apiKey: active.apiKey,
+      model: active.model,
+    };
+  }
+
+  return stored || DEFAULT_SETTINGS;
+}
 
 const DEFAULT_CAPABILITIES: AgentCapabilities = {
   aiLoop: true,
@@ -189,7 +205,7 @@ function storeState<T>(key: string, value: T) {
 
 export function useAgentChat() {
   const [messages, setMessages] = useState<AgentMessage[]>(() => getStoredState(STORAGE_KEY, initialMessages()));
-  const [settings, setSettings] = useState<AgentSettings>(() => getStoredState(SETTINGS_KEY, DEFAULT_SETTINGS));
+  const [settings, setSettings] = useState<AgentSettings>(getInitialSettings);
   const [capabilities, setCapabilities] = useState<AgentCapabilities>(() => getStoredState(CAPABILITIES_KEY, DEFAULT_CAPABILITIES));
   const [draft, setDraft] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);

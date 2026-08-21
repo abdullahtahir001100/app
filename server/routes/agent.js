@@ -167,41 +167,234 @@ router.get('/download', (req, res) => {
     stream.pipe(res);
 });
 
-function getGeminiApiKey(settings = {}) {
+function getApiKeyForProvider(settings = {}, providerKey = 'gemini') {
     const direct = typeof settings.apiKey === 'string' ? settings.apiKey.trim() : '';
     if (direct) return direct;
-    return (
-        process.env.GEMINI_API_KEY ||
-        process.env.GOOGLE_API_KEY ||
-        process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
-        ''
-    );
+    
+    if (providerKey === 'gemini') {
+        return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+    }
+    if (providerKey === 'chatgpt' || providerKey === 'openai') {
+        return process.env.OPENAI_API_KEY || '';
+    }
+    if (providerKey === 'openrouter') {
+        return process.env.OPENROUTER_API_KEY || '';
+    }
+    if (providerKey === 'grok') {
+        return process.env.GROK_API_KEY || process.env.XAI_API_KEY || '';
+    }
+    if (providerKey === 'claude' || providerKey === 'anthropic') {
+        return process.env.ANTHROPIC_API_KEY || '';
+    }
+    return '';
 }
 
-async function generateGeminiChat({ draft, messages, settings, capabilities, context }) {
-    const apiKey = getGeminiApiKey(settings || {});
-    if (!apiKey) {
-        throw new Error('Gemini API key not found.');
+async function callOpenAICompatibleAPI({ endpoint, apiKey, model, system, messages, prompt, jsonMode, headers = {} }) {
+    const formattedMessages = [];
+    if (system) {
+        formattedMessages.push({ role: 'system', content: system });
+    }
+    if (Array.isArray(messages)) {
+        for (const m of messages) {
+            formattedMessages.push({
+                role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
+                content: String(m.text || m.content || ''),
+            });
+        }
+    }
+    if (prompt) {
+        formattedMessages.push({ role: 'user', content: prompt });
     }
 
-    const model =
-        typeof settings?.model === 'string' && settings.model.trim()
-            ? settings.model.trim()
-            : 'gemini-2.5-flash';
+    const reqBody = {
+        model,
+        messages: formattedMessages,
+        temperature: 0.15,
+    };
+    if (jsonMode) {
+        reqBody.response_format = { type: 'json_object' };
+    }
 
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            ...headers,
+        },
+        body: JSON.stringify(reqBody),
+    });
+
+    const raw = await res.text();
+    if (!res.ok) {
+        throw new Error(raw || `API error ${res.status}`);
+    }
+    const data = JSON.parse(raw);
+    return data?.choices?.[0]?.message?.content || '';
+}
+
+async function callAnthropicAPI({ apiKey, model, system, messages, prompt }) {
+    const formattedMessages = [];
+    if (Array.isArray(messages)) {
+        for (const m of messages) {
+            formattedMessages.push({
+                role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
+                content: String(m.text || m.content || ''),
+            });
+        }
+    }
+    if (prompt) {
+        formattedMessages.push({ role: 'user', content: prompt });
+    }
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+            model: model || 'claude-3-5-sonnet-20241022',
+            system: system || undefined,
+            messages: formattedMessages,
+            max_tokens: 4096,
+        }),
+    });
+
+    const raw = await res.text();
+    if (!res.ok) {
+        throw new Error(raw || `Anthropic HTTP ${res.status}`);
+    }
+    const data = JSON.parse(raw);
+    return data?.content?.[0]?.text || '';
+}
+
+async function callGeminiAPI({ apiKey, model, system, messages, prompt, jsonMode }) {
+    const geminiModel = model || 'gemini-2.5-flash';
     const history = (Array.isArray(messages) ? messages : [])
         .slice(-20)
         .map((m) => ({
-            role: m?.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: String(m?.text || '') }],
+            role: m?.role === 'assistant' || m?.role === 'model' ? 'model' : 'user',
+            parts: [{ text: String(m?.text || m?.content || '') }],
         }))
         .filter((m) => m.parts[0].text.trim().length > 0);
 
+    const contents = [];
+    if (system) {
+        contents.push({ role: 'user', parts: [{ text: system }] });
+    }
+    contents.push(...history);
+    if (prompt) {
+        contents.push({ role: 'user', parts: [{ text: prompt }] });
+    }
+
+    const genConfig = {
+        temperature: 0.12,
+        maxOutputTokens: 4096,
+    };
+    if (jsonMode) {
+        genConfig.responseMimeType = 'application/json';
+    }
+
+    const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-goog-api-key': apiKey,
+            },
+            body: JSON.stringify({ contents, generationConfig: genConfig }),
+        }
+    );
+
+    const raw = await response.text();
+    if (!response.ok) {
+        throw new Error(raw || `Gemini HTTP ${response.status}`);
+    }
+    const data = JSON.parse(raw);
+    return (
+        data?.candidates?.[0]?.content?.parts
+            ?.map((p) => p?.text || '')
+            .join('') || ''
+    );
+}
+
+async function generateMultiProviderCompletion({ system, messages, prompt, settings, jsonMode }) {
+    const provider = String(settings?.provider || 'gemini').toLowerCase();
+    const apiKey = getApiKeyForProvider(settings || {}, provider);
+    const model = settings?.model;
+
+    if (provider === 'chatgpt' || provider === 'openai') {
+        if (!apiKey) throw new Error('OpenAI / ChatGPT API key required.');
+        return callOpenAICompatibleAPI({
+            endpoint: 'https://api.openai.com/v1/chat/completions',
+            apiKey,
+            model: model || 'gpt-4o',
+            system,
+            messages,
+            prompt,
+            jsonMode,
+        });
+    }
+
+    if (provider === 'openrouter') {
+        if (!apiKey) throw new Error('OpenRouter API key required.');
+        return callOpenAICompatibleAPI({
+            endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+            apiKey,
+            model: model || 'openai/gpt-4o',
+            system,
+            messages,
+            prompt,
+            jsonMode,
+            headers: { 'HTTP-Referer': 'https://zenvora.app', 'X-Title': 'Zenvora Agent' },
+        });
+    }
+
+    if (provider === 'grok') {
+        if (!apiKey) throw new Error('xAI Grok API key required.');
+        return callOpenAICompatibleAPI({
+            endpoint: 'https://api.x.ai/v1/chat/completions',
+            apiKey,
+            model: model || 'grok-3',
+            system,
+            messages,
+            prompt,
+            jsonMode,
+        });
+    }
+
+    if (provider === 'claude' || provider === 'anthropic') {
+        if (!apiKey) throw new Error('Anthropic Claude API key required.');
+        return callAnthropicAPI({
+            apiKey,
+            model: model || 'claude-3-5-sonnet-20241022',
+            system,
+            messages,
+            prompt,
+        });
+    }
+
+    // Default: Gemini
+    if (!apiKey) throw new Error('Gemini API key required.');
+    return callGeminiAPI({
+        apiKey,
+        model: model || 'gemini-2.5-flash',
+        system,
+        messages,
+        prompt,
+        jsonMode,
+    });
+}
+
+async function generateGeminiChat({ draft, messages, settings, capabilities, context }) {
     const enabledCapabilities = Object.entries(capabilities || {})
         .filter(([, v]) => Boolean(v))
         .map(([k]) => k);
 
-    const systemInstruction = `
+    let systemInstruction = `
 You are Zenvora AI, full remote Windows operator for the owner's agent (Rust zenvora_agent + Express gateway).
 
 MISSION:
@@ -226,47 +419,16 @@ command_here
 Enabled: ${enabledCapabilities.join(', ') || 'default'}
 `.trim();
 
-    const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-goog-api-key': apiKey,
-            },
-            body: JSON.stringify({
-                contents: [
-                    { role: 'user', parts: [{ text: systemInstruction }] },
-                    ...history,
-                    { role: 'user', parts: [{ text: `User request:\n${draft || ''}` }] },
-                ],
-                generationConfig: {
-                    temperature: 0.1,
-                    maxOutputTokens: Number(settings?.maxTokens ?? 2048),
-                    topP: 0.9,
-                    topK: 40,
-                },
-            }),
-        }
-    );
-
-    const raw = await response.text();
-    if (!response.ok) {
-        throw new Error(raw || `Gemini HTTP ${response.status}`);
+    if (context?.fileContent) {
+        systemInstruction += `\n\nATTACHED FILE CONTENT:\n${context.fileContent}`;
     }
 
-    let data;
-    try {
-        data = JSON.parse(raw);
-    } catch {
-        throw new Error('Invalid JSON returned from Gemini.');
-    }
-
-    return (
-        data?.candidates?.[0]?.content?.parts
-            ?.map((p) => p?.text || '')
-            .join('') || ''
-    );
+    return generateMultiProviderCompletion({
+        system: systemInstruction,
+        messages,
+        prompt: `User request:\n${draft || ''}`,
+        settings,
+    });
 }
 
 /**
@@ -603,55 +765,33 @@ router.post('/ops', express.json({ limit: '2mb' }), requireUserFast, async (req,
         let aiWindows = [];
 
         try {
-            const apiKey = getGeminiApiKey(body.settings || {});
-            if (apiKey) {
-                const model =
-                    typeof body.settings?.model === 'string' && body.settings.model.trim()
-                        ? body.settings.model.trim()
-                        : 'gemini-2.5-flash';
-                const response = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-goog-api-key': apiKey,
-                        },
-                        body: JSON.stringify({
-                            contents: [
-                                { role: 'user', parts: [{ text: system }] },
-                                ...history,
-                                { role: 'user', parts: [{ text: `Operator:\n${message}` }] },
-                            ],
-                            generationConfig: {
-                                temperature: 0.12,
-                                maxOutputTokens: 4096,
-                                responseMimeType: 'application/json',
-                            },
-                        }),
-                    }
-                );
-                const raw = await response.text();
-                if (response.ok) {
-                    const data = JSON.parse(raw);
-                    const text =
-                        data?.candidates?.[0]?.content?.parts
-                            ?.map((p) => p?.text || '')
-                            .join('') || '';
-                    const parsed = JSON.parse(text);
-                    if (parsed?.reply) reply = String(parsed.reply);
-                    if (Array.isArray(parsed?.actions)) {
-                        actions = parsed.actions
-                            .filter((a) => a && a.action)
-                            .map((a) => ({
-                                action: String(a.action).toUpperCase(),
-                                payload:
-                                    a.payload && typeof a.payload === 'object' ? a.payload : {},
-                            }));
-                    }
-                    if (Array.isArray(parsed?.windows)) {
-                        aiWindows = parsed.windows;
-                    }
+            let fullSystem = system;
+            if (body.fileContent) {
+                fullSystem += `\n\nATTACHED FILE CONTENT:\n${body.fileContent}`;
+            }
+
+            const rawText = await generateMultiProviderCompletion({
+                system: fullSystem,
+                messages: history.map((h) => ({ role: h.role, text: h.parts[0]?.text || '' })),
+                prompt: `Operator:\n${message}`,
+                settings: body.settings || {},
+                jsonMode: true,
+            });
+
+            if (rawText) {
+                const parsed = JSON.parse(rawText);
+                if (parsed?.reply) reply = String(parsed.reply);
+                if (Array.isArray(parsed?.actions)) {
+                    actions = parsed.actions
+                        .filter((a) => a && a.action)
+                        .map((a) => ({
+                            action: String(a.action).toUpperCase(),
+                            payload:
+                                a.payload && typeof a.payload === 'object' ? a.payload : {},
+                        }));
+                }
+                if (Array.isArray(parsed?.windows)) {
+                    aiWindows = parsed.windows;
                 }
             }
         } catch (llmErr) {

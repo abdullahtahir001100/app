@@ -232,10 +232,11 @@ export function AgentChatPanel() {
                         onChange={(event) => setSetting("provider", event.target.value)}
                         className="w-full border-b border-gray-200 bg-transparent py-2 text-sm text-gray-900 outline-none transition-colors focus:border-blue-500"
                       >
-                        <option value="anthropic">Anthropic (Claude 3.5 Sonnet)</option>
-                        <option value="openai">OpenAI (GPT-4o)</option>
-                        <option value="gemini">Google (Gemini 1.5 Pro)</option>
-                        <option value="local">Local (Ollama / LM Studio)</option>
+                        <option value="gemini">Google Gemini</option>
+                        <option value="chatgpt">OpenAI ChatGPT</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="grok">xAI Grok</option>
+                        <option value="claude">Anthropic Claude</option>
                       </select>
                       <input
                         type="text"

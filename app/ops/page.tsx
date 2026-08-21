@@ -1,26 +1,25 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Camera,
   Eraser,
   Monitor,
-  Sparkles,
   Plus,
-  Globe,
-  Palette,
   Mic,
   ArrowUp,
-  CheckCircle2,
   Loader2,
   X,
   ChevronDown,
-  ChevronUp,
   Download,
   Cpu,
   Copy,
+  FileText,
+  Check,
+  Key,
+  Trash2,
 } from "lucide-react";
 import { useGateway } from "@/hooks/use-gateway";
 import { useScreenRemote } from "@/hooks/use-screen-remote";
@@ -28,6 +27,14 @@ import { useAgentOps } from "@/hooks/use-agent-ops";
 import { OpsCanvasWindowView } from "@/components/ops/ops-canvas-window";
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 import { MediaGatewayClient } from "@/lib/media-gateway-client";
+import {
+  useApiConfig,
+  PROVIDER_OPTIONS,
+  type ProviderKey,
+} from "@/hooks/use-api-config";
+
+/* ── Constants ─────────────────────────────────────────────── */
+const MAX_FILE_SIZE = 500 * 1024; // 500 KB
 
 function OpsPageInner() {
   const router = useRouter();
@@ -36,11 +43,33 @@ function OpsPageInner() {
   const camImgRef = useRef<HTMLImageElement | null>(null);
   const camUrlRef = useRef<string | null>(null);
   const canvasBoardRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [selectedDevice, setSelectedDevice] = useState(
     searchParams.get("device") || ""
   );
   const [isLogOpen, setIsLogOpen] = useState(true);
+
+  /* ── API Config Modal ────────────────────────────────────── */
+  const [showApiModal, setShowApiModal] = useState(false);
+  const {
+    config: apiConfig,
+    activeProvider,
+    configuredProviders,
+    setActiveProvider,
+    setProviderApiKey,
+    setProviderModel,
+  } = useApiConfig("ops");
+
+  /* ── Model Selector Dropdown ─────────────────────────────── */
+  const [showModelPicker, setShowModelPicker] = useState(false);
+
+  /* ── File Context ────────────────────────────────────────── */
+  const [fileContext, setFileContext] = useState<{
+    name: string;
+    content: string;
+    size: number;
+  } | null>(null);
 
   const { devices, subscribe, resolveTarget } = useGateway();
 
@@ -138,10 +167,44 @@ function OpsPageInner() {
     };
   }, [hasCameraWin, selectedDevice]);
 
+  /* ── File upload handler ────────────────────────────────── */
+  const handleFileUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (!file.name.endsWith(".txt")) {
+        alert("Only .txt files are allowed.");
+        return;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        alert("File must be under 500 KB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setFileContext({
+          name: file.name,
+          content: reader.result as string,
+          size: file.size,
+        });
+      };
+      reader.readAsText(file);
+      // Reset so the same file can be re-selected
+      e.target.value = "";
+    },
+    []
+  );
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    void send();
+    void send(fileContext?.content, apiConfig);
   };
+
+  /* ── Active model display label ─────────────────────────── */
+  const activeModelLabel = activeProvider?.model
+    ? activeProvider.model.split("/").pop()?.split("-").slice(0, 3).join(" ") ||
+      activeProvider.model
+    : "2.0 Flash";
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#fafafa] text-slate-800 font-sans">
@@ -262,21 +325,46 @@ function OpsPageInner() {
           </div>
         </div>
 
-        
-    
-
         {/* Floating Bottom Center Command Dock */}
         <div className="absolute bottom-6 left-1/2 z-30 w-full max-w-2xl -translate-x-1/2 px-4">
+          {/* File Context Chip */}
+          {fileContext && (
+            <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-200/80 bg-blue-50/80 px-3 py-1.5 text-xs text-blue-700 backdrop-blur-sm">
+              <FileText className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate font-medium">{fileContext.name}</span>
+              <span className="text-blue-500">
+                ({(fileContext.size / 1024).toFixed(1)} KB)
+              </span>
+              <button
+                type="button"
+                onClick={() => setFileContext(null)}
+                className="ml-auto rounded-md p-0.5 hover:bg-blue-100"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
           <form
             onSubmit={onSubmit}
             className="flex items-center gap-2 rounded-2xl border border-slate-200/90 bg-white/90 p-2 shadow-lg backdrop-blur-md"
           >
+            {/* Plus → file upload */}
             <button
               type="button"
+              onClick={() => fileInputRef.current?.click()}
               className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              title="Attach .txt file (max 500 KB)"
             >
               <Plus className="h-4 w-4" />
             </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
             <span className="text-slate-400 text-sm font-light">/</span>
 
             <input
@@ -288,30 +376,85 @@ function OpsPageInner() {
             />
 
             <div className="flex items-center gap-1.5">
+              {/* CPU → API settings */}
               <button
                 type="button"
-                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                onClick={() => setShowApiModal(true)}
+                className={`rounded-xl p-1.5 transition-colors ${
+                  activeProvider?.apiKey
+                    ? "text-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
+                    : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                }`}
+                title="API Settings"
               >
                 <Cpu className="h-4 w-4" />
               </button>
 
-              <button
-                type="button"
-                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                <Globe className="h-4 w-4" />
-              </button>
+              {/* Model selector */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowModelPicker((prev) => !prev)}
+                  className="flex items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200 transition-colors"
+                >
+                  <span className="max-w-[80px] truncate">{activeModelLabel}</span>
+                  <ChevronDown className="h-3 w-3 text-slate-500" />
+                </button>
 
-              <button
-                type="button"
-                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                <Palette className="h-4 w-4" />
-              </button>
-
-              <div className="flex items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                <span>3 Flash</span>
-                <ChevronDown className="h-3 w-3 text-slate-500" />
+                {showModelPicker && (
+                  <div className="absolute bottom-full right-0 mb-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl z-50">
+                    <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      Select Model
+                    </div>
+                    {configuredProviders.length === 0 && (
+                      <div className="px-2 py-3 text-xs text-slate-400 text-center">
+                        No API keys configured.
+                        <br />
+                        Click the CPU icon to add keys.
+                      </div>
+                    )}
+                    {(configuredProviders.length > 0
+                      ? PROVIDER_OPTIONS.filter((p) =>
+                          configuredProviders.some((c) => c.provider === p.key)
+                        )
+                      : PROVIDER_OPTIONS
+                    ).map((provOpt) => (
+                      <div key={provOpt.key} className="mb-1">
+                        <div className="px-2 py-1 text-[10px] font-semibold text-slate-500 uppercase">
+                          {provOpt.label}
+                        </div>
+                        {provOpt.models.map((model) => {
+                          const isActive =
+                            apiConfig.activeProvider === provOpt.key &&
+                            activeProvider?.model === model;
+                          return (
+                            <button
+                              key={model}
+                              type="button"
+                              onClick={() => {
+                                setActiveProvider(provOpt.key);
+                                setProviderModel(provOpt.key, model);
+                                setShowModelPicker(false);
+                              }}
+                              className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition ${
+                                isActive
+                                  ? "bg-slate-100 text-slate-900 font-medium"
+                                  : "text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span className="font-mono text-[11px]">
+                                {model}
+                              </span>
+                              {isActive && (
+                                <Check className="h-3 w-3 text-emerald-500" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
@@ -359,6 +502,139 @@ function OpsPageInner() {
           ))}
         </div>
       </main>
+
+      {/* ── API Settings Modal ──────────────────────────────── */}
+      {showApiModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setShowApiModal(false)}
+        >
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-blue-500 text-white">
+                  <Key className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-800">
+                    API Configuration
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Manage API keys for AI providers
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Provider Cards */}
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              {PROVIDER_OPTIONS.map((opt) => {
+                const provConf = apiConfig.providers.find(
+                  (p) => p.provider === opt.key
+                );
+                const isActive = apiConfig.activeProvider === opt.key;
+                const hasKey = (provConf?.apiKey || "").trim().length > 0;
+
+                return (
+                  <div
+                    key={opt.key}
+                    className={`rounded-xl border p-3 transition-all ${
+                      isActive
+                        ? "border-violet-300 bg-violet-50/50 shadow-sm"
+                        : "border-slate-200 bg-slate-50/30"
+                    }`}
+                  >
+                    <div className="mb-2 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setActiveProvider(opt.key)}
+                        className="flex items-center gap-2"
+                      >
+                        <div
+                          className={`h-3 w-3 rounded-full border-2 transition ${
+                            isActive
+                              ? "border-violet-500 bg-violet-500"
+                              : "border-slate-300 bg-white"
+                          }`}
+                        />
+                        <span
+                          className={`text-xs font-semibold ${
+                            isActive ? "text-violet-700" : "text-slate-600"
+                          }`}
+                        >
+                          {opt.label}
+                        </span>
+                      </button>
+                      {hasKey && (
+                        <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                          <Check className="h-2.5 w-2.5" />
+                          Key Set
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <input
+                        type="password"
+                        placeholder={`Paste ${opt.label} API Key`}
+                        value={provConf?.apiKey || ""}
+                        onChange={(e) =>
+                          setProviderApiKey(opt.key, e.target.value)
+                        }
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 placeholder-slate-400 outline-none transition focus:border-violet-300 focus:ring-1 focus:ring-violet-200"
+                      />
+                      <select
+                        value={provConf?.model || opt.defaultModel}
+                        onChange={(e) =>
+                          setProviderModel(opt.key, e.target.value)
+                        }
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-violet-300 focus:ring-1 focus:ring-violet-200"
+                      >
+                        {opt.models.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-[10px] text-slate-400">
+                Keys stored in browser localStorage only.
+              </p>
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close model picker on outside click */}
+      {showModelPicker && (
+        <div
+          className="fixed inset-0 z-20"
+          onClick={() => setShowModelPicker(false)}
+        />
+      )}
     </div>
   );
 }

@@ -144,7 +144,7 @@ function renderBody(
           {screenMeta?.status || "connecting"} · {screenMeta?.fps || "0"} fps ·{" "}
           {screenMeta?.live ? "live" : "waiting"}
         </p>
-        <div className="flex flex-1 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-r from-white via-gray-200 to-white animate-pulse">
+        <div className="flex flex-1 items-center justify-center overflow-hidden rounded-xl">
           <canvas ref={screenCanvasRef} className="max-h-full max-w-full object-contain" />
         </div>
       </div>
@@ -153,9 +153,9 @@ function renderBody(
 
   if (win.type === "camera") {
     return (
-      <div className="flex h-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-r from-white via-gray-200 to-white animate-pulse">
+      <div className="flex h-full items-center justify-center overflow-hidden rounded-xl ">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img ref={camImgRef} alt="Live camera" className="max-h-full max-w-full object-contain" />
+        <img ref={camImgRef} alt="" className="max-h-full max-w-full object-contain" />
       </div>
     );
   }

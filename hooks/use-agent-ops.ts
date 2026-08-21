@@ -111,11 +111,11 @@ export function useAgentOps(deviceId: string) {
       setWindows((list) => {
         const closing = list.find((w) => w.id === id);
         if (closing?.type === "screen") {
-          void dispatch("STOP_SCREEN_STREAM", {}, deviceRef.current).catch(() => {});
+          dispatch("STOP_SCREEN_STREAM", {}, deviceRef.current);
           setMonitor((m) => (m === "screen" ? "off" : m));
         }
         if (closing?.type === "camera") {
-          void dispatch("STOP_STREAM", {}, deviceRef.current).catch(() => {});
+          dispatch("STOP_STREAM", {}, deviceRef.current);
           setMonitor((m) => (m === "camera" ? "off" : m));
         }
         return list.filter((w) => w.id !== id);
@@ -221,34 +221,48 @@ export function useAgentOps(deviceId: string) {
     [dispatch, openWindowsFromPlan]
   );
 
-  const send = useCallback(async () => {
-    const text = draft.trim();
-    if (!text || !deviceId || busy) return;
+  const send = useCallback(
+    async (fileContent?: string, apiConfig?: any) => {
+      const text = draft.trim();
+      if (!text || !deviceId || busy) return;
 
-    setDraft("");
-    setBusy(true);
-    const userMsg: OpsMessage = {
-      id: uid(),
-      role: "user",
-      text,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((m) => [...m, userMsg]);
+      setDraft("");
+      setBusy(true);
+      const userMsg: OpsMessage = {
+        id: uid(),
+        role: "user",
+        text: fileContent
+          ? `${text}\n\n[Attached File Content]:\n${fileContent}`
+          : text,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((m) => [...m, userMsg]);
 
-    try {
-      const res = await fetch("/api/agent/ops", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          deviceId,
-          message: text,
-          messages: [...messages, userMsg]
-            .filter((x) => x.role === "user" || x.role === "assistant")
-            .slice(-10)
-            .map((x) => ({ role: x.role, text: x.text })),
-        }),
-      });
+      try {
+        const activeProvider = apiConfig?.providers?.find(
+          (p: any) => p.provider === apiConfig.activeProvider
+        );
+        const res = await fetch("/api/agent/ops", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            deviceId,
+            message: text,
+            fileContent: fileContent || null,
+            settings: activeProvider
+              ? {
+                  provider: activeProvider.provider,
+                  apiKey: activeProvider.apiKey,
+                  model: activeProvider.model,
+                }
+              : undefined,
+            messages: [...messages, userMsg]
+              .filter((x) => x.role === "user" || x.role === "assistant")
+              .slice(-10)
+              .map((x) => ({ role: x.role, text: x.text })),
+          }),
+        });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
