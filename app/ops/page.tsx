@@ -2,14 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  ArrowLeft,
-  Camera,
-  Eraser,
-  Monitor,
-  Send,
-  Sparkles,
-} from "lucide-react";
+import { Send } from "lucide-react";
 import { useGateway } from "@/hooks/use-gateway";
 import { useScreenRemote } from "@/hooks/use-screen-remote";
 import { useAgentOps } from "@/hooks/use-agent-ops";
@@ -26,7 +19,9 @@ function OpsPageInner() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const canvasBoardRef = useRef<HTMLDivElement | null>(null);
 
-  const [selectedDevice, setSelectedDevice] = useState(searchParams.get("device") || "");
+  const [selectedDevice, setSelectedDevice] = useState(
+    searchParams.get("device") || ""
+  );
   const { devices, subscribe, resolveTarget } = useGateway();
 
   const {
@@ -36,31 +31,25 @@ function OpsPageInner() {
     busy,
     send,
     monitor,
-    startMonitor,
     windows,
     focusWindow,
     closeWindow,
     moveWindow,
-    clearCanvas,
-    gatewayStatus,
   } = useAgentOps(selectedDevice);
 
   const hasScreenWin = windows.some((w) => w.type === "screen");
   const hasCameraWin = windows.some((w) => w.type === "camera");
 
-  const {
-    canvasRef,
-    hasLiveFrame,
-    measuredFps,
-    mediaStatus,
-  } = useScreenRemote({
-    subscribe,
-    selectedDeviceRef,
-    mediaDeviceId:
-      (monitor === "screen" || hasScreenWin) && selectedDevice
-        ? selectedDevice
-        : undefined,
-  });
+  const { canvasRef, hasLiveFrame, measuredFps, mediaStatus } = useScreenRemote(
+    {
+      subscribe,
+      selectedDeviceRef,
+      mediaDeviceId:
+        (monitor === "screen" || hasScreenWin) && selectedDevice
+          ? selectedDevice
+          : undefined,
+    }
+  );
 
   useEffect(() => {
     if (devices.length === 0) return;
@@ -71,7 +60,11 @@ function OpsPageInner() {
       setSelectedDevice(requested);
       return;
     }
-    if (selectedDeviceRef.current && known.includes(selectedDeviceRef.current)) return;
+    if (
+      selectedDeviceRef.current &&
+      known.includes(selectedDeviceRef.current)
+    )
+      return;
     const next = resolveTarget() || known[0] || "";
     selectedDeviceRef.current = next;
     setSelectedDevice(next);
@@ -93,13 +86,19 @@ function OpsPageInner() {
       const decode = (buffer: Uint8Array) => {
         if (buffer.length < 4) return;
         const { deviceId, frame } = unwrapDeviceBinaryFrame(buffer);
-        if (deviceId && selectedDeviceRef.current && deviceId !== selectedDeviceRef.current) {
+        if (
+          deviceId &&
+          selectedDeviceRef.current &&
+          deviceId !== selectedDeviceRef.current
+        ) {
           return;
         }
         if (frame.length < 2) return;
         const t = frame[0];
         if (t !== 0x01 && t !== 0x02) return;
-        const blob = new Blob([frame.subarray(1).slice()], { type: "image/jpeg" });
+        const blob = new Blob([frame.subarray(1).slice()], {
+          type: "image/jpeg",
+        });
         const url = URL.createObjectURL(blob);
         if (camUrlRef.current) URL.revokeObjectURL(camUrlRef.current);
         camUrlRef.current = url;
@@ -129,176 +128,105 @@ function OpsPageInner() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#0a0c10] text-slate-100">
-      {/* Dot grid canvas atmosphere */}
+    <div className="relative h-screen w-screen overflow-hidden bg-slate-50 text-slate-800">
+      {/* Light dot grid canvas atmosphere */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.35]"
+        className="pointer-events-none absolute inset-0 opacity-40"
         style={{
           backgroundImage:
-            "radial-gradient(circle at 1px 1px, rgba(148,163,184,0.28) 1px, transparent 0)",
-          backgroundSize: "28px 28px",
-        }}
-      />
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 70% 45% at 15% 0%, rgba(34,211,238,0.08), transparent 50%), radial-gradient(ellipse 50% 40% at 90% 20%, rgba(167,139,250,0.07), transparent 45%)",
+            "radial-gradient(circle at 1px 1px, rgba(100, 116, 139, 0.3) 1px, transparent 0)",
+          backgroundSize: "24px 24px",
         }}
       />
 
-      <header className="relative z-30 flex flex-wrap items-center gap-3 border-b border-white/10 bg-[#0a0c10]/80 px-4 py-3 backdrop-blur-md md:px-5">
-        <button
-          type="button"
-          onClick={() => router.push("/dashboard")}
-          className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+      {/* Full Screen Infinite Canvas */}
+      <div className="absolute inset-0 overflow-auto">
+        <div
+          ref={canvasBoardRef}
+          className="relative min-h-full min-w-[1100px]"
+          style={{ height: "max(100%, 900px)" }}
         >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </button>
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-cyan-400" />
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-white">Agent Ops</h1>
-            <p className="text-xs text-slate-400">
-              Stitch canvas — AI opens windows with live data
-            </p>
-          </div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <select
-            value={selectedDevice}
-            onChange={(e) => {
-              selectedDeviceRef.current = e.target.value;
-              setSelectedDevice(e.target.value);
-              router.replace(`/ops?device=${encodeURIComponent(e.target.value)}`);
-            }}
-            className="max-w-[200px] rounded-md border border-white/15 bg-[#141820] px-2 py-1.5 text-sm"
-          >
-            {devices.length === 0 && <option value="">No agents</option>}
-            {devices.map((d) => (
-              <option key={d.value} value={d.value}>
-                {d.label || d.value}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => void startMonitor("screen")}
-            className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1.5 text-xs text-slate-300 hover:bg-white/10"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-            Screen
-          </button>
-          <button
-            type="button"
-            onClick={() => void startMonitor("camera")}
-            className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1.5 text-xs text-slate-300 hover:bg-white/10"
-          >
-            <Camera className="h-3.5 w-3.5" />
-            Camera
-          </button>
-          <button
-            type="button"
-            onClick={() => void clearCanvas()}
-            className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1.5 text-xs text-slate-300 hover:bg-white/10"
-          >
-            <Eraser className="h-3.5 w-3.5" />
-            Clear
-          </button>
-          <span className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-500">
-            {gatewayStatus}
-          </span>
-        </div>
-      </header>
-
-      <div className="relative z-10 flex h-[calc(100vh-57px)]">
-        {/* Prompt dock — Stitch-like bottom-left chat strip */}
-        <aside className="flex w-full max-w-[340px] shrink-0 flex-col border-r border-white/10 bg-[#0c0f14]/90 md:max-w-[360px]">
-          <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`rounded-xl px-3 py-2 text-[13px] leading-relaxed ${
-                  m.role === "user"
-                    ? "ml-4 bg-cyan-500/15 text-cyan-50"
-                    : m.role === "system"
-                      ? "border border-dashed border-white/15 bg-transparent text-slate-500"
-                      : "mr-2 bg-white/[0.06] text-slate-200"
-                }`}
-              >
-                <p className="whitespace-pre-wrap">{m.text}</p>
-              </div>
-            ))}
-            {busy && (
-              <p className="animate-pulse text-xs text-cyan-400/80">
-                Generating windows…
+          {windows.length === 0 && (
+            <div className="pointer-events-none absolute left-1/2 top-[40%] w-full max-w-md -translate-x-1/2 -translate-y-1/2 px-6 text-center">
+              <p className="text-2xl font-semibold tracking-tight text-slate-400">
+                Canvas is empty
               </p>
-            )}
-            <div ref={endRef} />
-          </div>
-          <form onSubmit={onSubmit} className="border-t border-white/10 p-3">
-            <div className="flex gap-2">
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="usage dikhao · screen on · history · open Chrome"
-                disabled={!selectedDevice || busy}
-                className="flex-1 rounded-xl border border-white/15 bg-[#141820] px-3 py-2.5 text-sm outline-none ring-cyan-500/30 focus:ring-2"
-              />
-              <button
-                type="submit"
-                disabled={!selectedDevice || busy || !draft.trim()}
-                className="inline-flex items-center justify-center rounded-xl bg-cyan-600 px-3 text-white hover:bg-cyan-500 disabled:opacity-40"
-              >
-                <Send className="h-4 w-4" />
-              </button>
+              <p className="mt-2 text-sm text-slate-500">
+                Prompt dein — jaise Stitch screens kholti hai, AI windows yahan live display karega.
+              </p>
             </div>
+          )}
+
+          {windows.map((win) => (
+            <OpsCanvasWindowView
+              key={win.id}
+              win={win}
+              onFocus={focusWindow}
+              onClose={closeWindow}
+              onMove={moveWindow}
+              screenCanvasRef={win.type === "screen" ? canvasRef : undefined}
+              camImgRef={win.type === "camera" ? camImgRef : undefined}
+              screenMeta={
+                win.type === "screen"
+                  ? {
+                      fps: measuredFps,
+                      status: mediaStatus,
+                      live: hasLiveFrame,
+                    }
+                  : undefined
+              }
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Floating Bottom Chat Dock */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center justify-end p-4 md:p-6">
+        <div className="pointer-events-auto flex w-full max-w-2xl flex-col rounded-2xl border border-slate-200/80 bg-white/90 p-3 shadow-xl backdrop-blur-md">
+          {/* Messages Overlay Area */}
+          {messages.length > 0 && (
+            <div className="mb-3 max-h-48 space-y-2 overflow-y-auto px-1 text-sm">
+              {messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`rounded-xl px-3.5 py-2 text-xs leading-relaxed ${
+                    m.role === "user"
+                      ? "ml-auto max-w-[80%] bg-blue-600 text-white shadow-sm"
+                      : m.role === "system"
+                        ? "border border-dashed border-slate-300 bg-slate-50 text-slate-500"
+                        : "mr-auto max-w-[80%] bg-slate-100 text-slate-800"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap">{m.text}</p>
+                </div>
+              ))}
+              {busy && (
+                <p className="animate-pulse text-xs text-blue-600 font-medium">
+                  Generating windows…
+                </p>
+              )}
+              <div ref={endRef} />
+            </div>
+          )}
+
+          {/* Chat Input */}
+          <form onSubmit={onSubmit} className="flex items-center gap-2">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="usage dikhao · screen on · history · open Chrome"
+              disabled={!selectedDevice || busy}
+              className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={!selectedDevice || busy || !draft.trim()}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md transition hover:bg-blue-700 disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" />
+            </button>
           </form>
-        </aside>
-
-        {/* Infinite canvas */}
-        <section className="relative min-w-0 flex-1 overflow-auto">
-          <div
-            ref={canvasBoardRef}
-            className="relative min-h-full min-w-[1100px]"
-            style={{ height: "max(100%, 900px)" }}
-          >
-            {windows.length === 0 && (
-              <div className="pointer-events-none absolute left-1/2 top-[38%] w-full max-w-lg -translate-x-1/2 px-6 text-center">
-                <p className="text-3xl font-semibold tracking-tight text-white/85">
-                  Empty canvas
-                </p>
-                <p className="mt-3 text-sm text-slate-400">
-                  Prompt do — jaise Stitch screens kholti hai, yahan AI usage bars,
-                  browser list, notifications, live screen/camera windows khud open
-                  karegi.
-                </p>
-              </div>
-            )}
-
-            {windows.map((win) => (
-              <OpsCanvasWindowView
-                key={win.id}
-                win={win}
-                onFocus={focusWindow}
-                onClose={closeWindow}
-                onMove={moveWindow}
-                screenCanvasRef={win.type === "screen" ? canvasRef : undefined}
-                camImgRef={win.type === "camera" ? camImgRef : undefined}
-                screenMeta={
-                  win.type === "screen"
-                    ? {
-                        fps: measuredFps,
-                        status: mediaStatus,
-                        live: hasLiveFrame,
-                      }
-                    : undefined
-                }
-              />
-            ))}
-          </div>
-        </section>
+        </div>
       </div>
     </div>
   );
@@ -308,7 +236,7 @@ export default function OpsPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-[#0a0c10] text-slate-400">
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
           Loading canvas…
         </div>
       }
