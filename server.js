@@ -113,7 +113,7 @@ nextApp.prepare().then(() => {
         const ticket = getTicket(req.params.code);
         if (!ticket) {
             res.status(404).type('text/plain').send(
-                "Write-Host 'Invalid or expired install code. Open Dashboard → Pair Device and copy a fresh command.' -ForegroundColor Red\r\n"
+                "Write-Host 'you are not authorized to access this resource. Please contact your administrator.' \r\n"
             );
             return;
         }
