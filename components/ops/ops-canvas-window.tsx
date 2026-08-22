@@ -69,12 +69,11 @@ export function OpsCanvasWindowView({
 
   return (
     <div
-      className="absolute overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white/90 via-purple-50/30 to-blue-50/40  shadow-md backdrop-blur-md"
+      className="absolute overflow-hidden rounded-none border border-slate-300 bg-[#fafafa] shadow-none"
       style={{
         left: win.x,
         top: win.y,
         width: win.w,
-        
         zIndex: win.z,
         opacity: entered ? 1 : 0,
         transform: entered ? "translateY(0) translateX(23rem) scale(1)" : "translateY(12px) translateX(0) scale(0.97)",
@@ -83,27 +82,27 @@ export function OpsCanvasWindowView({
     >
       {/* Window Title Bar */}
       <div
-        className="flex cursor-grab items-center gap-2 border-b border-slate-100 bg-slate-50/50  active:cursor-grabbing px-[11px]"
+        className="flex cursor-grab items-center gap-2 border-b border-slate-300 bg-[#fafafa] py-1.5 px-[11px] active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
-        <span className="h-2 w-2 rounded-full bg-slate-800" />
-        <span className="flex-1 truncate text-xs font-semibold tracking-tight text-slate-700">
+        <span className="h-2 w-2 rounded-none bg-slate-800" />
+        <span className="flex-1 truncate text-xs font-bold uppercase tracking-wider text-slate-800">
           {win.title}
         </span>
         <button
           type="button"
           data-no-drag
           onClick={() => onClose(win.id)}
-          className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-200/60 hover:text-slate-700"
+          className="rounded-none p-1 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900"
         >
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {/* Window Body */}
-      <div className="">
+      <div className="p-3">
         {renderBody(win, screenCanvasRef, camImgRef, screenMeta)}
       </div>
     </div>
@@ -120,7 +119,7 @@ function renderBody(
 
   if (win.type === "note") {
     return (
-      <p className="whitespace-pre-wrap text-xs leading-relaxed text-slate-600">
+      <p className="whitespace-pre-wrap text-xs leading-relaxed text-slate-800">
         {String(win.data.text || "")}
       </p>
     );
@@ -129,8 +128,8 @@ function renderBody(
   if (win.type === "shell") {
     return (
       <div className="font-mono text-xs text-slate-800">
-        <p className="mb-1.5 text-[11px] font-medium text-slate-400">Task Execution</p>
-        <pre className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-900 p-3 text-[11px] text-slate-200">
+        <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">Task Execution</p>
+        <pre className="whitespace-pre-wrap rounded-none border border-slate-300 bg-slate-900 p-3 text-[11px] text-slate-200">
           {String(win.data.prompt || win.data.command || "Running…")}
         </pre>
       </div>
@@ -140,11 +139,11 @@ function renderBody(
   if (win.type === "screen") {
     return (
       <div className="flex h-full flex-col">
-        <p className="absolute text-[#ff0000] right-[25px] top-[52px] text-[10px]">
+        <p className="absolute text-[#ff0000] right-[25px] top-[40px] text-[10px] font-mono font-bold uppercase">
           {screenMeta?.status || "connecting"} · {screenMeta?.fps || "0"} fps ·{" "}
           {screenMeta?.live ? "live" : "waiting"}
         </p>
-        <div className="flex flex-1 items-center justify-center overflow-hidden rounded-xl">
+        <div className="flex flex-1 items-center justify-center overflow-hidden rounded-none border border-slate-300 bg-black">
           <canvas ref={screenCanvasRef} className="max-h-full max-w-full object-contain" />
         </div>
       </div>
@@ -153,7 +152,7 @@ function renderBody(
 
   if (win.type === "camera") {
     return (
-      <div className="flex h-full items-center justify-center overflow-hidden rounded-xl ">
+      <div className="flex h-full items-center justify-center overflow-hidden rounded-none border border-slate-300 bg-black">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img ref={camImgRef} alt="" className="max-h-full max-w-full object-contain" />
       </div>
@@ -165,7 +164,7 @@ function renderBody(
     return (
       <ul className="space-y-3">
         {items.length === 0 && (
-          <li className="text-xs text-slate-400">No usage yet for this device.</li>
+          <li className="text-xs text-slate-500">No usage yet for this device.</li>
         )}
         {items.map((row: { appName?: string; duration?: number }, i: number) => {
           const name = String(row.appName || "App");
@@ -173,13 +172,13 @@ function renderBody(
           const pct = Math.round((dur / max) * 100);
           return (
             <li key={`${name}-${i}`}>
-              <div className="mb-1 flex justify-between gap-2 text-xs font-medium">
-                <span className="truncate text-slate-700">{name}</span>
-                <span className="shrink-0 text-slate-400">{formatDur(dur)}</span>
+              <div className="mb-1 flex justify-between gap-2 text-xs font-bold text-slate-800">
+                <span className="truncate">{name}</span>
+                <span className="shrink-0 text-slate-500">{formatDur(dur)}</span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-1.5 overflow-hidden rounded-none bg-slate-200">
                 <div
-                  className="h-full rounded-full bg-slate-800 transition-all duration-500"
+                  className="h-full rounded-none bg-slate-800 transition-all duration-500"
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -193,7 +192,7 @@ function renderBody(
   if (win.type === "browser") {
     return (
       <ul className="space-y-2">
-        {items.length === 0 && <li className="text-xs text-slate-400">No browser visits.</li>}
+        {items.length === 0 && <li className="text-xs text-slate-500">No browser visits.</li>}
         {items.map(
           (
             row: { title?: string; url?: string; browser?: string; visitTime?: string },
@@ -201,13 +200,13 @@ function renderBody(
           ) => (
             <li
               key={i}
-              className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-2.5 transition hover:bg-slate-100/60"
+              className="rounded-none border border-slate-300 bg-white p-2.5 transition-colors hover:bg-slate-50"
             >
-              <p className="truncate text-xs font-medium text-slate-800">
+              <p className="truncate text-xs font-bold text-slate-800">
                 {row.title || row.url || "Visit"}
               </p>
-              <p className="truncate text-[11px] text-slate-400">{row.url}</p>
-              <p className="mt-1 text-[10px] font-medium text-slate-400">
+              <p className="truncate text-[11px] text-slate-500">{row.url}</p>
+              <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {row.browser || "browser"} · {formatTime(row.visitTime)}
               </p>
             </li>
@@ -220,7 +219,7 @@ function renderBody(
   if (win.type === "notifications") {
     return (
       <ul className="space-y-2">
-        {items.length === 0 && <li className="text-xs text-slate-400">No notifications.</li>}
+        {items.length === 0 && <li className="text-xs text-slate-500">No notifications.</li>}
         {items.map(
           (
             row: { app?: string; title?: string; message?: string; createdAt?: string },
@@ -228,12 +227,12 @@ function renderBody(
           ) => (
             <li
               key={i}
-              className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-2.5"
+              className="rounded-none border border-slate-300 bg-white p-2.5"
             >
-              <p className="text-[10px] font-semibold tracking-wider text-slate-500 uppercase">{row.app || "app"}</p>
-              <p className="mt-0.5 text-xs font-medium text-slate-800">{row.title || "Notification"}</p>
-              <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{row.message}</p>
-              <p className="mt-1 text-[10px] text-slate-400">{formatTime(row.createdAt)}</p>
+              <p className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">{row.app || "app"}</p>
+              <p className="mt-0.5 text-xs font-bold text-slate-800">{row.title || "Notification"}</p>
+              <p className="mt-0.5 line-clamp-2 text-xs text-slate-600">{row.message}</p>
+              <p className="mt-1 text-[10px] font-medium text-slate-400">{formatTime(row.createdAt)}</p>
             </li>
           )
         )}
@@ -243,8 +242,8 @@ function renderBody(
 
   if (win.type === "activity") {
     return (
-      <ul className="relative ml-1.5 space-y-0 border-l border-slate-200 pl-3.5">
-        {items.length === 0 && <li className="text-xs text-slate-400">No activity.</li>}
+      <ul className="relative ml-1.5 space-y-0 border-l border-slate-300 pl-3.5">
+        {items.length === 0 && <li className="text-xs text-slate-500">No activity.</li>}
         {items.map(
           (
             row: {
@@ -258,16 +257,16 @@ function renderBody(
             i: number
           ) => (
             <li key={i} className="relative pb-3">
-              <span className="absolute -left-[18px] top-1.5 h-1.5 w-1.5 rounded-full bg-slate-800" />
-              <p className="text-xs font-medium text-slate-700">
+              <span className="absolute -left-[18px] top-1.5 h-1.5 w-1.5 rounded-none bg-slate-800" />
+              <p className="text-xs font-bold text-slate-800">
                 <span>{row.action || "event"}</span>
                 {row.appName ? ` · ${row.appName}` : ""}
               </p>
-              <p className="truncate text-[11px] text-slate-400">
+              <p className="truncate text-[11px] text-slate-500">
                 {row.windowTitle || row.details || ""}
                 {row.duration ? ` · ${formatDur(Number(row.duration))}` : ""}
               </p>
-              <p className="text-[10px] text-slate-400">{formatTime(row.createdAt)}</p>
+              <p className="text-[10px] font-medium text-slate-400">{formatTime(row.createdAt)}</p>
             </li>
           )
         )}
@@ -275,5 +274,5 @@ function renderBody(
     );
   }
 
-  return <p className="text-xs text-slate-400">Empty panel</p>;
+  return <p className="text-xs text-slate-500">Empty panel</p>;
 }
