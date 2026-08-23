@@ -175,14 +175,6 @@ function extractShellCommand(text: string): string | null {
     return `curl "${cleaned.replace(/^fetch\s+/i, "").trim()}"`;
   }
 
-  if (lower.startsWith("check ")) {
-    return cleaned.replace(/^check\s+/i, "");
-  }
-
-  if (lower.startsWith("transfer ")) {
-    return cleaned.replace(/^transfer\s+/i, "");
-  }
-
   return null;
 }
 const initialMessages = (): AgentMessage[] => {
@@ -317,15 +309,22 @@ const lastCommandRef = useRef<string>("");
         },
       });
 
+      let sanitizedCmd = trimmed;
+      const psMatch = sanitizedCmd.match(/^(?:powershell|powershell\.exe|pwsh)\s+(?:-Command|-c)\s+["']?([\s\S]+?)["']?$/i);
+      if (psMatch?.[1]) {
+        sanitizedCmd = psMatch[1].trim();
+      }
+
       const looksPs =
-        /^(?:powershell|pwsh)\b/i.test(trimmed) ||
+        /^(?:powershell|pwsh)\b/i.test(sanitizedCmd) ||
         /^(?:Get-|Set-|Write-|Select-|Where-|ForEach-|Invoke-|Import-|Export-|New-|Remove-|Start-|Stop-|Test-|ConvertTo-|ConvertFrom-)/i.test(
-          trimmed
+          sanitizedCmd
         ) ||
-        trimmed.includes("$_");
+        sanitizedCmd.includes("$_");
+
       const result = gatewayDispatch(
         "SHELL_EXECUTE",
-        { command: trimmed, shell: looksPs ? "powershell" : "cmd" },
+        { command: sanitizedCmd, shell: looksPs ? "powershell" : "cmd" },
         target
       );
       if (!result.ok) {
