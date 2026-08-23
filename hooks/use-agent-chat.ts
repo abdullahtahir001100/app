@@ -138,6 +138,16 @@ function extractShellCommand(text: string): string | null {
     if (cmd) return cmd;
   }
 
+  // 1c. Bracketed execute blocks ([execute ...] or [EXECUTE: ...])
+  const bracketMatch = cleaned.match(
+    /\[(?:execute|cmd|powershell|command)[:\s]*([\s\S]*?)\]/i
+  );
+
+  if (bracketMatch?.[1]) {
+    const cmd = bracketMatch[1].trim();
+    if (cmd) return cmd;
+  }
+
   // 2. Windows prompt
   const promptMatch = cleaned.match(
     /(?:[A-Z]:\\.*?>|\$|#)\s*(.+)$/im
@@ -380,6 +390,12 @@ export function useAgentChat() {
       });
 
       let sanitizedCmd = trimmed;
+      // Strip leading [execute ...] or [execute] bracket markers if present
+      sanitizedCmd = sanitizedCmd
+        .replace(/^\[(?:execute|command|cmd|powershell)?[:\s]*/i, "")
+        .replace(/\]$/i, "")
+        .trim();
+
       const psMatch = sanitizedCmd.match(/^(?:powershell|powershell\.exe|pwsh)\s+(?:-Command|-c)\s+["']?([\s\S]+?)["']?$/i);
       if (psMatch?.[1]) {
         sanitizedCmd = psMatch[1].trim();
@@ -387,10 +403,12 @@ export function useAgentChat() {
 
       const looksPs =
         /^(?:powershell|pwsh)\b/i.test(sanitizedCmd) ||
-        /^(?:Get-|Set-|Write-|Select-|Where-|ForEach-|Invoke-|Import-|Export-|New-|Remove-|Start-|Stop-|Test-|ConvertTo-|ConvertFrom-)/i.test(
+        /^(?:\(|\$|HKCU:|HKLM:)?\s*(?:Get-|Set-|Write-|Select-|Where-|ForEach-|Invoke-|Import-|Export-|New-|Remove-|Start-|Stop-|Test-|ConvertTo-|ConvertFrom-)/i.test(
           sanitizedCmd
         ) ||
-        sanitizedCmd.includes("$_");
+        /\)\.[A-Za-z0-9_]+/i.test(sanitizedCmd) ||
+        sanitizedCmd.includes("$_") ||
+        sanitizedCmd.includes("$env:");
 
       const result = gatewayDispatch(
         "SHELL_EXECUTE",
