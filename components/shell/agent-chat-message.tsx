@@ -10,9 +10,25 @@ export function AgentChatMessage({ message }: AgentChatMessageProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   
-  // Checking exact types matching your custom types
   const isThinking = message.status === "thinking" || message.metadata?.step === "thinking";
   const isExecuting = message.status === "executing" || message.metadata?.kind === "terminal";
+
+  // Clean raw tool_call tags for visual display if any model outputted them raw
+  const cleanDisplayText = (text: string) => {
+    if (!text) return "";
+    return text
+      .replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/gi, "")
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+      .trim();
+  };
+
+  const formattedText = cleanDisplayText(message.text || "");
+
+  // Check if message contains markdown images or base64 image data URLs
+  const imgMatches = formattedText.match(/!\[(.*?)\]\((data:image\/[^;]+;base64,[^\)]+)\)/i) ||
+                     formattedText.match(/(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)/i);
+
+  const base64Src = imgMatches?.[2] || imgMatches?.[1];
 
   return (
     <div className="flex items-start space-x-3 text-zinc-300 py-2.5 border-b border-zinc-800/30 font-sans">
@@ -64,7 +80,7 @@ export function AgentChatMessage({ message }: AgentChatMessageProps) {
           )}
         </div>
 
-        {/* Text / Terminal Output block */}
+        {/* Text / Terminal Output / Image Presentation Block */}
         <div className="text-xs leading-relaxed text-zinc-300 whitespace-pre-wrap selection:bg-zinc-700">
           {message.metadata?.kind === "terminal" || message.metadata?.command ? (
             <div className="my-2 overflow-hidden rounded border border-zinc-800 bg-[#141414]">
@@ -81,7 +97,19 @@ export function AgentChatMessage({ message }: AgentChatMessageProps) {
               </pre>
             </div>
           ) : (
-            message.text || (isThinking ? <span className="text-zinc-600 italic">Planning action items...</span> : "")
+            <>
+              {formattedText || (isThinking ? <span className="text-zinc-600 italic">Planning action items...</span> : "")}
+              {base64Src && (
+                <div className="mt-2.5 overflow-hidden rounded-lg border border-zinc-700/60 bg-black/40 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={base64Src}
+                    alt="Visual Output"
+                    className="max-h-80 w-auto rounded object-contain shadow-md"
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

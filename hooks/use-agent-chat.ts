@@ -125,6 +125,19 @@ function extractShellCommand(text: string): string | null {
     if (cmd) return cmd;
   }
 
+  // 1b. Tool Call Tags (<|tool_call_start|>[cmd]<|tool_call_end|>)
+  const toolCallMatch = cleaned.match(
+    /(?:<\|tool_call_start\|>|<tool_call>|\[COMMAND:\s*)([\s\S]*?)(?:<\|tool_call_end\|>|<\/tool_call>|\])/i
+  );
+
+  if (toolCallMatch?.[1]) {
+    let cmd = toolCallMatch[1].trim();
+    if (cmd.startsWith('[') && cmd.endsWith(']')) {
+      cmd = cmd.slice(1, -1).trim();
+    }
+    if (cmd) return cmd;
+  }
+
   // 2. Windows prompt
   const promptMatch = cleaned.match(
     /(?:[A-Z]:\\.*?>|\$|#)\s*(.+)$/im
@@ -218,13 +231,14 @@ export function useAgentChat() {
   const [isLoading, setIsLoading] = useState(false);
   const streamStartRef = useRef<number | null>(null);
 
-  const { dispatch: gatewayDispatch, resolveTarget, isConnected } = useGateway();
+  const { dispatch: gatewayDispatch, resolveTarget, isConnected, subscribe } = useGateway();
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<AgentMessage[]>(messages);
   const currentDirectoryRef = useRef<string>("");
-const lastCommandRef = useRef<string>("");
+  const lastCommandRef = useRef<string>("");
   const settingsRef = useRef<AgentSettings>(settings);
   const capabilitiesRef = useRef<AgentCapabilities>(capabilities);
+  const autoHealCountRef = useRef<number>(0);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -252,6 +266,62 @@ const lastCommandRef = useRef<string>("");
   const appendMessage = useCallback((message: AgentMessage) => {
     setMessages((prev) => [...prev, message]);
   }, []);
+
+  const sendMessageRef = useRef<(input: string) => Promise<void>>(() => Promise.resolve());
+
+  /* ── Gateway WebSocket Terminal Output & Auto-Heal Listener ── */
+  useEffect(() => {
+    return subscribe((event) => {
+      if (event.type !== "json" || !event.packet) return;
+      const pkt = event.packet as Record<string, unknown>;
+
+      const isShellEvent =
+        pkt.type === "shell_output" ||
+        pkt.type === "SHELL_OUTPUT" ||
+        pkt.action === "SHELL_OUTPUT" ||
+        pkt.type === "shell_error" ||
+        pkt.type === "SHELL_ERROR";
+
+      if (isShellEvent) {
+        const rawOutput = String(pkt.output || pkt.text || pkt.error || pkt.data || "").trim();
+        const exitCode = typeof pkt.exitCode === "number" ? pkt.exitCode : undefined;
+        const command = String(pkt.command || lastCommandRef.current || "");
+
+        if (rawOutput) {
+          appendMessage({
+            id: `terminal-out-${Date.now()}`,
+            role: "assistant",
+            text: rawOutput,
+            status: exitCode === 0 ? "completed" : exitCode !== undefined ? "error" : "completed",
+            timestamp: createTimestamp(),
+            metadata: {
+              kind: "terminal",
+              step: "completed",
+              command,
+              exitCode,
+            },
+          });
+
+          // Check if output has errors needing auto-heal
+          const hasError =
+            (exitCode !== undefined && exitCode !== 0) ||
+            /is not recognized as an internal or external command/i.test(rawOutput) ||
+            /CommandNotFoundException/i.test(rawOutput) ||
+            /The term '.*' is not recognized/i.test(rawOutput);
+
+          if (hasError && capabilitiesRef.current.autoRetries && autoHealCountRef.current < 3) {
+            autoHealCountRef.current += 1;
+            const retryPrompt = `The command \`${command}\` failed with output:\n\`\`\`\n${rawOutput}\n\`\`\`\nAutonomously fix this error and execute the corrected working solution on Windows now.`;
+            setTimeout(() => {
+              void sendMessageRef.current(retryPrompt);
+            }, 800);
+          } else {
+            autoHealCountRef.current = 0;
+          }
+        }
+      }
+    });
+  }, [subscribe, appendMessage]);
 
   const setSetting = useCallback(<K extends keyof AgentSettings>(key: K, value: AgentSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -571,6 +641,10 @@ const lastCommandRef = useRef<string>("");
       streamStartRef.current = null;
     }
   }, [abortStreaming, appendMessage, isStreaming, runShellCommand, updateMessage]);
+
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
 
   const statusLabel = useMemo(() => {
     if (connectionState === "streaming") return "Streaming";
