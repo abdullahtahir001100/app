@@ -170,7 +170,7 @@ router.get('/download', (req, res) => {
 function getApiKeyForProvider(settings = {}, providerKey = 'gemini') {
     const direct = typeof settings.apiKey === 'string' ? settings.apiKey.trim() : '';
     if (direct) return direct;
-    
+
     if (providerKey === 'gemini') {
         return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
     }
@@ -227,7 +227,14 @@ async function callOpenAICompatibleAPI({ endpoint, apiKey, model, system, messag
 
     const raw = await res.text();
     if (!res.ok) {
-        throw new Error(raw || `API error ${res.status}`);
+        try {
+            const errObj = JSON.parse(raw);
+            const msg = errObj?.error?.message || errObj?.message || errObj?.error || raw;
+            throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        } catch (e) {
+            if (e instanceof Error && e.message !== raw) throw e;
+            throw new Error(raw || `API error ${res.status}`);
+        }
     }
     const data = JSON.parse(raw);
     return data?.choices?.[0]?.message?.content || '';
@@ -258,13 +265,20 @@ async function callAnthropicAPI({ apiKey, model, system, messages, prompt }) {
             model: model || 'claude-3-5-sonnet-20241022',
             system: system || undefined,
             messages: formattedMessages,
-            max_tokens: 4096,
+            max_tokens: 3000,
         }),
     });
 
     const raw = await res.text();
     if (!res.ok) {
-        throw new Error(raw || `Anthropic HTTP ${res.status}`);
+        try {
+            const errObj = JSON.parse(raw);
+            const msg = errObj?.error?.message || errObj?.message || raw;
+            throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        } catch (e) {
+            if (e instanceof Error && e.message !== raw) throw e;
+            throw new Error(raw || `Anthropic HTTP ${res.status}`);
+        }
     }
     const data = JSON.parse(raw);
     return data?.content?.[0]?.text || '';
@@ -311,7 +325,14 @@ async function callGeminiAPI({ apiKey, model, system, messages, prompt, jsonMode
 
     const raw = await response.text();
     if (!response.ok) {
-        throw new Error(raw || `Gemini HTTP ${response.status}`);
+        try {
+            const errObj = JSON.parse(raw);
+            const msg = errObj?.error?.message || errObj?.message || raw;
+            throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        } catch (e) {
+            if (e instanceof Error && e.message !== raw) throw e;
+            throw new Error(raw || `Gemini HTTP ${response.status}`);
+        }
     }
     const data = JSON.parse(raw);
     return (
@@ -341,10 +362,22 @@ async function generateMultiProviderCompletion({ system, messages, prompt, setti
 
     if (provider === 'openrouter') {
         if (!apiKey) throw new Error('OpenRouter API key required.');
+        let openRouterModel = model || 'openai/gpt-4o';
+        if (!openRouterModel.includes('/')) {
+            if (openRouterModel.startsWith('gemini')) {
+                openRouterModel = `google/${openRouterModel}`;
+            } else if (openRouterModel.startsWith('claude')) {
+                openRouterModel = `anthropic/${openRouterModel}`;
+            } else if (openRouterModel.startsWith('llama')) {
+                openRouterModel = `meta-llama/${openRouterModel}`;
+            } else {
+                openRouterModel = `openai/${openRouterModel}`;
+            }
+        }
         return callOpenAICompatibleAPI({
             endpoint: 'https://openrouter.ai/api/v1/chat/completions',
             apiKey,
-            model: model || 'openai/gpt-4o',
+            model: openRouterModel,
             system,
             messages,
             prompt,
@@ -472,7 +505,7 @@ router.post('/chat', express.json({ limit: '2mb' }), async (req, res) => {
     } catch (error) {
         console.error('[AGENT CHAT]', error?.message || error);
         if (res.headersSent) {
-            try { res.end(); } catch (_) {}
+            try { res.end(); } catch (_) { }
             return;
         }
         return res.status(500).json({
@@ -677,12 +710,12 @@ router.post('/ops', express.json({ limit: '2mb' }), requireUserFast, async (req,
 
         const history = Array.isArray(body.messages)
             ? body.messages
-                  .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.text)
-                  .slice(-12)
-                  .map((m) => ({
-                      role: m.role === 'assistant' ? 'model' : 'user',
-                      parts: [{ text: String(m.text) }],
-                  }))
+                .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.text)
+                .slice(-12)
+                .map((m) => ({
+                    role: m.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: String(m.text) }],
+                }))
             : [];
 
         const enrichWindowData = (windows) =>

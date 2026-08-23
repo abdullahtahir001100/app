@@ -72,16 +72,16 @@ const DEFAULT_SETTINGS: AgentSettings = {
 function getInitialSettings(): AgentSettings {
   const stored = getStoredState<AgentSettings | null>(SETTINGS_KEY, null);
   const shellConfig = getShellApiConfig();
-  const activeProvider = shellConfig.activeProvider || "gemini";
-  const activeCfg = shellConfig.providers.find((p) => p.provider === activeProvider);
+  const targetProvider = (stored?.provider || shellConfig.activeProvider || "gemini") as string;
+  const provCfg = shellConfig.providers.find((p) => p.provider === targetProvider);
 
   if (stored) {
-    const effectiveKey = stored.apiKey || activeCfg?.apiKey || "";
-    const effectiveModel = stored.model || activeCfg?.model || DEFAULT_SETTINGS.model;
+    const effectiveKey = stored.apiKey || provCfg?.apiKey || "";
+    const effectiveModel = stored.model && stored.model !== DEFAULT_SETTINGS.model ? stored.model : (provCfg?.model || DEFAULT_SETTINGS.model);
     return {
       ...DEFAULT_SETTINGS,
       ...stored,
-      provider: stored.provider || activeProvider,
+      provider: targetProvider,
       apiKey: effectiveKey,
       model: effectiveModel,
     };
@@ -89,9 +89,9 @@ function getInitialSettings(): AgentSettings {
 
   return {
     ...DEFAULT_SETTINGS,
-    provider: activeProvider,
-    apiKey: activeCfg?.apiKey || "",
-    model: activeCfg?.model || "gemini-2.0-flash",
+    provider: targetProvider,
+    apiKey: provCfg?.apiKey || "",
+    model: provCfg?.model || "gemini-2.0-flash",
   };
 }
 
@@ -416,7 +416,7 @@ const lastCommandRef = useRef<string>("");
     if (!effectiveSettings.apiKey && activeProvCfg?.apiKey) {
       effectiveSettings.apiKey = activeProvCfg.apiKey;
     }
-    if ((!effectiveSettings.model || effectiveSettings.model === DEFAULT_SETTINGS.model) && activeProvCfg?.model) {
+    if ((!effectiveSettings.model || (effectiveSettings.provider !== "gemini" && effectiveSettings.model.startsWith("gemini"))) && activeProvCfg?.model) {
       effectiveSettings.model = activeProvCfg.model;
     }
 
@@ -433,8 +433,26 @@ const lastCommandRef = useRef<string>("");
         signal: controller.signal,
       });
 
-      if (!response.ok || !response.body) {
-        throw new Error("Unable to reach the agent backend.");
+      if (!response.ok) {
+        let errorMsg = `HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData?.error) {
+            errorMsg = typeof errData.error === "string" ? errData.error : JSON.stringify(errData.error);
+          } else if (errData?.message) {
+            errorMsg = String(errData.message);
+          }
+        } catch {
+          try {
+            const rawText = await response.text();
+            if (rawText) errorMsg = rawText;
+          } catch (_) {}
+        }
+        throw new Error(errorMsg);
+      }
+
+      if (!response.body) {
+        throw new Error("Empty response body received from agent backend.");
       }
 
       const reader = response.body.getReader();
