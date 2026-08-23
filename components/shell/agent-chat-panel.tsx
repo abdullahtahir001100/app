@@ -1,8 +1,11 @@
-"use client";
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAgentChat } from "@/hooks/use-agent-chat";
 import { AgentChatMessage, AgentChatSkeleton } from "./agent-chat-message";
+import {
+  useApiConfig,
+  PROVIDER_OPTIONS,
+  type ProviderKey,
+} from "@/hooks/use-api-config";
 
 type ViewState = "chat" | "settings";
 
@@ -14,6 +17,18 @@ export function AgentChatPanel() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const dragRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  /* ── Shell API Multi-Provider Config ─────────────────────── */
+  const {
+    config: apiConfig,
+    activeProvider: shellActiveProvider,
+    setActiveProvider,
+    setProviderApiKey,
+    setProviderModel,
+  } = useApiConfig("shell");
+
+  const [editingProviderKey, setEditingProviderKey] = useState<ProviderKey | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
     messages,
@@ -29,6 +44,30 @@ export function AgentChatPanel() {
     statusLabel,
     stopGeneration,
   } = useAgentChat();
+
+  const handleActivateProvider = (pKey: ProviderKey) => {
+    setActiveProvider(pKey);
+    setSetting("provider", pKey);
+    const provConfig = apiConfig.providers.find((p) => p.provider === pKey);
+    if (provConfig) {
+      if (provConfig.apiKey) setSetting("apiKey", provConfig.apiKey);
+      if (provConfig.model) setSetting("model", provConfig.model);
+    }
+  };
+
+  const handleUpdateApiKey = (pKey: ProviderKey, keyVal: string) => {
+    setProviderApiKey(pKey, keyVal);
+    if (settings.provider === pKey) {
+      setSetting("apiKey", keyVal);
+    }
+  };
+
+  const handleUpdateModel = (pKey: ProviderKey, modelVal: string) => {
+    setProviderModel(pKey, modelVal);
+    if (settings.provider === pKey) {
+      setSetting("model", modelVal);
+    }
+  };
 
   useEffect(() => {
     if (!isDragging) return;
@@ -223,40 +262,272 @@ export function AgentChatPanel() {
 
             <main ref={scrollRef} className="custom-scrollbar flex-1 space-y-6 overflow-y-auto p-4" data-purpose="scroll-area">
               {currentView === "settings" ? (
-                <div className="space-y-8 animate-in fade-in duration-200">
+                <div className="space-y-6 animate-in fade-in duration-200">
+                  {/* Top Active Status Card */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Active Provider & Model
+                        </div>
+                        <div className="mt-1 flex items-center space-x-2">
+                          <span className="text-sm font-bold text-slate-900">
+                            {PROVIDER_OPTIONS.find((p) => p.key === settings.provider)?.label || settings.provider}
+                          </span>
+                          <span className="rounded-md bg-slate-200 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-700">
+                            {settings.model}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        {settings.apiKey?.trim() ? (
+                          <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 border border-emerald-200">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                            Key Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 border border-amber-200">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                            No Key Set
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Provider Companies List / Config */}
                   <section className="space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">Provider / Model</h3>
-                    <div className="space-y-3">
-                      <select
-                        value={settings.provider}
-                        onChange={(event) => setSetting("provider", event.target.value)}
-                        className="w-full border-b border-gray-200 bg-transparent py-2 text-sm text-gray-900 outline-none transition-colors focus:border-blue-500"
-                      >
-                        <option value="gemini">Google Gemini</option>
-                        <option value="chatgpt">OpenAI ChatGPT</option>
-                        <option value="openrouter">OpenRouter</option>
-                        <option value="grok">xAI Grok</option>
-                        <option value="claude">Anthropic Claude</option>
-                      </select>
-                      <input
-                        type="text"
-                        placeholder="Model"
-                        value={settings.model}
-                        onChange={(event) => setSetting("model", event.target.value)}
-                        className="w-full border-b border-gray-200 bg-transparent py-2 text-sm font-mono text-gray-900 placeholder-gray-400 outline-none transition-colors focus:border-blue-500"
-                      />
-                      <input
-                        type="password"
-                        placeholder="Paste your API Key here (sk-...)"
-                        value={settings.apiKey}
-                        onChange={(event) => setSetting("apiKey", event.target.value)}
-                        className="w-full border-b border-gray-200 bg-transparent py-2 text-sm font-mono text-gray-900 placeholder-gray-400 outline-none transition-colors focus:border-blue-500"
-                      />
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                        AI Provider Companies
+                      </h3>
+                      {editingProviderKey && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingProviderKey(null)}
+                          className="text-[11px] font-bold text-blue-600 hover:underline"
+                        >
+                          ← All Companies
+                        </button>
+                      )}
+                    </div>
+
+                    {!editingProviderKey ? (
+                      <div className="space-y-2.5">
+                        {PROVIDER_OPTIONS.map((opt) => {
+                          const isActive = settings.provider === opt.key;
+                          const provConfig = apiConfig.providers.find((p) => p.provider === opt.key);
+                          const hasKey = Boolean(provConfig?.apiKey?.trim() || (isActive && settings.apiKey?.trim()));
+
+                          return (
+                            <div
+                              key={opt.key}
+                              className={`flex items-center justify-between rounded-xl border p-3 transition-all ${
+                                isActive
+                                  ? "border-slate-900 bg-slate-900 text-white shadow-md"
+                                  : "border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50"
+                              }`}
+                            >
+                              <div
+                                className="flex-1 cursor-pointer"
+                                onClick={() => setEditingProviderKey(opt.key)}
+                              >
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-xs font-bold tracking-tight">
+                                    {opt.label}
+                                  </span>
+                                  {isActive && (
+                                    <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-wider">
+                                      Selected
+                                    </span>
+                                  )}
+                                  {hasKey && !isActive && (
+                                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                                      Key Set
+                                    </span>
+                                  )}
+                                </div>
+                                <div className={`mt-0.5 font-mono text-[10px] ${isActive ? "text-slate-300" : "text-slate-500"}`}>
+                                  Model: {provConfig?.model || opt.defaultModel}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingProviderKey(opt.key)}
+                                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                                    isActive
+                                      ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                                  }`}
+                                >
+                                  Configure
+                                </button>
+                                {!isActive && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleActivateProvider(opt.key)}
+                                    className="rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-700"
+                                  >
+                                    Activate
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      /* Single Provider Configuration Panel */
+                      (() => {
+                        const opt = PROVIDER_OPTIONS.find((p) => p.key === editingProviderKey);
+                        if (!opt) return null;
+                        const provConfig = apiConfig.providers.find((p) => p.provider === opt.key);
+                        const currentKey = provConfig?.apiKey || (settings.provider === opt.key ? settings.apiKey : "");
+                        const currentModel = provConfig?.model || (settings.provider === opt.key ? settings.model : opt.defaultModel);
+
+                        return (
+                          <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm animate-in fade-in duration-150">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                              <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                                Configure {opt.label}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setEditingProviderKey(null)}
+                                className="text-slate-400 hover:text-slate-700 text-xs font-bold"
+                              >
+                                ✕
+                              </button>
+                            </div>
+
+                            {/* API Key Field */}
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                                API Key
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showPassword ? "text" : "password"}
+                                  placeholder={`Paste ${opt.label} API Key (sk-...)`}
+                                  value={currentKey}
+                                  onChange={(e) => handleUpdateApiKey(opt.key, e.target.value)}
+                                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 pr-14 text-xs font-mono text-slate-900 outline-none transition focus:border-slate-800 focus:bg-white"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPassword((prev) => !prev)}
+                                  className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-[9px] font-bold text-slate-500 hover:bg-slate-200 hover:text-slate-800"
+                                >
+                                  {showPassword ? "HIDE" : "SHOW"}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Model Presets */}
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                                Select Model
+                              </label>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {opt.models.map((m) => {
+                                  const isSelected = currentModel === m;
+                                  return (
+                                    <button
+                                      key={m}
+                                      type="button"
+                                      onClick={() => handleUpdateModel(opt.key, m)}
+                                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-mono transition text-left truncate ${
+                                        isSelected
+                                          ? "border-slate-800 bg-slate-800 text-white font-bold"
+                                          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                                      }`}
+                                    >
+                                      {m}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <input
+                                type="text"
+                                placeholder="Or enter custom model name..."
+                                value={currentModel}
+                                onChange={(e) => handleUpdateModel(opt.key, e.target.value)}
+                                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-mono text-slate-900 outline-none focus:border-slate-800 focus:bg-white"
+                              />
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex items-center space-x-2 pt-2 border-t border-slate-100">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleActivateProvider(opt.key);
+                                  setEditingProviderKey(null);
+                                }}
+                                className="flex-1 rounded-lg bg-slate-900 py-2 text-xs font-bold text-white transition hover:bg-slate-800"
+                              >
+                                Save & Activate
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingProviderKey(null)}
+                                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                              >
+                                Done
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()
+                    )}
+                  </section>
+
+                  {/* LLM Parameters */}
+                  <section className="space-y-3 border-t border-slate-100 pt-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Generation Parameters
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">
+                          Temperature: {settings.temperature}
+                        </label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={settings.temperature}
+                          onChange={(e) => setSetting("temperature", parseFloat(e.target.value))}
+                          className="w-full accent-slate-800 cursor-pointer"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">
+                          Max Output Tokens
+                        </label>
+                        <select
+                          value={settings.maxTokens}
+                          onChange={(e) => setSetting("maxTokens", parseInt(e.target.value, 10))}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-mono text-slate-800 outline-none focus:border-slate-800"
+                        >
+                          <option value={512}>512</option>
+                          <option value={1024}>1024</option>
+                          <option value={2048}>2048</option>
+                          <option value={4096}>4096</option>
+                          <option value={8192}>8192</option>
+                        </select>
+                      </div>
                     </div>
                   </section>
 
-                  <section className="space-y-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">Agent Capabilities</h3>
+                  {/* Agent Capabilities */}
+                  <section className="space-y-3 border-t border-slate-100 pt-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Agent Capabilities
+                    </h3>
                     <div className="space-y-2">
                       {[
                         { key: "aiLoop", label: "Use AI Loop (Autonomous iterations)" },
@@ -268,7 +539,7 @@ export function AgentChatPanel() {
                         { key: "multiStep", label: "Multi-step Task Execution" },
                       ].map((item) => (
                         <label key={item.key} className="group flex cursor-pointer items-center space-x-3">
-                          <div className={`flex h-4 w-4 items-center justify-center border ${capabilities[item.key as keyof typeof capabilities] ? "border-slate-800 bg-slate-800" : "border-gray-300 bg-transparent"} transition-colors`}>
+                          <div className={`flex h-4 w-4 items-center justify-center border rounded ${capabilities[item.key as keyof typeof capabilities] ? "border-slate-800 bg-slate-800" : "border-gray-300 bg-transparent"} transition-colors`}>
                             {capabilities[item.key as keyof typeof capabilities] && (
                               <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
@@ -281,7 +552,7 @@ export function AgentChatPanel() {
                             checked={capabilities[item.key as keyof typeof capabilities]}
                             onChange={() => toggleCapability(item.key as keyof typeof capabilities)}
                           />
-                          <span className="text-sm text-gray-700 transition-colors group-hover:text-gray-900">{item.label}</span>
+                          <span className="text-xs font-medium text-gray-700 transition-colors group-hover:text-gray-900">{item.label}</span>
                         </label>
                       ))}
                     </div>

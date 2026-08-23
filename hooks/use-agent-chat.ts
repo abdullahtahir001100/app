@@ -53,6 +53,10 @@ export type AgentSettings = {
 
 import { getShellApiConfig, getActiveProviderConfig } from "@/hooks/use-api-config";
 
+const STORAGE_KEY = "zenvora_agent_chat_messages";
+const SETTINGS_KEY = "zenvora_agent_chat_settings";
+const CAPABILITIES_KEY = "zenvora_agent_chat_capabilities";
+
 const DEFAULT_SETTINGS: AgentSettings = {
   provider: "gemini",
   apiKey: "",
@@ -67,20 +71,28 @@ const DEFAULT_SETTINGS: AgentSettings = {
 
 function getInitialSettings(): AgentSettings {
   const stored = getStoredState<AgentSettings | null>(SETTINGS_KEY, null);
-  if (stored && stored.apiKey) return stored;
+  const shellConfig = getShellApiConfig();
+  const activeProvider = shellConfig.activeProvider || "gemini";
+  const activeCfg = shellConfig.providers.find((p) => p.provider === activeProvider);
 
-  const opsConfig = getShellApiConfig();
-  const active = getActiveProviderConfig(opsConfig);
-  if (active) {
+  if (stored) {
+    const effectiveKey = stored.apiKey || activeCfg?.apiKey || "";
+    const effectiveModel = stored.model || activeCfg?.model || DEFAULT_SETTINGS.model;
     return {
       ...DEFAULT_SETTINGS,
-      provider: active.provider,
-      apiKey: active.apiKey,
-      model: active.model,
+      ...stored,
+      provider: stored.provider || activeProvider,
+      apiKey: effectiveKey,
+      model: effectiveModel,
     };
   }
 
-  return stored || DEFAULT_SETTINGS;
+  return {
+    ...DEFAULT_SETTINGS,
+    provider: activeProvider,
+    apiKey: activeCfg?.apiKey || "",
+    model: activeCfg?.model || "gemini-2.0-flash",
+  };
 }
 
 const DEFAULT_CAPABILITIES: AgentCapabilities = {
@@ -398,6 +410,16 @@ const lastCommandRef = useRef<string>("");
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const effectiveSettings = { ...settingsRef.current };
+    const shellCfg = getShellApiConfig();
+    const activeProvCfg = shellCfg.providers.find((p) => p.provider === effectiveSettings.provider);
+    if (!effectiveSettings.apiKey && activeProvCfg?.apiKey) {
+      effectiveSettings.apiKey = activeProvCfg.apiKey;
+    }
+    if ((!effectiveSettings.model || effectiveSettings.model === DEFAULT_SETTINGS.model) && activeProvCfg?.model) {
+      effectiveSettings.model = activeProvCfg.model;
+    }
+
     try {
       const response = await fetch("/api/agent/chat", {
         method: "POST",
@@ -405,7 +427,7 @@ const lastCommandRef = useRef<string>("");
         body: JSON.stringify({
           draft: value,
           messages: [...messagesRef.current, userMessage],
-          settings: settingsRef.current,
+          settings: effectiveSettings,
           capabilities: capabilitiesRef.current,
         }),
         signal: controller.signal,
