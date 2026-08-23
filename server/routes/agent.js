@@ -422,6 +422,25 @@ async function generateMultiProviderCompletion({ system, messages, prompt, setti
     });
 }
 
+function filterValidChatMessages(messages) {
+    if (!Array.isArray(messages)) return [];
+    return messages.filter((m) => {
+        if (!m) return false;
+        if (m.role === 'system') return false;
+        if (m.status === 'error' || m.status === 'warning') return false;
+        const text = String(m.text || m.content || '').toLowerCase();
+        if (!text.trim()) return false;
+        if (
+            text.includes('agent request failed') ||
+            text.includes('unable to reach the agent backend') ||
+            text.includes('no live agent is connected')
+        ) {
+            return false;
+        }
+        return true;
+    });
+}
+
 async function generateGeminiChat({ draft, messages, settings, capabilities, context }) {
     const enabledCapabilities = Object.entries(capabilities || {})
         .filter(([, v]) => Boolean(v))
@@ -445,7 +464,8 @@ SESSION MEMORY & CONTEXT:
 - Last Output: ${context?.lastOutput || 'none'}
 
 EXECUTION RULES:
-- If the user asks general questions, code architecture questions, or chat conversations: answer naturally in rich markdown with code examples (no execute block needed unless asking to run a command).
+- You are fully connected and active.
+- If the user asks general questions, code architecture questions, or chat conversations: answer naturally in rich markdown with code examples.
 - If the user wants a task executed on their system or repository: include ONE \`\`\`execute command_here \`\`\` block with valid PowerShell/CMD syntax.
 - Resolve relative paths and context ("it", "this file", "build it") using cwd, selected item, and message history.
 - For screen/camera monitoring, remind the operator to use Agent Ops (/ops).
@@ -457,9 +477,11 @@ Enabled Capabilities: ${enabledCapabilities.join(', ') || 'default'}
         systemInstruction += `\n\nATTACHED FILE CONTENT:\n${context.fileContent}`;
     }
 
+    const cleanMessages = filterValidChatMessages(messages);
+
     return generateMultiProviderCompletion({
         system: systemInstruction,
-        messages,
+        messages: cleanMessages,
         prompt: `User request:\n${draft || ''}`,
         settings,
     });

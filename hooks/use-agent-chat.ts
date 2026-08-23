@@ -584,11 +584,19 @@ const lastCommandRef = useRef<string>("");
     abortStreaming();
   }, [abortStreaming]);
 
+  const clearChat = useCallback(() => {
+    const init = initialMessages();
+    setMessages(init);
+    storeState(STORAGE_KEY, init);
+    toast.success("Chat history cleared.");
+  }, []);
+
   return {
     messages,
     draft,
     setDraft,
     sendMessage,
+    clearChat,
     abortStreaming,
     settings,
     setSetting,

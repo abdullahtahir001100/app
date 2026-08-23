@@ -35,6 +35,7 @@ export function AgentChatPanel() {
     draft,
     setDraft,
     sendMessage,
+    clearChat,
     settings,
     setSetting,
     capabilities,
@@ -201,25 +202,26 @@ export function AgentChatPanel() {
                 <div className="flex items-center space-x-4 text-gray-400">
                   <button
                     type="button"
-                    onClick={handleBack}
-                    className="transition hover:text-gray-600"
-                    aria-label="Toggle full view"
-                    title="Toggle full view"
+                    onClick={clearChat}
+                    className="transition hover:text-rose-600"
+                    title="Clear chat history"
                   >
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                      <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
                     </svg>
                   </button>
                   <button
+                    type="button"
                     onClick={() => setCurrentView(currentView === "chat" ? "settings" : "chat")}
                     className={`transition hover:text-gray-600 ${currentView === "settings" ? "text-gray-800" : ""}`}
+                    title="Agent configuration"
                   >
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                       <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
                       <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
                     </svg>
                   </button>
-                  <button onClick={() => setIsFullscreen((prev) => !prev)} >
+                  <button onClick={() => setIsFullscreen((prev) => !prev)} title="Toggle fullscreen">
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                       <path d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
                     </svg>
