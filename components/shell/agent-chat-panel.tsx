@@ -264,30 +264,30 @@ export function AgentChatPanel() {
               {currentView === "settings" ? (
                 <div className="space-y-6 animate-in fade-in duration-200">
                   {/* Top Active Status Card */}
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 shadow-sm">
+                  <div className="rounded-none border border-slate-300 bg-slate-50 p-3.5 shadow-none">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                           Active Provider & Model
                         </div>
                         <div className="mt-1 flex items-center space-x-2">
                           <span className="text-sm font-bold text-slate-900">
                             {PROVIDER_OPTIONS.find((p) => p.key === settings.provider)?.label || settings.provider}
                           </span>
-                          <span className="rounded-md bg-slate-200 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-700">
+                          <span className="rounded-none border border-slate-300 bg-slate-200 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-800">
                             {settings.model}
                           </span>
                         </div>
                       </div>
                       <div>
                         {settings.apiKey?.trim() ? (
-                          <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 border border-emerald-200">
-                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                          <span className="inline-flex items-center rounded-none bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-800 border border-emerald-300">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-none bg-emerald-600"></span>
                             Key Active
                           </span>
                         ) : (
-                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 border border-amber-200">
-                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                          <span className="inline-flex items-center rounded-none bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 border border-amber-300">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-none bg-amber-600"></span>
                             No Key Set
                           </span>
                         )}
@@ -298,14 +298,14 @@ export function AgentChatPanel() {
                   {/* Provider Companies List / Config */}
                   <section className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
                         AI Provider Companies
                       </h3>
                       {editingProviderKey && (
                         <button
                           type="button"
                           onClick={() => setEditingProviderKey(null)}
-                          className="text-[11px] font-bold text-blue-600 hover:underline"
+                          className="text-[11px] font-bold text-blue-600 hover:underline rounded-none"
                         >
                           ← All Companies
                         </button>
@@ -322,11 +322,10 @@ export function AgentChatPanel() {
                           return (
                             <div
                               key={opt.key}
-                              className={`flex items-center justify-between rounded-xl border p-3 transition-all ${
-                                isActive
-                                  ? "border-slate-900 bg-slate-900 text-white shadow-md"
-                                  : "border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50"
-                              }`}
+                              className={`flex items-center justify-between rounded-none border p-3 transition-colors ${isActive
+                                ? "border-slate-900 bg-slate-900 text-white shadow-none"
+                                : "border-slate-300 bg-white text-slate-900 hover:border-slate-400 hover:bg-slate-50"
+                                }`}
                             >
                               <div
                                 className="flex-1 cursor-pointer"
@@ -337,12 +336,12 @@ export function AgentChatPanel() {
                                     {opt.label}
                                   </span>
                                   {isActive && (
-                                    <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-wider">
+                                    <span className="rounded-none bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-wider border border-emerald-500/30">
                                       Selected
                                     </span>
                                   )}
                                   {hasKey && !isActive && (
-                                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                                    <span className="rounded-none bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 border border-emerald-300">
                                       Key Set
                                     </span>
                                   )}
@@ -356,11 +355,10 @@ export function AgentChatPanel() {
                                 <button
                                   type="button"
                                   onClick={() => setEditingProviderKey(opt.key)}
-                                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
-                                    isActive
-                                      ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                                  }`}
+                                  className={`rounded-none border px-2.5 py-1 text-[11px] font-bold transition-colors ${isActive
+                                    ? "border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                                    : "border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200"
+                                    }`}
                                 >
                                   Configure
                                 </button>
@@ -368,7 +366,7 @@ export function AgentChatPanel() {
                                   <button
                                     type="button"
                                     onClick={() => handleActivateProvider(opt.key)}
-                                    className="rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-700"
+                                    className="rounded-none bg-blue-600 px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-blue-700 border border-blue-700"
                                   >
                                     Activate
                                   </button>
@@ -388,15 +386,15 @@ export function AgentChatPanel() {
                         const currentModel = provConfig?.model || (settings.provider === opt.key ? settings.model : opt.defaultModel);
 
                         return (
-                          <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm animate-in fade-in duration-150">
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                          <div className="rounded-none border border-slate-300 bg-white p-4 space-y-4 shadow-none animate-in fade-in duration-150">
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
                               <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
                                 Configure {opt.label}
                               </span>
                               <button
                                 type="button"
                                 onClick={() => setEditingProviderKey(null)}
-                                className="text-slate-400 hover:text-slate-700 text-xs font-bold"
+                                className="text-slate-400 hover:text-slate-700 text-xs font-bold rounded-none"
                               >
                                 ✕
                               </button>
@@ -413,12 +411,12 @@ export function AgentChatPanel() {
                                   placeholder={`Paste ${opt.label} API Key (sk-...)`}
                                   value={currentKey}
                                   onChange={(e) => handleUpdateApiKey(opt.key, e.target.value)}
-                                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 pr-14 text-xs font-mono text-slate-900 outline-none transition focus:border-slate-800 focus:bg-white"
+                                  className="w-full rounded-none border border-slate-300 bg-slate-50 px-3 py-2 pr-14 text-xs font-mono text-slate-900 outline-none transition-colors focus:border-slate-900 focus:bg-white"
                                 />
                                 <button
                                   type="button"
                                   onClick={() => setShowPassword((prev) => !prev)}
-                                  className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-[9px] font-bold text-slate-500 hover:bg-slate-200 hover:text-slate-800"
+                                  className="absolute right-2 top-2 rounded-none px-1.5 py-0.5 text-[9px] font-bold text-slate-600 hover:bg-slate-200 hover:text-slate-900 border border-slate-300"
                                 >
                                   {showPassword ? "HIDE" : "SHOW"}
                                 </button>
@@ -438,11 +436,10 @@ export function AgentChatPanel() {
                                       key={m}
                                       type="button"
                                       onClick={() => handleUpdateModel(opt.key, m)}
-                                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-mono transition text-left truncate ${
-                                        isSelected
-                                          ? "border-slate-800 bg-slate-800 text-white font-bold"
-                                          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                                      }`}
+                                      className={`rounded-none border px-2.5 py-1.5 text-[11px] font-mono transition-colors text-left truncate ${isSelected
+                                        ? "border-slate-900 bg-slate-900 text-white font-bold"
+                                        : "border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100 hover:border-slate-400"
+                                        }`}
                                     >
                                       {m}
                                     </button>
@@ -454,26 +451,26 @@ export function AgentChatPanel() {
                                 placeholder="Or enter custom model name..."
                                 value={currentModel}
                                 onChange={(e) => handleUpdateModel(opt.key, e.target.value)}
-                                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-mono text-slate-900 outline-none focus:border-slate-800 focus:bg-white"
+                                className="mt-1.5 w-full rounded-none border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-mono text-slate-900 outline-none focus:border-slate-900 focus:bg-white"
                               />
                             </div>
 
                             {/* Action Buttons */}
-                            <div className="flex items-center space-x-2 pt-2 border-t border-slate-100">
+                            <div className="flex items-center space-x-2 pt-2 border-t border-slate-200">
                               <button
                                 type="button"
                                 onClick={() => {
                                   handleActivateProvider(opt.key);
                                   setEditingProviderKey(null);
                                 }}
-                                className="flex-1 rounded-lg bg-slate-900 py-2 text-xs font-bold text-white transition hover:bg-slate-800"
+                                className="flex-1 rounded-none bg-slate-900 py-2 text-xs font-bold text-white transition-colors hover:bg-slate-800"
                               >
                                 Save & Activate
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setEditingProviderKey(null)}
-                                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                                className="rounded-none border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-100"
                               >
                                 Done
                               </button>
@@ -485,13 +482,13 @@ export function AgentChatPanel() {
                   </section>
 
                   {/* LLM Parameters */}
-                  <section className="space-y-3 border-t border-slate-100 pt-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                  <section className="space-y-3 border-t border-slate-200 pt-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       Generation Parameters
                     </h3>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase">
+                        <label className="text-[10px] font-bold text-slate-600 uppercase">
                           Temperature: {settings.temperature}
                         </label>
                         <input
@@ -501,17 +498,17 @@ export function AgentChatPanel() {
                           step="0.05"
                           value={settings.temperature}
                           onChange={(e) => setSetting("temperature", parseFloat(e.target.value))}
-                          className="w-full accent-slate-800 cursor-pointer"
+                          className="w-full accent-slate-900 cursor-pointer rounded-none"
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase">
+                        <label className="text-[10px] font-bold text-slate-600 uppercase">
                           Max Output Tokens
                         </label>
                         <select
                           value={settings.maxTokens}
                           onChange={(e) => setSetting("maxTokens", parseInt(e.target.value, 10))}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-mono text-slate-800 outline-none focus:border-slate-800"
+                          className="w-full rounded-none border border-slate-300 bg-slate-50 px-2 py-1.5 text-xs font-mono text-slate-800 outline-none focus:border-slate-900"
                         >
                           <option value={512}>512</option>
                           <option value={1024}>1024</option>
@@ -524,8 +521,8 @@ export function AgentChatPanel() {
                   </section>
 
                   {/* Agent Capabilities */}
-                  <section className="space-y-3 border-t border-slate-100 pt-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                  <section className="space-y-3 border-t border-slate-200 pt-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       Agent Capabilities
                     </h3>
                     <div className="space-y-2">
@@ -539,10 +536,10 @@ export function AgentChatPanel() {
                         { key: "multiStep", label: "Multi-step Task Execution" },
                       ].map((item) => (
                         <label key={item.key} className="group flex cursor-pointer items-center space-x-3">
-                          <div className={`flex h-4 w-4 items-center justify-center border rounded ${capabilities[item.key as keyof typeof capabilities] ? "border-slate-800 bg-slate-800" : "border-gray-300 bg-transparent"} transition-colors`}>
+                          <div className={`flex h-4 w-4 items-center justify-center border rounded-none ${capabilities[item.key as keyof typeof capabilities] ? "border-slate-900 bg-slate-900" : "border-slate-400 bg-transparent"} transition-colors`}>
                             {capabilities[item.key as keyof typeof capabilities] && (
                               <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                                <path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="3" d="M5 13l4 4L19 7" />
                               </svg>
                             )}
                           </div>
@@ -552,7 +549,7 @@ export function AgentChatPanel() {
                             checked={capabilities[item.key as keyof typeof capabilities]}
                             onChange={() => toggleCapability(item.key as keyof typeof capabilities)}
                           />
-                          <span className="text-xs font-medium text-gray-700 transition-colors group-hover:text-gray-900">{item.label}</span>
+                          <span className="text-xs font-bold text-slate-700 transition-colors group-hover:text-slate-900">{item.label}</span>
                         </label>
                       ))}
                     </div>
