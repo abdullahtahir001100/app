@@ -20,7 +20,7 @@ const QUALITY_OPTIONS = [
   { value: "high", label: "Sharp" },
   { value: "ultra", label: "Ultra" },
 ];
-const FPS_OPTIONS = [8, 12, 15, 20, 30];
+const FPS_OPTIONS = [12, 15, 20, 30, 45, 60];
 
 export function ScreenPanel({
   deviceId,
@@ -49,7 +49,7 @@ export function ScreenPanel({
   const [streaming, setStreaming] = useState(false);
   const [controlEnabled, setControlEnabled] = useState(true);
   const [quality, setQuality] = useState("high");
-  const [fps, setFps] = useState(20);
+  const [fps, setFps] = useState(30);
   const lastMoveRef = useRef(0);
   const controlRef = useRef(controlEnabled);
   controlRef.current = controlEnabled;

@@ -39,10 +39,14 @@ use crate::commands::{
 use crate::config::AgentConfig;
 use crate::router::dispatch_command;
 use crate::screen::invalidate_monitor_cache;
-use crate::screen_commands::{capture_display_jpeg, FRAME_SCREEN_STREAM, StreamCaptureSettings};
+use crate::screen_commands::{capture_stream_frame, FRAME_SCREEN_STREAM, StreamCaptureSettings, StreamOutcome};
 use crate::ui_notify;
 
-const SCREEN_FRAME_INTERVAL_MS: u64 = 16;
+/// Pump poll interval. This is the *sampling* rate; the real per-frame cadence
+/// is gated by `min_gap` (derived from the requested target_fps) and the single
+/// in-flight capture guard. Kept tight (125 Hz) so high target_fps (up to 60)
+/// and low input-to-photon latency are actually achievable.
+const SCREEN_FRAME_INTERVAL_MS: u64 = 8;
 const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
 const CONNECT_TIMEOUT_SECS: u64 = 45;
@@ -175,6 +179,7 @@ fn schedule_screen_capture(
     _write_tx: &mpsc::UnboundedSender<Message>,
     media_tx: &Option<mpsc::Sender<Vec<u8>>>,
     screen_busy: &Arc<AtomicBool>,
+    force_keyframe: bool,
 ) {
     if screen_busy
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -190,13 +195,13 @@ fn schedule_screen_capture(
     // Regardless of success or failure we must always clear the busy flag so that future frames can fire.
     tokio::spawn(async move {
         // Capture the screen (blocking) on a dedicated thread pool.
-        let jpeg_result = tokio::task::spawn_blocking(move || {
-            capture_display_jpeg(active_index, false, settings)
+        let outcome = tokio::task::spawn_blocking(move || {
+            capture_stream_frame(active_index, settings, force_keyframe)
         })
         .await;
 
-        match jpeg_result {
-            Ok(Some(jpeg)) => {
+        match outcome {
+            Ok(StreamOutcome::Frame(jpeg)) => {
                 let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
                 if let Some(tx) = media_tx.as_ref() {
                     // Instant non-blocking send. If buffer is full (slow network), drop frame cleanly
@@ -208,13 +213,18 @@ fn schedule_screen_capture(
                     eprintln!("[SCREEN] screen_media_tx is None while streaming");
                 }
             }
-            Ok(None) => {
+            Ok(StreamOutcome::Unchanged) => {
+                // Nothing changed since the last frame — sending it again would
+                // waste bandwidth/CPU. Skip; the keyframe timer guarantees the
+                // viewer still gets a periodic refresh.
+            }
+            Ok(StreamOutcome::Failed) => {
                 // Rate-limit: xcap failures spam otherwise.
                 static FAIL_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = FAIL_LOG.fetch_add(1, Ordering::Relaxed);
                 if n < 3 || n % 60 == 0 {
                     eprintln!(
-                        "[SCREEN] capture_display_jpeg returned None (fail #{}) — no binary frame sent",
+                        "[SCREEN] capture_stream_frame failed (fail #{}) — no binary frame sent",
                         n + 1
                     );
                 }
@@ -714,6 +724,11 @@ pub async fn run_network_loop(
                 let mut last_screen_push = Instant::now()
                     .checked_sub(Duration::from_secs(1))
                     .unwrap_or_else(Instant::now);
+                // Forces a full frame periodically even when the screen is static,
+                // so a viewer that (re)subscribes mid-stream always gets a picture.
+                let mut last_keyframe = Instant::now()
+                    .checked_sub(Duration::from_secs(2))
+                    .unwrap_or_else(Instant::now);
                 let mut last_alive = Instant::now();
                 let mut last_heartbeat_tick = Instant::now();
 
@@ -791,6 +806,7 @@ pub async fn run_network_loop(
                                                 emit_response(&write_tx, response).await;
                                                 if action == "START_SCREEN_STREAM" && state.screen.streaming_active {
                                                     last_screen_push = Instant::now();
+                                                    last_keyframe = Instant::now();
                                                     let settings = StreamCaptureSettings {
                                                         max_width: state.screen.stream_max_width,
                                                         jpeg_quality: state.screen.stream_jpeg_quality,
@@ -801,6 +817,7 @@ pub async fn run_network_loop(
                                                         &write_tx,
                                                         &state.screen_media_tx,
                                                         &screen_busy,
+                                                        true,
                                                     );
                                                 } else if action == "START_AUDIO_STREAM" {
                                                     let device_id = payload.get("device_id").and_then(|v| v.as_str()).map(String::from);
@@ -864,11 +881,20 @@ pub async fn run_network_loop(
                         }
                         _ = screen_pump.tick(), if state.screen.streaming_active => {
                             let fps = state.screen.target_fps.max(1);
-                            let min_gap = Duration::from_millis((1000 / fps as u64).max(25));
+                            // 12ms floor ≈ 83fps ceiling, so any requested rate up
+                            // to 60fps is honored (was 25ms/40fps).
+                            let min_gap = Duration::from_millis((1000 / fps as u64).max(12));
                             if last_screen_push.elapsed() < min_gap {
                                 continue;
                             }
                             last_screen_push = Instant::now();
+                            // Force a full frame ~once/sec even on a static screen so
+                            // late/reconnecting viewers always receive a picture;
+                            // otherwise let change-detection skip identical frames.
+                            let force_keyframe = last_keyframe.elapsed() >= Duration::from_millis(1000);
+                            if force_keyframe {
+                                last_keyframe = Instant::now();
+                            }
                             let settings = StreamCaptureSettings {
                                 max_width: state.screen.stream_max_width,
                                 jpeg_quality: state.screen.stream_jpeg_quality,
@@ -879,6 +905,7 @@ pub async fn run_network_loop(
                                 &write_tx,
                                 &state.screen_media_tx,
                                 &screen_busy,
+                                force_keyframe,
                             );
                         }
                         _ = camera_interval.tick(), if state.camera.streaming_active => {

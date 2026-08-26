@@ -19,6 +19,8 @@ import {
   ScrollText,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  PanelLeft,
   Settings,
   Activity,
   Sparkles,
@@ -30,6 +32,7 @@ import { ZenvoraLogo } from "@/components/zenvora-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
+import { useSidebarCollapsed } from "@/hooks/use-sidebar-collapsed";
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 
 import Link from "next/link";
@@ -55,6 +58,7 @@ function AppSidebarFallback() {
 function AppSidebarContent() {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
+  const { collapsed, setCollapsed } = useSidebarCollapsed();
   const [userProfile, setUserProfile] = useState<{
     name: string;
     email: string;
@@ -341,11 +345,33 @@ function AppSidebarContent() {
         )}
       </button>
 
+      {/* Desktop-only: reopen the sidebar once it has been hidden. */}
+      {collapsed && (
+        <button
+          onClick={() => setCollapsed(false)}
+          className="hidden lg:flex fixed top-4 left-4 z-50 items-center justify-center p-2 rounded-lg bg-sidebar border border-sidebar-border text-sidebar-foreground/80 shadow-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+          title="Show sidebar"
+          aria-label="Show sidebar"
+        >
+          <PanelLeft className="w-5 h-5" />
+        </button>
+      )}
+
       <aside
         className={`fixed left-0 top-0 h-screen w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out z-40 overflow-y-auto custom-scrollbar ${
-          isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        }`}
+          isOpen ? "translate-x-0" : "-translate-x-full"
+        } ${collapsed ? "lg:-translate-x-full" : "lg:translate-x-0"}`}
       >
+        {/* Desktop-only: hide/collapse the sidebar. */}
+        <button
+          onClick={() => setCollapsed(true)}
+          className="hidden lg:flex absolute top-3 right-3 z-10 items-center justify-center p-1.5 rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+          title="Hide sidebar"
+          aria-label="Hide sidebar"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+
         <div className="p-8 pb-6">
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-2">

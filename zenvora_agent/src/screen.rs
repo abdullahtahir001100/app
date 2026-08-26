@@ -25,19 +25,21 @@ pub struct ScreenState {
 
 pub fn quality_preset(name: &str) -> (u32, u8, u32) {
     // (max_width, jpeg_quality, target_fps) — retuned 2026-08 for AnyDesk-like
-    // sharpness. Works together with the Triangle-filter downscale in
-    // screen_commands::capture_stream_jpeg_fast: the filter removes the blocky
-    // aliasing, and these higher width + JPEG-quality values are what actually
-    // make text crisp; higher FPS is what makes it feel "live".
+    // sharpness + fluidity. Works together with the Triangle-filter downscale in
+    // screen_commands::capture_stream_frame: the filter removes blocky aliasing,
+    // the higher width + JPEG-quality make text crisp, and the higher FPS makes
+    // it feel "live".
     //
-    // NOTE: this is still full-frame motion-JPEG, so bitrate scales with width x
-    // quality x fps. The server drops frames when a socket buffers >1MB, so
-    // over-cranking a weak link just causes stutter — keep the tiers honest.
+    // Bitrate is bounded in practice by frame-diffing in capture_stream_frame:
+    // byte-identical frames are never re-sent, so a static desktop costs ~0 and
+    // these FPS ceilings are only "spent" while the screen is actually moving.
+    // The server still drops frames when a socket buffers >1MB, so a weak link
+    // degrades to fewer fps gracefully rather than stalling.
     match name.to_lowercase().as_str() {
-        "saver" | "low" => (960, 45, 10),   // Weak link (~1.5 Mbps) — legible, low lag
-        "high" => (1440, 66, 20),           // Broadband (~8 Mbps) — crisp; default tier
-        "ultra" => (1920, 80, 30),          // LAN / fast fiber (~18 Mbps) — near-native
-        _ => (1280, 56, 15),                // Balanced (~4 Mbps)
+        "saver" | "low" => (960, 45, 15),   // Weak link (~1.5 Mbps) — legible, low lag
+        "high" => (1500, 68, 30),           // Broadband (~8 Mbps) — crisp; default tier
+        "ultra" => (1920, 82, 45),          // LAN / fast fiber — near-native, very fluid
+        _ => (1280, 58, 24),                // Balanced (~4 Mbps)
     }
 }
 

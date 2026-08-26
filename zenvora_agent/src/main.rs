@@ -54,11 +54,34 @@ fn attach_parent_console() {
     }
 }
 
+/// Make the process per-monitor-DPI-aware so Win32 pointer APIs
+/// (`GetCursorInfo` / `GetCursorPos`) report the SAME physical-pixel coordinate
+/// space that xcap captures in. Without this, on any display with scaling
+/// (125% / 150% / 200%) the cursor is reported in logical pixels and lands in
+/// the wrong place on the streamed frame. Must run before any window/DC work.
+#[cfg(windows)]
+fn ensure_dpi_awareness() {
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    unsafe {
+        // Ignore the result: it fails harmlessly if awareness was already set
+        // (e.g. via an embedded manifest) — either way we end up DPI-aware.
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_dpi_awareness() {}
+
 pub async fn run_agent() {
     run_agent_with_stop(None).await;
 }
 
 pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
+    // Align our coordinate space with the capture backend before anything else.
+    ensure_dpi_awareness();
+
     // Session 0 (Windows service) cannot capture camera/screen of the logged-in user.
     // Refuse here so we never steal the singleton from an interactive agent.
     #[cfg(windows)]

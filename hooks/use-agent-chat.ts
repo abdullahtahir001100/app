@@ -200,6 +200,44 @@ function extractShellCommand(text: string): string | null {
 
   return null;
 }
+
+/** Hard cap on autonomous command steps per user goal (safety backstop). */
+const MAX_AGENT_STEPS = 8;
+
+/**
+ * Prompt fed back to the model after each command completes, so it can read the
+ * real terminal output, decide, and either run the next command or finish.
+ * Keeps the loop provider-agnostic: the model continues by emitting another
+ * ```execute``` block, or stops with a plain summary + "TASK COMPLETE".
+ */
+function buildAgentFeedbackPrompt(
+  command: string,
+  exitCode: number | undefined,
+  output: string,
+  goal: string
+): string {
+  const trimmedOut = output.length > 4000 ? `…(truncated)…\n${output.slice(-4000)}` : output;
+  const codeLabel = exitCode === undefined ? "unknown" : String(exitCode);
+  return [
+    "[AUTONOMOUS AGENT — STEP RESULT]",
+    `Overall goal: ${goal}`,
+    "",
+    "Command that just ran:",
+    "```",
+    command,
+    "```",
+    `Exit code: ${codeLabel}`,
+    "Output:",
+    "```",
+    trimmedOut || "(no output)",
+    "```",
+    "",
+    "Analyze this result in the context of the goal, then choose ONE:",
+    "• If more work is needed, reply with the SINGLE next Windows command inside one ```execute``` block and no prose before it.",
+    "• If the goal is fully achieved, reply with a short natural-language summary and DO NOT include any execute block. End the reply with: TASK COMPLETE.",
+    "Never repeat a command that just failed unchanged — fix the root cause instead.",
+  ].join("\n");
+}
 const initialMessages = (): AgentMessage[] => {
   const now = createTimestamp();
   return [
@@ -249,6 +287,13 @@ export function useAgentChat() {
   const settingsRef = useRef<AgentSettings>(settings);
   const capabilitiesRef = useRef<AgentCapabilities>(capabilities);
   const autoHealCountRef = useRef<number>(0);
+  // Autonomous multi-step run state (iterative agent). A "run" spans one user
+  // goal → up to MAX_AGENT_STEPS commands → final summary. Refs (not state) so
+  // the WS listener and sendMessage always read the latest value synchronously.
+  const agentActiveRef = useRef<boolean>(false);
+  const agentStepRef = useRef<number>(0);
+  const agentGoalRef = useRef<string>("");
+  const lastAutoCommandRef = useRef<string>("");
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -277,7 +322,7 @@ export function useAgentChat() {
     setMessages((prev) => [...prev, message]);
   }, []);
 
-  const sendMessageRef = useRef<(input: string) => Promise<void>>(() => Promise.resolve());
+  const sendMessageRef = useRef<(input: string, options?: { isContinuation?: boolean }) => Promise<void>>(() => Promise.resolve());
 
   /* ── Gateway WebSocket Terminal Output & Auto-Heal Listener ── */
   useEffect(() => {
@@ -319,11 +364,37 @@ export function useAgentChat() {
             /CommandNotFoundException/i.test(rawOutput) ||
             /The term '.*' is not recognized/i.test(rawOutput);
 
-          if (hasError && capabilitiesRef.current.autoRetries && autoHealCountRef.current < 3) {
+          const autonomous =
+            settingsRef.current.agentMode === "autonomous" &&
+            capabilitiesRef.current.multiStep;
+
+          if (agentActiveRef.current && autonomous) {
+            // Iterative loop: feed the REAL output back so the model can read it,
+            // decide, and either run the next command or finish. Runs on BOTH
+            // success and failure — this is what makes it a true agent, not a
+            // single-shot responder.
+            if (agentStepRef.current >= MAX_AGENT_STEPS) {
+              agentActiveRef.current = false;
+              appendMessage({
+                id: `system-${Date.now()}`,
+                role: "system",
+                text: `Reached the autonomous step limit (${MAX_AGENT_STEPS}). Stopping — send a new message to continue if needed.`,
+                status: "warning",
+                timestamp: createTimestamp(),
+                metadata: { kind: "warning", step: "completed" },
+              });
+            } else {
+              const feedback = buildAgentFeedbackPrompt(command, exitCode, rawOutput, agentGoalRef.current);
+              setTimeout(() => {
+                void sendMessageRef.current(feedback, { isContinuation: true });
+              }, 500);
+            }
+          } else if (hasError && capabilitiesRef.current.autoRetries && autoHealCountRef.current < 3) {
+            // Non-autonomous fallback: single-shot self-heal on error only.
             autoHealCountRef.current += 1;
             const retryPrompt = `The command \`${command}\` failed with output:\n\`\`\`\n${rawOutput}\n\`\`\`\nAutonomously fix this error and execute the corrected working solution on Windows now.`;
             setTimeout(() => {
-              void sendMessageRef.current(retryPrompt);
+              void sendMessageRef.current(retryPrompt, { isContinuation: true });
             }, 800);
           } else {
             autoHealCountRef.current = 0;
@@ -344,6 +415,9 @@ export function useAgentChat() {
   const abortStreaming = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    // Stop also ends any active autonomous run so the loop can't continue.
+    agentActiveRef.current = false;
+    autoHealCountRef.current = 0;
     setIsStreaming(false);
     setConnectionState("reconnecting");
     setIsLoading(false);
@@ -432,14 +506,32 @@ export function useAgentChat() {
     [appendMessage, gatewayDispatch, isConnected, resolveTarget]
   );
 
-  const sendMessage = useCallback(async (input: string) => {
+  const sendMessage = useCallback(async (input: string, options?: { isContinuation?: boolean }) => {
     const value = input.trim();
     if (!value) return;
+    const isContinuation = options?.isContinuation === true;
     if (isStreaming) {
       abortStreaming();
     }
 
-    const directCommand = extractShellCommand(value);
+    // Continuations are model turns (feedback prompts), never direct executes —
+    // parsing them for a command would re-run the command just executed and
+    // bypass the model. Only genuine user input can be a direct command.
+    const directCommand = isContinuation ? null : extractShellCommand(value);
+
+    if (!isContinuation) {
+      autoHealCountRef.current = 0;
+      if (!directCommand && settingsRef.current.agentMode === "autonomous" && capabilitiesRef.current.multiStep) {
+        // Start a fresh autonomous run for this goal.
+        agentActiveRef.current = true;
+        agentStepRef.current = 0;
+        agentGoalRef.current = value;
+        lastAutoCommandRef.current = "";
+      } else {
+        // Direct command, or non-autonomous mode: no multi-step run.
+        agentActiveRef.current = false;
+      }
+    }
 
     if (directCommand) {
       const userMessage: AgentMessage = {
@@ -611,19 +703,53 @@ export function useAgentChat() {
 
       const autoCommand = extractShellCommand(finalText);
       if (autoCommand) {
-        try {
-          await runShellCommand(autoCommand, "response");
-        } catch (shellErr) {
-          console.warn("[agent-chat] shell auto-exec failed:", shellErr);
+        const runningAutonomously = agentActiveRef.current;
+        if (runningAutonomously && autoCommand === lastAutoCommandRef.current) {
+          // Guard tight loops: the model re-emitted the exact command it just
+          // ran — treat the run as stuck rather than repeating forever.
+          agentActiveRef.current = false;
           appendMessage({
             id: `system-${Date.now()}`,
             role: "system",
-            text: shellErr instanceof Error ? shellErr.message : "Shell auto-exec failed.",
+            text: "Autonomous run stopped: the model tried to repeat the same command without progress.",
             status: "warning",
             timestamp: createTimestamp(),
             metadata: { kind: "warning", step: "completed" },
           });
+        } else if (runningAutonomously && agentStepRef.current >= MAX_AGENT_STEPS) {
+          agentActiveRef.current = false;
+          appendMessage({
+            id: `system-${Date.now()}`,
+            role: "system",
+            text: `Reached the autonomous step limit (${MAX_AGENT_STEPS}). Stopping.`,
+            status: "warning",
+            timestamp: createTimestamp(),
+            metadata: { kind: "warning", step: "completed" },
+          });
+        } else {
+          if (runningAutonomously) {
+            agentStepRef.current += 1;
+            lastAutoCommandRef.current = autoCommand;
+          }
+          try {
+            await runShellCommand(autoCommand, "response");
+          } catch (shellErr) {
+            console.warn("[agent-chat] shell auto-exec failed:", shellErr);
+            agentActiveRef.current = false;
+            appendMessage({
+              id: `system-${Date.now()}`,
+              role: "system",
+              text: shellErr instanceof Error ? shellErr.message : "Shell auto-exec failed.",
+              status: "warning",
+              timestamp: createTimestamp(),
+              metadata: { kind: "warning", step: "completed" },
+            });
+          }
         }
+      } else if (agentActiveRef.current) {
+        // No command in the reply → the model produced its final answer.
+        // End the autonomous run so the loop terminates cleanly.
+        agentActiveRef.current = false;
       }
 
       setConnectionState("ready");

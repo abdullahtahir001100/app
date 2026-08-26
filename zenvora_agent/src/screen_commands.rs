@@ -1,6 +1,12 @@
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+use std::sync::atomic::AtomicIsize;
+#[cfg(windows)]
+use std::sync::Mutex;
+
 use image::{codecs::jpeg::JpegEncoder, imageops, ExtendedColorType, ImageBuffer, ImageEncoder, Rgb};
 use serde_json::{json, Value};
 use xcap::Monitor;
@@ -22,6 +28,21 @@ const SNAPSHOT_JPEG_QUALITY: u8 = 94;
 pub struct StreamCaptureSettings {
     pub max_width: u32,
     pub jpeg_quality: u8,
+}
+
+/// FNV-1a signature of the last stream frame we encoded (cursor included).
+/// Lets the pump skip byte-identical frames so a static desktop costs ~0
+/// bandwidth/CPU and the link stays clear for real motion (AnyDesk-style).
+static LAST_STREAM_HASH: AtomicU64 = AtomicU64::new(0);
+
+/// Result of a single live-stream capture.
+pub enum StreamOutcome {
+    /// A freshly-encoded JPEG frame ready to send.
+    Frame(Vec<u8>),
+    /// Screen + cursor are byte-identical to the previous frame — skip sending.
+    Unchanged,
+    /// Capture/encode failed.
+    Failed,
 }
 
 pub fn is_screen_action(action: &str) -> bool {
@@ -277,6 +298,16 @@ pub fn capture_display_jpeg(
     high_quality: bool,
     settings: StreamCaptureSettings,
 ) -> Option<Vec<u8>> {
+    if !high_quality {
+        // Live-stream path (probe / display switch / telemetry snapshot): always
+        // produce a frame here — cursor baked in, change-detection bypassed.
+        return match capture_stream_frame(active_display_index, settings, true) {
+            StreamOutcome::Frame(jpeg) => Some(jpeg),
+            _ => None,
+        };
+    }
+
+    // High-quality snapshot path (CAPTURE_SCREENSHOT): full-res, best filter.
     let monitors = match Monitor::all() {
         Ok(list) => list,
         Err(err) => {
@@ -308,59 +339,422 @@ pub fn capture_display_jpeg(
         return None;
     }
 
-    if high_quality {
-        let rgb = rgba_to_rgb8_fast(&rgba);
-        return encode_rgb_jpeg(
-            &rgb,
-            SNAPSHOT_MAX_WIDTH,
-            SNAPSHOT_JPEG_QUALITY,
-            imageops::FilterType::CatmullRom,
-        );
-    }
-
-    capture_stream_jpeg_fast(&rgba, settings.max_width, settings.jpeg_quality)
+    let rgb = rgba_to_rgb8_fast(&rgba);
+    encode_rgb_jpeg(
+        &rgb,
+        SNAPSHOT_MAX_WIDTH,
+        SNAPSHOT_JPEG_QUALITY,
+        imageops::FilterType::CatmullRom,
+    )
 }
 
-fn capture_stream_jpeg_fast(
-    rgba: &ImageBuffer<image::Rgba<u8>, Vec<u8>>,
-    max_width: u32,
-    quality: u8,
-) -> Option<Vec<u8>> {
-    // Pack the BGRA/RGBA capture into tight RGB8 (drops alpha) at native size.
-    let rgb = rgba_to_rgb8_fast(rgba);
-    let (src_w, _src_h) = rgb.dimensions();
+/// Capture the active display for the live stream: bakes the OS cursor into the
+/// frame, then skips encoding when nothing changed since the previous frame.
+///
+/// `force_keyframe` bypasses change-detection so callers can guarantee a frame
+/// (first frame after START, periodic keepalive for late subscribers, display
+/// switch). Cursor is baked in the agent because xcap's framebuffer never
+/// includes it — this is also what makes AI/automation-driven pointer moves
+/// visible on the viewer.
+pub fn capture_stream_frame(
+    active_display_index: usize,
+    settings: StreamCaptureSettings,
+    force_keyframe: bool,
+) -> StreamOutcome {
+    let monitors = match Monitor::all() {
+        Ok(list) => list,
+        Err(err) => {
+            eprintln!("[SCREEN] Monitor::all failed: {}", err);
+            return StreamOutcome::Failed;
+        }
+    };
+    if monitors.is_empty() {
+        eprintln!("[SCREEN] No monitors returned by xcap");
+        return StreamOutcome::Failed;
+    }
+    let monitor = match monitors
+        .get(active_display_index)
+        .or_else(|| monitors.first())
+    {
+        Some(m) => m,
+        None => return StreamOutcome::Failed,
+    };
 
-    // Downscale with a real reconstruction filter instead of point-sampling.
-    //
-    // The previous implementation built x_map/y_map with `.floor()` — i.e.
-    // nearest-neighbor — which threw away 3 of every 4 source pixels when
-    // shrinking. That is exactly what made the stream look blocky/aliased and
-    // then "blurry" once the browser scaled the canvas back up (AnyDesk never
-    // looks like that because it area-averages). `Triangle` (bilinear) averages
-    // neighbours, is separable/SIMD-friendly in the `image` crate, and is cheap
-    // enough for real-time single-screen capture. Crank quality_preset() for
-    // extra sharpness/bitrate; the filter is what removes the jaggies.
-    let target = if src_w > max_width {
-        resize_rgb(&rgb, max_width, imageops::FilterType::Triangle)
+    let rgba = match monitor.capture_image() {
+        Ok(image) => image,
+        Err(err) => {
+            eprintln!("[SCREEN] capture_image failed: {}", err);
+            return StreamOutcome::Failed;
+        }
+    };
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 {
+        eprintln!("[SCREEN] capture_image returned empty dimensions");
+        return StreamOutcome::Failed;
+    }
+
+    // Pack to tight RGB8 and downscale with a real reconstruction filter.
+    let rgb = rgba_to_rgb8_fast(&rgba);
+    let (src_w, _src_h) = rgb.dimensions();
+    let mut target = if src_w > settings.max_width {
+        resize_rgb(&rgb, settings.max_width, imageops::FilterType::Triangle)
     } else {
-        // Already at/under target width (e.g. Ultra on a small display): encode
-        // native, no resample pass at all.
         rgb
     };
 
+    // Composite the REAL OS cursor (the actual Windows cursor bitmap — not a
+    // drawn shape) onto the downscaled frame, scaled to match so it lands
+    // pixel-exact on the pointer. xcap's framebuffer never includes the cursor,
+    // so we overlay it here; this also makes AI/automation pointer moves visible.
     let (dst_w, dst_h) = target.dimensions();
-    let mut jpeg_bytes =
-        Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize) / 8);
-    let encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, quality);
+    overlay_real_cursor(&mut target, monitor, dst_w, dst_h);
+
+    // Change-detection: signature over the final RGB (cursor included) so a
+    // cursor move counts as a change and re-streams. Skip identical frames
+    // unless a keyframe was explicitly requested.
+    let signature = frame_signature(target.as_raw());
+    if !force_keyframe && signature == LAST_STREAM_HASH.load(Ordering::Relaxed) {
+        return StreamOutcome::Unchanged;
+    }
+
+    let (dst_w, dst_h) = target.dimensions();
+    let mut jpeg_bytes = Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize) / 8);
+    let encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, settings.jpeg_quality);
     if encoder
         .write_image(target.as_raw(), dst_w, dst_h, ExtendedColorType::Rgb8)
         .is_ok()
         && !jpeg_bytes.is_empty()
     {
-        Some(jpeg_bytes)
+        LAST_STREAM_HASH.store(signature, Ordering::Relaxed);
+        StreamOutcome::Frame(jpeg_bytes)
     } else {
-        None
+        StreamOutcome::Failed
     }
+}
+
+/// FNV-1a over the red channel of every pixel (every 3rd byte). Cheap enough to
+/// run on every capture tick, yet catches cursor moves and any real UI change
+/// (white/black cursor + typical UI edits always alter the red/luma channel).
+#[inline]
+fn frame_signature(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+        i += 3;
+    }
+    hash
+}
+
+/// A rasterized snapshot of the real OS cursor: straight-alpha RGBA pixels plus
+/// the hotspot offset (the pixel that sits exactly on the pointer position).
+#[cfg(windows)]
+#[derive(Clone)]
+struct CursorSprite {
+    width: i32,
+    height: i32,
+    x_hotspot: i32,
+    y_hotspot: i32,
+    rgba: Vec<u8>, // width*height*4, top-down, straight alpha
+}
+
+// The cursor shape changes rarely (arrow -> I-beam -> hand ...) but its position
+// moves constantly, so we rasterize only when the HCURSOR handle changes and
+// reuse the cached pixels otherwise.
+#[cfg(windows)]
+static LAST_CURSOR_HANDLE: AtomicIsize = AtomicIsize::new(0);
+#[cfg(windows)]
+static CURSOR_SPRITE: Mutex<Option<CursorSprite>> = Mutex::new(None);
+
+/// Overlay the real OS cursor onto the (already downscaled) RGB frame. `dst_w`/
+/// `dst_h` are the frame dimensions; the cursor is scaled from the monitor's
+/// physical size down to the frame size so it lands pixel-exact on the pointer
+/// and stays correctly sized regardless of source resolution. Fail-safe: any
+/// GDI hiccup just leaves the frame cursor-less rather than breaking the stream.
+#[cfg(windows)]
+fn overlay_real_cursor(
+    img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    monitor: &Monitor,
+    dst_w: u32,
+    dst_h: u32,
+) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorInfo, CURSORINFO, CURSOR_SHOWING};
+
+    if dst_w == 0 || dst_h == 0 {
+        return;
+    }
+
+    // 1. Where is the cursor, and which shape is it?
+    let mut ci = CURSORINFO::default();
+    ci.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
+    unsafe {
+        if GetCursorInfo(&mut ci).is_err() {
+            return;
+        }
+    }
+    // Pointer hidden (e.g. full-screen video / blank cursor).
+    if (ci.flags.0 & CURSOR_SHOWING.0) == 0 {
+        return;
+    }
+    let handle = ci.hCursor.0 as isize;
+    if handle == 0 {
+        return;
+    }
+
+    // 2. Cursor position relative to THIS monitor, in physical pixels. We're
+    //    per-monitor-DPI-aware, so this matches xcap's capture coordinate space.
+    let mx = monitor.x();
+    let my = monitor.y();
+    let mw = monitor.width() as i32;
+    let mh = monitor.height() as i32;
+    if mw <= 0 || mh <= 0 {
+        return;
+    }
+    let lx = ci.ptScreenPos.x - mx;
+    let ly = ci.ptScreenPos.y - my;
+    // Pointer is on another display - don't draw it on this frame.
+    if lx < 0 || ly < 0 || lx >= mw || ly >= mh {
+        return;
+    }
+
+    // 3. Fetch (or refresh) the rasterized sprite for this cursor shape.
+    let sprite = {
+        let cached_handle = LAST_CURSOR_HANDLE.load(Ordering::Relaxed);
+        let mut guard = match CURSOR_SPRITE.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if cached_handle != handle || guard.is_none() {
+            match unsafe { rasterize_cursor(handle) } {
+                Some(s) => {
+                    *guard = Some(s);
+                    LAST_CURSOR_HANDLE.store(handle, Ordering::Relaxed);
+                }
+                None => return,
+            }
+        }
+        match guard.as_ref() {
+            Some(s) => s.clone(),
+            None => return,
+        }
+    };
+
+    // 4. Blit the sprite, scaled by the same factor the frame was downscaled by.
+    let sx = dst_w as f32 / mw as f32;
+    let sy = dst_h as f32 / mh as f32;
+    // Top-left of the cursor image (monitor-local physical px) -> frame px.
+    let base_x = (((lx - sprite.x_hotspot) as f32) * sx).round() as i32;
+    let base_y = (((ly - sprite.y_hotspot) as f32) * sy).round() as i32;
+    let draw_w = ((sprite.width as f32) * sx).round().max(1.0) as i32;
+    let draw_h = ((sprite.height as f32) * sy).round().max(1.0) as i32;
+
+    let iw = img.width() as i32;
+    let ih = img.height() as i32;
+
+    for dy in 0..draw_h {
+        let py = base_y + dy;
+        if py < 0 || py >= ih {
+            continue;
+        }
+        let syi = (((dy as f32) / sy) as i32).clamp(0, sprite.height - 1);
+        for dx in 0..draw_w {
+            let px = base_x + dx;
+            if px < 0 || px >= iw {
+                continue;
+            }
+            let sxi = (((dx as f32) / sx) as i32).clamp(0, sprite.width - 1);
+            let si = ((syi * sprite.width + sxi) * 4) as usize;
+            let a = sprite.rgba[si + 3] as u32;
+            if a == 0 {
+                continue;
+            }
+            let sr = sprite.rgba[si] as u32;
+            let sg = sprite.rgba[si + 1] as u32;
+            let sb = sprite.rgba[si + 2] as u32;
+            let pixel = img.get_pixel_mut(px as u32, py as u32);
+            let [br, bg, bb] = pixel.0;
+            // Straight-alpha "over": out = src*a + dst*(1-a).
+            let inv = 255 - a;
+            pixel.0 = [
+                ((sr * a + br as u32 * inv) / 255) as u8,
+                ((sg * a + bg as u32 * inv) / 255) as u8,
+                ((sb * a + bb as u32 * inv) / 255) as u8,
+            ];
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn overlay_real_cursor(
+    _img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    _monitor: &Monitor,
+    _dst_w: u32,
+    _dst_h: u32,
+) {
+}
+
+/// Read a GDI bitmap as top-down 32bpp BGRA via `GetDIBits`.
+#[cfg(windows)]
+unsafe fn read_bitmap_bgra(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    hbm: windows::Win32::Graphics::Gdi::HBITMAP,
+    width: i32,
+    height: i32,
+) -> Option<Vec<u8>> {
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Gdi::{GetDIBits, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS};
+
+    if hbm.0.is_null() || width <= 0 || height <= 0 {
+        return None;
+    }
+    let mut bi = BITMAPINFO::default();
+    bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    bi.bmiHeader.biWidth = width;
+    bi.bmiHeader.biHeight = -height; // negative -> top-down rows
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = 0; // BI_RGB
+    let mut buf = vec![0u8; (width * height) as usize * 4];
+    let lines = GetDIBits(
+        hdc,
+        hbm,
+        0,
+        height as u32,
+        Some(buf.as_mut_ptr() as *mut c_void),
+        &mut bi,
+        DIB_RGB_COLORS,
+    );
+    if lines == 0 {
+        None
+    } else {
+        Some(buf)
+    }
+}
+
+/// Rasterize the real OS cursor identified by `handle` (an `HCURSOR` value) into
+/// straight-alpha RGBA. Handles modern 32bpp alpha cursors and legacy color /
+/// monochrome (AND+XOR mask) cursors. Returns `None` on any failure.
+#[cfg(windows)]
+unsafe fn rasterize_cursor(handle: isize) -> Option<CursorSprite> {
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetObjectW, ReleaseDC, BITMAP, HGDIOBJ,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, HICON, ICONINFO};
+
+    let hicon = HICON(handle as *mut c_void);
+    let mut info = ICONINFO::default();
+    if GetIconInfo(hicon, &mut info).is_err() {
+        return None;
+    }
+    let color_bmp = info.hbmColor;
+    let mask_bmp = info.hbmMask;
+    let has_color = !color_bmp.0.is_null();
+
+    let mut result: Option<CursorSprite> = None;
+
+    // Geometry from whichever bitmap exists.
+    let dims_src = if has_color { color_bmp } else { mask_bmp };
+    let mut bmp = BITMAP::default();
+    let got = GetObjectW(
+        HGDIOBJ(dims_src.0),
+        std::mem::size_of::<BITMAP>() as i32,
+        Some(&mut bmp as *mut _ as *mut c_void),
+    );
+    if got != 0 {
+        let width = bmp.bmWidth;
+        let mut height = bmp.bmHeight;
+        if !has_color {
+            // Monochrome cursor: mask stacks AND over XOR -> double height.
+            height /= 2;
+        }
+        if width > 0 && height > 0 && width <= 256 && height <= 256 {
+            let hdc = GetDC(None);
+            if !hdc.0.is_null() {
+                let px_count = (width * height) as usize;
+                if has_color {
+                    if let Some(color) = read_bitmap_bgra(hdc, color_bmp, width, height) {
+                        // Does the color bitmap carry a real alpha channel?
+                        let mut alpha_present = false;
+                        for i in 0..px_count {
+                            if color[i * 4 + 3] != 0 {
+                                alpha_present = true;
+                                break;
+                            }
+                        }
+                        let mask = read_bitmap_bgra(hdc, mask_bmp, width, height);
+                        let mut rgba = vec![0u8; px_count * 4];
+                        for i in 0..px_count {
+                            let b = color[i * 4];
+                            let g = color[i * 4 + 1];
+                            let r = color[i * 4 + 2];
+                            let a = if alpha_present {
+                                color[i * 4 + 3]
+                            } else if let Some(m) = mask.as_ref() {
+                                // AND mask: 0 = opaque, 255 = transparent.
+                                if m[i * 4] >= 128 {
+                                    0
+                                } else {
+                                    255
+                                }
+                            } else {
+                                255
+                            };
+                            rgba[i * 4] = r;
+                            rgba[i * 4 + 1] = g;
+                            rgba[i * 4 + 2] = b;
+                            rgba[i * 4 + 3] = a;
+                        }
+                        result = Some(CursorSprite {
+                            width,
+                            height,
+                            x_hotspot: info.xHotspot as i32,
+                            y_hotspot: info.yHotspot as i32,
+                            rgba,
+                        });
+                    }
+                } else if let Some(full) = read_bitmap_bgra(hdc, mask_bmp, width, height * 2) {
+                    // Monochrome: top half = AND mask, bottom half = XOR mask.
+                    let mut rgba = vec![0u8; px_count * 4];
+                    for i in 0..px_count {
+                        let and1 = full[i * 4] >= 128;
+                        let xor1 = full[(px_count + i) * 4] >= 128;
+                        let (r, g, b, a) = if !and1 {
+                            let c = if xor1 { 255 } else { 0 };
+                            (c, c, c, 255u8)
+                        } else if xor1 {
+                            // "Invert screen" pixels - approximate as opaque black.
+                            (0u8, 0u8, 0u8, 255u8)
+                        } else {
+                            (0u8, 0u8, 0u8, 0u8)
+                        };
+                        rgba[i * 4] = r;
+                        rgba[i * 4 + 1] = g;
+                        rgba[i * 4 + 2] = b;
+                        rgba[i * 4 + 3] = a;
+                    }
+                    result = Some(CursorSprite {
+                        width,
+                        height,
+                        x_hotspot: info.xHotspot as i32,
+                        y_hotspot: info.yHotspot as i32,
+                        rgba,
+                    });
+                }
+                let _ = ReleaseDC(None, hdc);
+            }
+        }
+    }
+
+    if !color_bmp.0.is_null() {
+        let _ = DeleteObject(HGDIOBJ(color_bmp.0));
+    }
+    if !mask_bmp.0.is_null() {
+        let _ = DeleteObject(HGDIOBJ(mask_bmp.0));
+    }
+
+    result
 }
 
 fn capture_screen_jpeg(state: &ScreenState, high_quality: bool) -> Option<Vec<u8>> {

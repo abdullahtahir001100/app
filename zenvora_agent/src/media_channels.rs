@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, sleep, MissedTickBehavior};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream};
 use url::Url;
 
 use crate::config::AgentConfig;
@@ -121,7 +121,9 @@ pub fn spawn_media_channel(
     channel_name: String,
     stop_flag: Option<Arc<AtomicBool>>,
 ) -> MediaChannel {
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(32);
+    // Small buffer: with the latest-frame-wins drain in the media loop, a deep
+    // queue only adds latency. Keep just enough slack to absorb scheduling jitter.
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(6);
     let (ack_tx, ack_rx) = broadcast::channel::<Value>(16);
     let outbound_tx = tx.clone();
 
@@ -160,9 +162,22 @@ async fn run_media_loop(
             ));
             if let Ok(url) = Url::parse(&ws_url) {
                 if let Ok((ws_stream, _)) = connect_async(url).await {
+                    // Low-latency: kill Nagle on the underlying TCP socket so small
+                    // JPEG frames flush the instant they're written (plain ws:// only;
+                    // a TLS-wrapped socket is left untouched). Removes tens of ms of
+                    // coalescing delay on every frame.
+                    if let MaybeTlsStream::Plain(tcp) = ws_stream.get_ref() {
+                        let _ = tcp.set_nodelay(true);
+                    }
+
                     let (mut write_pipe, mut read_pipe) = ws_stream.split();
-                    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Message>();
+                    // Server → agent traffic (auth-ok / acks) and inbound pings are
+                    // rare, so unbounded channels for THEM are fine. Media frames are
+                    // deliberately NOT queued here — they are written straight to the
+                    // socket with backpressure (below), so the agent can never fall
+                    // several seconds behind the live screen.
                     let (read_tx, mut read_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    let (ping_tx, mut ping_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
                     seq_out += 1;
                     let auth = json!({
@@ -171,20 +186,12 @@ async fn run_media_loop(
                         "channel": channel_name,
                     });
                     let auth_frame = encode_json_frame(MsgType::Auth, seq_out, &auth);
-                    if write_tx.send(Message::Binary(auth_frame)).is_err() {
+                    if write_pipe.send(Message::Binary(auth_frame)).await.is_err() {
                         sleep(Duration::from_secs(backoff)).await;
                         backoff = next_backoff(backoff);
                         continue;
                     }
 
-                    let writer_task = tokio::spawn(async move {
-                        while let Some(msg) = write_rx.recv().await {
-                            if write_pipe.send(msg).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-                    let write_tx_reader = write_tx.clone();
                     let reader_task = tokio::spawn(async move {
                         while let Some(msg) = read_pipe.next().await {
                             match msg {
@@ -194,8 +201,10 @@ async fn run_media_loop(
                                     }
                                 }
                                 Ok(Message::Ping(payload)) => {
-                                    // Server heartbeat expects a WS pong — missing it → terminate → closeCode 1006.
-                                    if write_tx_reader.send(Message::Pong(payload)).is_err() {
+                                    // Forward to the main loop (it owns write_pipe and
+                                    // replies with a Pong — a missing pong makes the
+                                    // server terminate us with closeCode 1006).
+                                    if ping_tx.send(payload).is_err() {
                                         break;
                                     }
                                 }
@@ -249,22 +258,40 @@ async fn run_media_loop(
                                 }
                             }
                             payload = payload_rx.recv(), if authed => {
-                                let Some(payload) = payload else { break; };
+                                let Some(mut payload) = payload else { break; };
+                                // Latest-frame-wins: if the encoder ran ahead of the
+                                // socket, jump straight to the newest queued frame and
+                                // discard the stale ones — the viewer always sees "now",
+                                // never a growing backlog.
+                                while let Ok(newer) = payload_rx.try_recv() {
+                                    payload = newer;
+                                }
                                 seq_out += 1;
                                 let frame = encode_frame(MsgType::MediaFrame, seq_out, &payload, 0);
-                                if write_tx.send(Message::Binary(frame)).is_err() {
+                                // Direct, backpressured write: if the socket is slow
+                                // this awaits, payload_rx fills, and the capture side
+                                // drops frames — bounded latency instead of a runaway
+                                // unbounded queue.
+                                if write_pipe.send(Message::Binary(frame)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            ping = ping_rx.recv() => {
+                                let Some(ping) = ping else { break; };
+                                if write_pipe.send(Message::Pong(ping)).await.is_err() {
                                     break;
                                 }
                             }
                             _ = heartbeat.tick(), if authed => {
                                 seq_out += 1;
-                                if write_tx
+                                if write_pipe
                                     .send(Message::Binary(encode_frame(
                                         MsgType::Heartbeat,
                                         seq_out,
                                         &[],
                                         0,
                                     )))
+                                    .await
                                     .is_err()
                                 {
                                     break;
@@ -273,7 +300,6 @@ async fn run_media_loop(
                         }
                     }
 
-                    writer_task.abort();
                     reader_task.abort();
                     connection_status::log(format!(
                         "Media WS disconnected ({channel_name})"
