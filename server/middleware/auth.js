@@ -63,15 +63,43 @@ async function loadUserPermissions(userId, role) {
     try {
         const Permission = require('../models/Permission');
         const doc = await Permission.findOne({ userId }).lean();
+        let pages;
         if (!doc) {
-            return Permission.defaultsForRole(role);
+            pages = Permission.defaultsForRole(role);
+        } else {
+            pages = Array.isArray(doc.pages) ? doc.pages : Permission.defaultsForRole(role);
         }
-        return Array.isArray(doc.pages) ? doc.pages : Permission.defaultsForRole(role);
+        return expandLegacyPageKeys(pages, role);
     } catch (_) {
         return role === 'admin'
-            ? ['dashboard', 'shell', 'files', 'camera', 'screen', 'logs', 'notifications', 'console', 'admin', 'devices.any']
-            : ['dashboard', 'shell', 'files', 'camera', 'screen', 'logs', 'notifications'];
+            ? [
+                'dashboard', 'devices', 'shell', 'ops', 'files', 'camera', 'screen',
+                'fleet', 'cockpit', 'logs', 'usage', 'notifications', 'console',
+                'settings', 'admin', 'devices.any',
+              ]
+            : [
+                'dashboard', 'devices', 'shell', 'ops', 'files', 'camera', 'screen',
+                'fleet', 'cockpit', 'logs', 'usage', 'notifications', 'settings',
+              ];
     }
+}
+
+/** Map old ACL grants onto new first-class page keys without breaking existing users. */
+function expandLegacyPageKeys(pages, role) {
+    if (role === 'admin') {
+        const Permission = require('../models/Permission');
+        return Permission.defaultsForRole('admin');
+    }
+    const set = new Set(Array.isArray(pages) ? pages : []);
+    if (set.has('dashboard')) {
+        set.add('devices');
+        set.add('settings');
+        set.add('cockpit');
+    }
+    if (set.has('shell')) set.add('ops');
+    if (set.has('screen')) set.add('fleet');
+    if (set.has('logs')) set.add('usage');
+    return [...set];
 }
 
 function userHasPage(pages, pageKey) {

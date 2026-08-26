@@ -74,6 +74,10 @@ const FRAME_STREAM = 0x01;
 const FRAME_SNAPSHOT = 0x02;
 const FRAME_RAW_RGB = 0x03;
 const FRAME_AUDIO_STREAM = 0x0A;
+/** Dashboard → agent: play PCM on remote speakers */
+const FRAME_AUDIO_PLAY = 0x0B;
+/** Dashboard binary envelope: [0xFD][idLen][deviceId utf8][inner frame...] */
+const FRAME_TO_AGENT = 0xFD;
 
 /** userId -> { devices: Set<string>, at: number } */
 const ownershipCache = new Map();
@@ -442,6 +446,8 @@ function isKnownBinaryFrame(buffer) {
         || isScreenBinaryFrame(frameType)
         || isFileBinaryFrame(frameType)
         || frameType === FRAME_AUDIO_STREAM
+        || frameType === FRAME_AUDIO_PLAY
+        || frameType === FRAME_TO_AGENT
     );
 }
 
@@ -566,6 +572,57 @@ async function handleSocketMessage(ws, message) {
                 });
             } catch (_) {}
             ws.send(JSON.stringify({ type: 'sys_ack', status: 'ok' }));
+            return;
+        }
+
+        // Agent remote update progress / success / error
+        if (
+            packet.type === 'update_log' &&
+            (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))
+        ) {
+            const {
+                appendLog,
+                broadcastUpdateLog,
+            } = require('../services/installLogService');
+            const userId = extractOwnerUserId(ws);
+            const deviceId =
+                extractDeviceIdFromAgentSocket(ws) || String(packet.deviceId || '');
+            const entry = {
+                sessionId: `update-${deviceId}-${Date.now()}`,
+                step: Number(packet.step) || 0,
+                total: Number(packet.total) || 5,
+                state: String(packet.state || 'running'),
+                message: String(packet.message || ''),
+                hostname: String(packet.hostname || ''),
+                deviceId,
+                final: Boolean(packet.final),
+                kind: 'agent_update',
+                at: packet.at || new Date().toISOString(),
+            };
+            if (userId) {
+                appendLog(userId, entry);
+            }
+            broadcastUpdateLog(userId, entry, activeConnections);
+            try {
+                require('../services/liveLogBus').push({
+                    channel: 'update',
+                    level:
+                        entry.state === 'fail' || entry.state === 'error'
+                            ? 'error'
+                            : entry.state === 'warn'
+                              ? 'warn'
+                              : 'info',
+                    message: `[${deviceId || entry.hostname || 'agent'}] ${entry.message}`,
+                    deviceId: deviceId || null,
+                    userId: userId || null,
+                    meta: {
+                        step: entry.step,
+                        total: entry.total,
+                        final: entry.final,
+                        kind: 'agent_update',
+                    },
+                });
+            } catch (_) {}
             return;
         }
 
@@ -1250,6 +1307,26 @@ function handleSocketBinary(ws, message) {
 
     const frameType = message[0];
     const fromAgent = !ws.connectionKey || ws.connectionKey.startsWith('AGENT_') || ws.connectionKey.startsWith('DEVICE_');
+
+    // Dashboard → agent binary relay (talk-to-PC speakers, etc.)
+    if (!fromAgent && frameType === FRAME_TO_AGENT) {
+        if (message.length < 3) return;
+        const idLen = message[1];
+        if (idLen < 1 || message.length < 2 + idLen + 1) return;
+        const deviceId = message.slice(2, 2 + idLen).toString('utf8');
+        const inner = message.slice(2 + idLen);
+        if (!authorizeSocketAction(ws, deviceId)) return;
+        if (inner[0] !== FRAME_AUDIO_PLAY) return;
+        const agentKey = `AGENT_${deviceId}`;
+        const deviceKey = `DEVICE_${deviceId}`;
+        const target = activeConnections.get(agentKey) || activeConnections.get(deviceKey);
+        if (target && target.readyState === 1) {
+            try {
+                target.send(inner, { binary: true });
+            } catch (_) {}
+        }
+        return;
+    }
 
     if (!fromAgent && !isBinaryMediaFrame(message)) {
         return;

@@ -121,9 +121,9 @@ pub fn spawn_media_channel(
     channel_name: String,
     stop_flag: Option<Arc<AtomicBool>>,
 ) -> MediaChannel {
-    // Small buffer: with the latest-frame-wins drain in the media loop, a deep
-    // queue only adds latency. Keep just enough slack to absorb scheduling jitter.
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(6);
+    // Tiny buffer: media loop drains with latest-frame-wins. A deep queue only
+    // adds multi-second lag (Chrome still showing after Instagram already open).
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(1);
     let (ack_tx, ack_rx) = broadcast::channel::<Value>(16);
     let outbound_tx = tx.clone();
 
@@ -371,7 +371,11 @@ async fn run_media_loop(
                                     }
                                 }
                                 payload = payload_rx.recv(), if authed => {
-                                    let Some(payload) = payload else { break; };
+                                    let Some(mut payload) = payload else { break; };
+                                    // Same latest-frame-wins drain as WSS — never replay a backlog.
+                                    while let Ok(newer) = payload_rx.try_recv() {
+                                        payload = newer;
+                                    }
                                     seq_out += 1;
                                     let frame =
                                         encode_frame(MsgType::MediaFrame, seq_out, &payload, 0);

@@ -75,9 +75,49 @@ function broadcastInstallLog(userId, entry, activeConnections) {
     });
 }
 
+/**
+ * Agent update progress/success/error → owner dashboards + admins / devices.any.
+ * Also mirrored as install_telemetry so existing Live install logs panels work.
+ */
+function broadcastUpdateLog(userId, entry, activeConnections) {
+    const payload = {
+        type: 'update_log',
+        userId: String(userId || ''),
+        kind: 'agent_update',
+        ...entry,
+    };
+    const updateMsg = JSON.stringify(payload);
+    const installMsg = JSON.stringify({
+        type: 'install_telemetry',
+        userId: String(userId || ''),
+        ...entry,
+        kind: 'agent_update',
+    });
+
+    activeConnections.forEach((clientSocket, key) => {
+        if (!(key.startsWith('DASHBOARD_') && clientSocket.readyState === 1)) return;
+        const dashUserId = String(
+            clientSocket?.authContext?.user?.id || clientSocket?.authContext?.userId || ''
+        ).trim();
+        const role = clientSocket?.authContext?.user?.role || clientSocket?.authContext?.role;
+        const pages = clientSocket?.authContext?.user?.pages || clientSocket?.authContext?.pages || [];
+        const isAdminViewer =
+            role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'));
+        const isOwner = userId && dashUserId === String(userId);
+        if (!isOwner && !isAdminViewer) return;
+        try {
+            clientSocket.send(updateMsg);
+            clientSocket.send(installMsg);
+        } catch (_) {
+            // ignore
+        }
+    });
+}
+
 module.exports = {
     resolveUserId,
     appendLog,
     getLogs,
     broadcastInstallLog,
+    broadcastUpdateLog,
 };

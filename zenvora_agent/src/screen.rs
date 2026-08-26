@@ -36,10 +36,10 @@ pub fn quality_preset(name: &str) -> (u32, u8, u32) {
     // The server still drops frames when a socket buffers >1MB, so a weak link
     // degrades to fewer fps gracefully rather than stalling.
     match name.to_lowercase().as_str() {
-        "saver" | "low" => (960, 45, 15),   // Weak link (~1.5 Mbps) — legible, low lag
-        "high" => (1500, 68, 30),           // Broadband (~8 Mbps) — crisp; default tier
-        "ultra" => (1920, 82, 45),          // LAN / fast fiber — near-native, very fluid
-        _ => (1280, 58, 24),                // Balanced (~4 Mbps)
+        "saver" | "low" => (960, 52, 18),   // Weak link — sharper than before, still light
+        "high" => (1600, 72, 30),           // Broadband — crisp for remote control
+        "ultra" => (1920, 85, 45),          // LAN — near-native
+        _ => (1280, 62, 24),                // Balanced
     }
 }
 

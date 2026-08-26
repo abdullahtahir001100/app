@@ -835,6 +835,41 @@ class GatewayClient {
     return true;
   }
 
+  /**
+   * Send a raw agent frame wrapped for dashboard→agent relay.
+   * Envelope: [0xFD][idLen][deviceId][inner...]
+   */
+  sendToAgentBinary(deviceId: string, innerFrame: Uint8Array): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !deviceId) {
+      return false;
+    }
+    const idBytes = new TextEncoder().encode(deviceId);
+    if (idBytes.length > 255) return false;
+    const out = new Uint8Array(2 + idBytes.length + innerFrame.length);
+    out[0] = 0xfd;
+    out[1] = idBytes.length;
+    out.set(idBytes, 2);
+    out.set(innerFrame, 2 + idBytes.length);
+    this.ws.send(out);
+    return true;
+  }
+
+  /** Play mono PCM (i16 LE) on remote PC speakers. */
+  sendAudioPlay(deviceId: string, sampleRate: number, pcmI16: Int16Array): boolean {
+    const rate = sampleRate || 48000;
+    const frame = new Uint8Array(5 + pcmI16.length * 2);
+    frame[0] = 0x0b;
+    frame[1] = (rate >>> 24) & 0xff;
+    frame[2] = (rate >>> 16) & 0xff;
+    frame[3] = (rate >>> 8) & 0xff;
+    frame[4] = rate & 0xff;
+    const view = new DataView(frame.buffer);
+    for (let i = 0; i < pcmI16.length; i += 1) {
+      view.setInt16(5 + i * 2, pcmI16[i], true);
+    }
+    return this.sendToAgentBinary(deviceId, frame);
+  }
+
   isOpen(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }

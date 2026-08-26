@@ -246,7 +246,15 @@ function AppSidebarContent() {
       return;
     }
 
-    dispatch("START_AUDIO_STREAM", { device_id: selectedMicrophoneId || undefined }, target);
+    dispatch(
+      "START_AUDIO_STREAM",
+      {
+        device_id: selectedMicrophoneId || undefined,
+        include_mic: true,
+        include_system: true,
+      },
+      target
+    );
     setIsAudioStreaming(true);
     setMicDropdownOpen(false);
   };
@@ -295,18 +303,19 @@ function AppSidebarContent() {
 
   const userMenuItems = [
     { icon: Home, label: "Dashboard", href: "/dashboard", page: "dashboard" },
-    { icon: Smartphone, label: "Devices", href: "/devices", page: "dashboard" },
-    { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "screen" },
+    { icon: Smartphone, label: "Devices", href: "/devices", page: "devices" },
+    { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "fleet" },
     { icon: Eye, label: "Screen Monitor", href: "/screen", page: "screen" },
     { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
     { icon: FileText, label: "File Manager", href: "/files", page: "files" },
     { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
-    { icon: Sparkles, label: "Agent Ops", href: "/ops", page: "shell" },
+    { icon: Sparkles, label: "Agent Ops", href: "/ops", page: "ops" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
-    { icon: Activity, label: "Usage", href: "/usage", page: "logs" },
+    { icon: Activity, label: "Usage", href: "/usage", page: "usage" },
     { icon: Phone, label: "Phone", href: "/logs", page: "logs" },
     { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
+    { icon: Settings, label: "Settings", href: "/settings", page: "settings" },
   ].filter((item) => can(item.page));
 
   const adminMenuItems = can("admin")

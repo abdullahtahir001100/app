@@ -41,6 +41,22 @@ router.post('/', async (req, res) => {
             // handler may not export activeConnections yet
         }
 
+        try {
+            require('../services/liveLogBus').push({
+                channel: 'install',
+                level:
+                    entry.state === 'fail' || entry.state === 'error'
+                        ? 'error'
+                        : entry.state === 'warn'
+                          ? 'warn'
+                          : 'info',
+                message: entry.message,
+                deviceId: entry.deviceId || null,
+                userId,
+                meta: { step: entry.step, total: entry.total, sessionId: entry.sessionId },
+            });
+        } catch (_) {}
+
         res.status(200).json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

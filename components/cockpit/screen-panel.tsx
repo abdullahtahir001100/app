@@ -44,7 +44,7 @@ export function ScreenPanel({
     telemetry,
     mapPointerToRemote,
     resetPreview,
-  } = useScreenRemote({ subscribe, selectedDeviceRef });
+  } = useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId: deviceId });
 
   const [streaming, setStreaming] = useState(false);
   const [controlEnabled, setControlEnabled] = useState(true);

@@ -21,6 +21,7 @@ export default function AdminPermissionsPage() {
   const searchParams = useSearchParams();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [pageKeys, setPageKeys] = useState<string[]>([]);
+  const [pageLabels, setPageLabels] = useState<Record<string, string>>({});
   const [selectedUserId, setSelectedUserId] = useState(searchParams.get("userId") || "");
   const [pages, setPages] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -52,6 +53,7 @@ export default function AdminPermissionsPage() {
 
         setUsers(data.users || []);
         setPageKeys(data.pageKeys || []);
+        setPageLabels(data.pageLabels || {});
         const initial = searchParams.get("userId") || data.users?.[0]?.id || "";
         setSelectedUserId(initial);
         const u = (data.users || []).find((x: AdminUser) => x.id === initial);
@@ -170,7 +172,10 @@ export default function AdminPermissionsPage() {
                   {pageKeys.map((key) => (
                     <label key={key} className="flex items-center gap-2 text-sm border border-border rounded-md px-3 py-2">
                       <Checkbox checked={pages.includes(key)} onCheckedChange={() => toggle(key)} />
-                      <span className="font-mono text-xs">{key}</span>
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-sm">{pageLabels[key] || key}</span>
+                        <span className="font-mono text-[10px] text-muted-foreground">{key}</span>
+                      </span>
                     </label>
                   ))}
                 </div>

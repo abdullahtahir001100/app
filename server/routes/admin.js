@@ -84,6 +84,7 @@ router.get('/users', async (_req, res) => {
                 pages: byUser.get(String(u._id)) || Permission.defaultsForRole(u.role),
             })),
             pageKeys: Permission.PAGE_KEYS,
+            pageLabels: Permission.PAGE_LABELS || {},
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -134,6 +135,7 @@ router.get('/permissions/:userId', async (req, res) => {
             },
             pages: perm.pages,
             pageKeys: Permission.PAGE_KEYS,
+            pageLabels: Permission.PAGE_LABELS || {},
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

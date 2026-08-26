@@ -28,14 +28,19 @@ export function pathToPageKey(pathname: string): string | null {
   if (pathname.startsWith("/admin-pin")) return null;
   if (pathname.startsWith("/admin")) return "admin";
   if (pathname.startsWith("/console")) return "console";
+  if (pathname.startsWith("/cockpit")) return "cockpit";
+  if (pathname.startsWith("/fleet")) return "fleet";
   if (pathname.startsWith("/screen")) return "screen";
   if (pathname.startsWith("/camera")) return "camera";
   if (pathname.startsWith("/files")) return "files";
-  if (pathname.startsWith("/shell") || pathname.startsWith("/ops")) return "shell";
-  if (pathname.startsWith("/logs") || pathname.startsWith("/usage")) return "logs";
+  if (pathname.startsWith("/ops")) return "ops";
+  if (pathname.startsWith("/shell")) return "shell";
+  if (pathname.startsWith("/usage")) return "usage";
+  if (pathname.startsWith("/logs")) return "logs";
   if (pathname.startsWith("/notifications")) return "notifications";
-  if (pathname.startsWith("/settings")) return null;
-  if (pathname.startsWith("/dashboard") || pathname.startsWith("/devices")) return "dashboard";
+  if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/devices")) return "devices";
+  if (pathname.startsWith("/dashboard")) return "dashboard";
   return null;
 }
 

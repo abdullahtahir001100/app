@@ -45,9 +45,11 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
   const bitmapRef = useRef<ImageBitmap | null>(null);
   const latestBlobRef = useRef<Blob | null>(null);
   const paintScheduledRef = useRef(false);
+  const paintGenRef = useRef(0);
   const fpsTimerRef = useRef({ last: Date.now(), count: 0 });
   const paintFrameRef = useRef<(blob: Blob) => void>(() => {});
   const hasLiveFrameRef = useRef(false);
+  const preferMediaOnlyRef = useRef(false);
   const screenSizeRef = useRef({ width: 1920, height: 1080 });
 
   const [hasLiveFrame, setHasLiveFrame] = useState(false);
@@ -70,7 +72,9 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
   const paintFrame = useCallback(async (blob: Blob) => {
     if (blob.size < 100) return;
 
+    // Always keep the newest blob; coalesce paints so we never replay a backlog.
     latestBlobRef.current = blob;
+
     if (paintScheduledRef.current) return;
     paintScheduledRef.current = true;
 
@@ -79,9 +83,19 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
       const frame = latestBlobRef.current;
       const canvas = canvasRef.current;
       if (!frame || !canvas) return;
+      const paintGen = ++paintGenRef.current;
 
       try {
         const bitmap = await createImageBitmap(frame);
+        // Drop stale decode — older JPEG finishing late was painting Chrome after Instagram.
+        if (paintGen !== paintGenRef.current || latestBlobRef.current !== frame) {
+          bitmap.close();
+          // Newer blob arrived mid-decode — schedule a fresh paint of "now".
+          if (latestBlobRef.current && latestBlobRef.current !== frame) {
+            paintFrameRef.current(latestBlobRef.current);
+          }
+          return;
+        }
         const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
         if (!ctx) {
           bitmap.close();
@@ -91,8 +105,6 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
         if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
           canvas.width = bitmap.width;
           canvas.height = bitmap.height;
-          // Keep screenSizeRef as native desktop size (from telemetry) for mouse mapping.
-          // Do NOT overwrite with JPEG dimensions — that breaks remote pointer accuracy.
         }
 
         ctx.drawImage(bitmap, 0, 0);
@@ -166,7 +178,10 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
 
   useEffect(() => {
     return subscribe((event) => {
+      // When /ws/media is connected, ignore gateway binary — dual path caused
+      // double decode and could paint older gateway-buffered frames.
       if (event.type === "binary" && event.data) {
+        if (preferMediaOnlyRef.current) return;
         processBinaryRef.current(event.data);
         return;
       }
@@ -266,6 +281,7 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
     });
     const unsubState = client.onState((state) => {
       setMediaReady(state === "open");
+      preferMediaOnlyRef.current = state === "open";
       if (state === "open") setMediaStatus("Media socket connected");
       else if (state === "connecting") setMediaStatus("Connecting media socket…");
       else if (state === "error") setMediaStatus("Media ticket/auth failed — retrying…");
@@ -275,6 +291,7 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
     return () => {
       unsub();
       unsubState();
+      preferMediaOnlyRef.current = false;
       client.disconnect();
       if (mediaClientRef.current === client) mediaClientRef.current = null;
       setMediaReady(false);

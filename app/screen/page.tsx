@@ -21,6 +21,7 @@ import {
   Volume2,
   X,
   Sparkles,
+  Mic,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -30,6 +31,7 @@ import {
   getPreferredMediaTransport,
   type MediaTransport,
 } from "@/lib/media-transport";
+import { MicPanel } from "@/components/cockpit/mic-panel";
 
 type StreamQuality = "saver" | "low" | "medium" | "high" | "ultra";
 
@@ -64,7 +66,7 @@ function loadSavedFps(): number {
   } catch {
     // ignore
   }
-  return 20;
+  return 30;
 }
 
 export default function ScreenPage() {
@@ -545,7 +547,11 @@ export default function ScreenPage() {
     if (isStreaming) {
       resetPreview();
       setTimeout(
-        () => dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current }),
+        () =>
+          dispatchControl("START_SCREEN_STREAM", {
+            quality: streamQualityRef.current,
+            target_fps: streamFpsRef.current,
+          }),
         200
       );
     }
@@ -826,7 +832,7 @@ export default function ScreenPage() {
                   unit="%"
                 />
                 <CustomSlider
-                  label="Volume"
+                  label="PC Speaker Volume"
                   min={0}
                   max={100}
                   value={volume}
@@ -834,6 +840,28 @@ export default function ScreenPage() {
                   showValue
                   unit="%"
                 />
+
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Mic className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Label className="text-sm font-semibold">Remote microphone</Label>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Listen sources: mic + system audio (videos). Speak to PC = tumhari awaaz
+                    victim speakers pe. PC Speaker Volume = system volume.
+                  </p>
+                  {selectedDevice ? (
+                    <div className="rounded-lg border border-border bg-background/60">
+                      <MicPanel
+                        deviceId={selectedDevice}
+                        subscribe={subscribe}
+                        dispatch={gatewayDispatch}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Select a device first.</p>
+                  )}
+                </div>
 
                 <div className="space-y-2 pt-2 border-t border-border">
                   <Button
@@ -858,7 +886,10 @@ export default function ScreenPage() {
                     className="w-full justify-start border-border"
                     onClick={() => {
                       resetPreview();
-                      dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current });
+                      dispatchControl("START_SCREEN_STREAM", {
+                        quality: streamQualityRef.current,
+                        target_fps: streamFpsRef.current,
+                      });
                     }}
                   >
                     <RefreshCw className="h-3.5 w-3.5 mr-2" /> Refresh Stream

@@ -126,6 +126,39 @@ export default function DashboardPage() {
     };
   }, [showPairModal, windowsCliInlineOpen, subscribe, ensureConnected, installSessionId]);
 
+  // Agent UPDATE_AGENT progress — all devices success/error (also Live Console)
+  useEffect(() => {
+    ensureConnected();
+    return subscribe((event) => {
+      if (event.type !== "json" || !event.packet) return;
+      const packet = event.packet as Record<string, unknown>;
+      const isUpdate =
+        packet.type === "update_log" ||
+        (packet.type === "install_telemetry" && packet.kind === "agent_update");
+      if (!isUpdate) return;
+      const entry = {
+        sessionId: String(packet.sessionId || ""),
+        step: Number(packet.step) || 0,
+        total: Number(packet.total) || 0,
+        state: String(packet.state || "running"),
+        message: `[update ${packet.deviceId || packet.hostname || ""}] ${packet.message || ""}`,
+        hostname: String(packet.hostname || ""),
+        deviceId: String(packet.deviceId || ""),
+        final: Boolean(packet.final),
+        at: String(packet.at || new Date().toISOString()),
+      } as InstallLogEntry;
+      setInstallLogs((prev) => [...prev, entry].slice(-120));
+      setInstallLive(true);
+      if (entry.final) {
+        if (entry.state === "ok" || entry.state === "success") {
+          alertMsg(Z.AGENT_UPDATE_SENT, entry.message);
+        } else if (entry.state === "fail" || entry.state === "error") {
+          alertMsg(Z.COMMAND_FAILED, entry.message);
+        }
+      }
+    });
+  }, [subscribe, ensureConnected]);
+
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [installLogs]);

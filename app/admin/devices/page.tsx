@@ -33,7 +33,7 @@ type AdminDevice = {
 
 export default function AdminDevicesPage() {
   const router = useRouter();
-  const { dispatch, ensureConnected } = useGateway();
+  const { dispatch, ensureConnected, subscribe } = useGateway();
   const [devices, setDevices] = useState<AdminDevice[]>([]);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -41,6 +41,33 @@ export default function AdminDevicesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [updatingAll, setUpdatingAll] = useState(false);
+  const [updateLogs, setUpdateLogs] = useState<
+    Array<{ at: string; deviceId: string; state: string; message: string }>
+  >([]);
+
+  useEffect(() => {
+    return subscribe((event) => {
+      if (event.type !== "json" || !event.packet) return;
+      const packet = event.packet;
+      if (packet.type !== "update_log" && !(packet.type === "install_telemetry" && packet.kind === "agent_update")) {
+        return;
+      }
+      const deviceId = String(packet.deviceId || "");
+      const state = String(packet.state || "running");
+      const message = String(packet.message || "");
+      const at = String(packet.at || new Date().toISOString());
+      setUpdateLogs((prev) => [{ at, deviceId, state, message }, ...prev].slice(0, 80));
+      if (state === "fail" || state === "error") {
+        alertMsg(Z.COMMAND_FAILED, message || deviceId);
+        setUpdatingId(null);
+        setUpdatingAll(false);
+      } else if (packet.final && (state === "ok" || state === "success")) {
+        alertMsg(Z.AGENT_UPDATE_SENT, message || deviceId);
+        setUpdatingId(null);
+        setUpdatingAll(false);
+      }
+    });
+  }, [subscribe]);
 
   useEffect(() => {
     (async () => {
@@ -272,6 +299,29 @@ export default function AdminDevicesPage() {
               </button>
             ))}
           </div>
+
+          {updateLogs.length > 0 && (
+            <Card className="mb-8 p-4 border border-border bg-card">
+              <h3 className="text-sm font-semibold mb-2">Agent update logs</h3>
+              <div className="max-h-48 overflow-y-auto space-y-1 font-mono text-[11px]">
+                {updateLogs.map((log, i) => (
+                  <p
+                    key={`${log.at}-${i}`}
+                    className={
+                      log.state === "fail" || log.state === "error"
+                        ? "text-rose-600"
+                        : log.state === "ok" || log.state === "success"
+                          ? "text-emerald-600"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    [{new Date(log.at).toLocaleTimeString()}] {log.deviceId || "—"} · {log.state} ·{" "}
+                    {log.message}
+                  </p>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {/* Devices list */}
           <div className="space-y-3">

@@ -57,6 +57,9 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
     const registry = getConnectionRegistry();
     const ownerId = getOwnerId(deviceId);
     const envelope = wrapBinaryForDevice(deviceId, payloadBuf);
+    // Keep media sockets "live": drop when already congested so the browser
+    // never plays a multi-second backlog of old JPEGs (AnyDesk-like latency).
+    const MAX_BUFFERED = 256 * 1024;
 
     let sent = 0;
     let considered = 0;
@@ -71,15 +74,15 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
         const isAdminViewer = role === 'admin' || (Array.isArray(pages) && pages.includes('devices.any'));
         if (!isAdminViewer && (!ownerId || uid !== String(ownerId))) continue;
 
+        // CRITICAL: only dedicated /ws/media subscribers receive frames.
+        // Flooding the control /ws/gateway socket caused multi-second stale desktops.
         const sub = client.mediaSubscription;
-        const wantsChannel = !sub
-            || (String(sub.deviceId) === String(deviceId)
-                && (!sub.channel || String(sub.channel) === String(channel)));
-
-        if (!wantsChannel && sub) continue;
+        if (!sub) continue;
+        if (String(sub.deviceId) !== String(deviceId)) continue;
+        if (sub.channel && String(sub.channel) !== String(channel)) continue;
 
         const ws = client.ws || client;
-        if (ws && typeof ws.bufferedAmount === 'number' && ws.bufferedAmount > 1024 * 1024) {
+        if (ws && typeof ws.bufferedAmount === 'number' && ws.bufferedAmount > MAX_BUFFERED) {
             continue;
         }
 
@@ -92,10 +95,8 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
             sent += 1;
         } catch (_) {}
     }
-    if (sent === 0) {
-        console.log(
-            `[MEDIA-DEBUG] frame dropped device=${deviceId} channel=${channel} owner=${ownerId || 'none'} dashboards=${considered}`
-        );
+    if (sent === 0 && considered > 0) {
+        // Quiet when nobody is watching this channel (normal).
     }
     return sent;
 }

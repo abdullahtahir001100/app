@@ -204,10 +204,15 @@ fn schedule_screen_capture(
             Ok(StreamOutcome::Frame(jpeg)) => {
                 let binary = build_binary_frame(jpeg, FRAME_SCREEN_STREAM);
                 if let Some(tx) = media_tx.as_ref() {
-                    // Instant non-blocking send. If buffer is full (slow network), drop frame cleanly
-                    // so agent Tokio threads NEVER block and heartbeats NEVER timeout.
-                    if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(binary) {
-                        // Frame dropped cleanly due to network lag — no disconnection!
+                    // Capacity is 1 + media loop latest-wins. On Full the socket is
+                    // mid-write with an older frame already queued — drop this one
+                    // rather than block; next tick will capture "now".
+                    match tx.try_send(binary) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            // Prefer live over complete: never block the agent.
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {}
                     }
                 } else {
                     eprintln!("[SCREEN] screen_media_tx is None while streaming");
@@ -621,6 +626,7 @@ pub async fn run_network_loop(
                 }
 
                 let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Message>();
+                crate::agent_update::set_gateway_reporter(write_tx.clone(), &config.device_id);
                 let session_started = Instant::now();
                 let activity_logger =
                     ActivityLogger::init_activity_logger(write_tx.clone(), config.device_id.clone());
@@ -820,10 +826,39 @@ pub async fn run_network_loop(
                                                         true,
                                                     );
                                                 } else if action == "START_AUDIO_STREAM" {
-                                                    let device_id = payload.get("device_id").and_then(|v| v.as_str()).map(String::from);
-                                                    let _ = state.audio.start_streaming(write_tx.clone(), device_id);
+                                                    let device_id = payload
+                                                        .get("device_id")
+                                                        .and_then(|v| v.as_str())
+                                                        .map(String::from);
+                                                    let include_mic = payload
+                                                        .get("include_mic")
+                                                        .and_then(|v| v.as_bool())
+                                                        .unwrap_or(true);
+                                                    let include_system = payload
+                                                        .get("include_system")
+                                                        .or_else(|| payload.get("includeSystem"))
+                                                        .and_then(|v| v.as_bool())
+                                                        .unwrap_or(false);
+                                                    let opts = crate::audio::AudioCaptureOpts {
+                                                        device_id,
+                                                        include_mic,
+                                                        include_system,
+                                                    };
+                                                    if let Err(err) =
+                                                        state.audio.start_streaming(write_tx.clone(), opts)
+                                                    {
+                                                        eprintln!("[AUDIO] start_streaming: {}", err);
+                                                    }
                                                 } else if action == "STOP_AUDIO_STREAM" {
                                                     state.audio.stop_streaming();
+                                                } else if action == "START_SPEAKER_PLAY" {
+                                                    let rate = payload
+                                                        .get("sample_rate")
+                                                        .and_then(|v| v.as_u64())
+                                                        .unwrap_or(48000) as u32;
+                                                    let _ = state.audio.ensure_playback(rate);
+                                                } else if action == "STOP_SPEAKER_PLAY" {
+                                                    state.audio.stop_playback();
                                                 } else if action == "LIST_AUDIO_DEVICES" {
                                                     if let Ok(devices) = crate::audio::AudioState::list_audio_devices() {
                                                         let _ = write_tx.send(Message::Text(serde_json::json!({
@@ -847,8 +882,15 @@ pub async fn run_network_loop(
                                         }
                                     }
                                 }
-                                Some(Ok(Message::Binary(_))) => {
+                                Some(Ok(Message::Binary(data))) => {
                                     last_alive = Instant::now();
+                                    // Dashboard → PC speakers (0x0B + BE rate + LE i16 mono PCM)
+                                    if data.len() >= 6 && data[0] == crate::audio::FRAME_AUDIO_PLAY {
+                                        let rate = u32::from_be_bytes([
+                                            data[1], data[2], data[3], data[4],
+                                        ]);
+                                        state.audio.enqueue_playback(rate, &data[5..]);
+                                    }
                                 }
                                 Some(Ok(Message::Ping(payload))) => {
                                     last_alive = Instant::now();
@@ -860,18 +902,24 @@ pub async fn run_network_loop(
                                 Some(Ok(Message::Close(_))) => {
                                     // Do not kill camera/screen intent on gateway close — reconnect resumes.
                                     state.audio.stop_streaming();
+                                    state.audio.stop_playback();
+                                    crate::agent_update::clear_gateway_reporter();
                                     invalidate_monitor_cache();
                                     println!("--> [NETWORK] Gateway closed connection.");
                                     break;
                                 }
                                 Some(Err(e)) => {
                                     state.audio.stop_streaming();
+                                    state.audio.stop_playback();
+                                    crate::agent_update::clear_gateway_reporter();
                                     invalidate_monitor_cache();
                                     eprintln!("--> [NETWORK] Socket transmission failure: {}", e);
                                     break;
                                 }
                                 None => {
                                     state.audio.stop_streaming();
+                                    state.audio.stop_playback();
+                                    crate::agent_update::clear_gateway_reporter();
                                     invalidate_monitor_cache();
                                     println!("--> [NETWORK] WebSocket stream ended.");
                                     break;
