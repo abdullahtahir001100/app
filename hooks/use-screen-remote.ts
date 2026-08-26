@@ -131,8 +131,8 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId }:
       const frameType = frame[0];
       if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
       const jpegBytes = frame.subarray(1);
-      // Avoid extra .slice() copy — Blob can wrap the subarray view.
-      const jpegBlob = new Blob([jpegBytes], { type: "image/jpeg" });
+      // .slice() gives a fresh ArrayBuffer-backed copy (required for Blob typing).
+      const jpegBlob = new Blob([jpegBytes.slice()], { type: "image/jpeg" });
       void paintFrameRef.current(jpegBlob);
     };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { AgentMessage } from "./agent-chat-panel";
+import type { AgentMessage } from "@/hooks/use-agent-chat";
 
 interface AgentChatMessageProps {
   message: AgentMessage;

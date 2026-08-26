@@ -75,6 +75,28 @@ function handleScreenCommand(ws, packet, activeConnections) {
             outboundPacket.payload = {
                 quality: String(payload?.quality ?? 'medium'),
             };
+            // Forward an explicit frame-rate request when the dashboard sends one.
+            // Older agents ignore unknown fields; upgraded agents honor these overrides
+            // (see zenvora_agent screen stream loop) for AnyDesk-like fast + sharp output.
+            if (payload?.target_fps !== undefined && payload?.target_fps !== null) {
+                const fps = Number(payload.target_fps);
+                if (Number.isFinite(fps) && fps > 0) {
+                    outboundPacket.payload.target_fps = Math.max(1, Math.min(60, Math.round(fps)));
+                }
+            }
+            // Optional fine-grained overrides (resolution / JPEG quality) for upgraded agents.
+            if (payload?.max_width !== undefined && payload?.max_width !== null) {
+                const w = Number(payload.max_width);
+                if (Number.isFinite(w) && w >= 240) {
+                    outboundPacket.payload.max_width = Math.max(240, Math.min(3840, Math.round(w)));
+                }
+            }
+            if (payload?.jpeg_quality !== undefined && payload?.jpeg_quality !== null) {
+                const q = Number(payload.jpeg_quality);
+                if (Number.isFinite(q) && q >= 10) {
+                    outboundPacket.payload.jpeg_quality = Math.max(10, Math.min(95, Math.round(q)));
+                }
+            }
         } else if (action === 'SET_DISPLAY_BRIGHTNESS' || action === 'SET_SYSTEM_VOLUME') {
             outboundPacket.payload = {
                 degree_value: Number(payload?.value ?? payload?.degree_value ?? 50)

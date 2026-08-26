@@ -34,10 +34,10 @@ import {
 type StreamQuality = "saver" | "low" | "medium" | "high" | "ultra";
 
 const QUALITY_OPTIONS: { value: StreamQuality; label: string; hint: string; recommended?: boolean }[] = [
-  { value: "saver", label: "Slow Net ⭐", hint: "640p · 8 FPS (Zero disconnects)", recommended: true },
-  { value: "medium", label: "Balanced", hint: "850p · 12 FPS (Recommended)" },
-  { value: "high", label: "Fast Net", hint: "1100p · 18 FPS (High def)" },
-  { value: "ultra", label: "Ultra / LAN", hint: "1440p · 25 FPS (Full quality)" },
+  { value: "saver", label: "Slow Net", hint: "960p · light (weak connection)" },
+  { value: "medium", label: "Balanced", hint: "1280p · balanced" },
+  { value: "high", label: "Sharp ⭐", hint: "1440p · crisp (recommended)", recommended: true },
+  { value: "ultra", label: "Ultra / LAN", hint: "1920p · full quality (LAN)" },
 ];
 
 const FPS_OPTIONS = [5, 8, 12, 15, 20, 30];
@@ -51,7 +51,7 @@ function loadSavedQuality(): StreamQuality {
   } catch {
     // ignore
   }
-  return "saver"; // Default to saver mode for maximum stability on slow internet
+  return "high"; // Default to a sharp, crisp tier (AnyDesk-like). "saver" stays one click away for weak links.
 }
 
 function loadSavedFps(): number {
@@ -64,7 +64,7 @@ function loadSavedFps(): number {
   } catch {
     // ignore
   }
-  return 8;
+  return 20;
 }
 
 export default function ScreenPage() {

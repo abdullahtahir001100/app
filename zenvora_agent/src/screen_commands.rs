@@ -326,46 +326,34 @@ fn capture_stream_jpeg_fast(
     max_width: u32,
     quality: u8,
 ) -> Option<Vec<u8>> {
-    let (src_w, src_h) = rgba.dimensions();
-    let scale = if src_w > max_width {
-        max_width as f32 / src_w as f32
+    // Pack the BGRA/RGBA capture into tight RGB8 (drops alpha) at native size.
+    let rgb = rgba_to_rgb8_fast(rgba);
+    let (src_w, _src_h) = rgb.dimensions();
+
+    // Downscale with a real reconstruction filter instead of point-sampling.
+    //
+    // The previous implementation built x_map/y_map with `.floor()` — i.e.
+    // nearest-neighbor — which threw away 3 of every 4 source pixels when
+    // shrinking. That is exactly what made the stream look blocky/aliased and
+    // then "blurry" once the browser scaled the canvas back up (AnyDesk never
+    // looks like that because it area-averages). `Triangle` (bilinear) averages
+    // neighbours, is separable/SIMD-friendly in the `image` crate, and is cheap
+    // enough for real-time single-screen capture. Crank quality_preset() for
+    // extra sharpness/bitrate; the filter is what removes the jaggies.
+    let target = if src_w > max_width {
+        resize_rgb(&rgb, max_width, imageops::FilterType::Triangle)
     } else {
-        1.0
+        // Already at/under target width (e.g. Ultra on a small display): encode
+        // native, no resample pass at all.
+        rgb
     };
 
-    let dst_w = ((src_w as f32 * scale).round() as u32).max(1);
-    let dst_h = ((src_h as f32 * scale).round() as u32).max(1);
-    let raw = rgba.as_raw();
-    let mut rgb = Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize).saturating_mul(3));
-
-    let mut x_map = Vec::with_capacity(dst_w as usize);
-    for x in 0..dst_w {
-        let src_x = ((x as f32 / scale).floor() as u32).min(src_w.saturating_sub(1));
-        x_map.push(src_x as usize);
-    }
-    let mut y_map = Vec::with_capacity(dst_h as usize);
-    for y in 0..dst_h {
-        let src_y = ((y as f32 / scale).floor() as u32).min(src_h.saturating_sub(1));
-        y_map.push(src_y as usize);
-    }
-
-    for y in 0..dst_h {
-        let src_y = y_map[y as usize];
-        let row_base = src_y.saturating_mul(src_w as usize).saturating_mul(4);
-        for x in 0..dst_w {
-            let src_x = x_map[x as usize];
-            let idx = row_base + src_x.saturating_mul(4);
-            rgb.push(raw[idx]);
-            rgb.push(raw[idx + 1]);
-            rgb.push(raw[idx + 2]);
-        }
-    }
-
-    // Encode directly — the image is already at the target resolution, skip resize_rgb.
-    let mut jpeg_bytes = Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize) / 8);
+    let (dst_w, dst_h) = target.dimensions();
+    let mut jpeg_bytes =
+        Vec::with_capacity((dst_w as usize).saturating_mul(dst_h as usize) / 8);
     let encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, quality);
     if encoder
-        .write_image(&rgb, dst_w, dst_h, ExtendedColorType::Rgb8)
+        .write_image(target.as_raw(), dst_w, dst_h, ExtendedColorType::Rgb8)
         .is_ok()
         && !jpeg_bytes.is_empty()
     {

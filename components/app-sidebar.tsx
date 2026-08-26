@@ -22,6 +22,7 @@ import {
   Settings,
   Activity,
   Sparkles,
+  Grid3x3,
 } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -291,6 +292,7 @@ function AppSidebarContent() {
   const userMenuItems = [
     { icon: Home, label: "Dashboard", href: "/dashboard", page: "dashboard" },
     { icon: Smartphone, label: "Devices", href: "/devices", page: "dashboard" },
+    { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "screen" },
     { icon: Eye, label: "Screen Monitor", href: "/screen", page: "screen" },
     { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
     { icon: FileText, label: "File Manager", href: "/files", page: "files" },

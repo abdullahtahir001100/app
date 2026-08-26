@@ -24,12 +24,20 @@ pub struct ScreenState {
 }
 
 pub fn quality_preset(name: &str) -> (u32, u8, u32) {
-    // (max_width, jpeg_quality, target_fps) — tailored for real-world internet performance
+    // (max_width, jpeg_quality, target_fps) — retuned 2026-08 for AnyDesk-like
+    // sharpness. Works together with the Triangle-filter downscale in
+    // screen_commands::capture_stream_jpeg_fast: the filter removes the blocky
+    // aliasing, and these higher width + JPEG-quality values are what actually
+    // make text crisp; higher FPS is what makes it feel "live".
+    //
+    // NOTE: this is still full-frame motion-JPEG, so bitrate scales with width x
+    // quality x fps. The server drops frames when a socket buffers >1MB, so
+    // over-cranking a weak link just causes stutter — keep the tiers honest.
     match name.to_lowercase().as_str() {
-        "saver" | "low" => (640, 35, 8),   // Super lightweight for slow internet (~0.8 Mbps, zero lag)
-        "high" => (1100, 62, 18),           // Fast connection (~5.5 Mbps)
-        "ultra" => (1440, 72, 25),          // LAN / Ultra connection (~12 Mbps)
-        _ => (850, 48, 12),                 // Medium / Balanced (~2.5 Mbps default)
+        "saver" | "low" => (960, 45, 10),   // Weak link (~1.5 Mbps) — legible, low lag
+        "high" => (1440, 66, 20),           // Broadband (~8 Mbps) — crisp; default tier
+        "ultra" => (1920, 80, 30),          // LAN / fast fiber (~18 Mbps) — near-native
+        _ => (1280, 56, 15),                // Balanced (~4 Mbps)
     }
 }
 
@@ -43,10 +51,10 @@ impl ScreenState {
             volume: 100,
             streaming_active: false,
             detected_displays: Vec::new(),
-            target_fps: 12,
+            target_fps: 15,
             last_sent_text: String::new(),
-            stream_max_width: 850,
-            stream_jpeg_quality: 48,
+            stream_max_width: 1280,
+            stream_jpeg_quality: 56,
             stream_quality: "medium".to_string(),
         }
     }
@@ -89,6 +97,16 @@ impl ScreenState {
         // Custom max width override if supplied in payload
         if let Some(w) = payload.get("max_width").and_then(|v| v.as_u64()) {
             self.stream_max_width = (w as u32).clamp(320, 3840);
+        }
+
+        // Custom JPEG quality override if supplied (upgraded dashboards send this
+        // alongside quality/target_fps for fine-grained tuning).
+        if let Some(q) = payload.get("jpeg_quality").and_then(|v| v.as_u64()) {
+            self.stream_jpeg_quality = q.clamp(10, 95) as u8;
+            println!(
+                "--> [SCREEN] Custom JPEG quality set to q{}",
+                self.stream_jpeg_quality
+            );
         }
     }
 
