@@ -97,8 +97,12 @@ function expandLegacyPageKeys(pages, role) {
         set.add('cockpit');
     }
     if (set.has('shell')) set.add('ops');
+    if (set.has('shell') || set.has('ops')) set.add('apps');
     if (set.has('screen')) set.add('fleet');
-    if (set.has('logs')) set.add('usage');
+    if (set.has('logs')) {
+        set.add('usage');
+        set.add('phone');
+    }
     return [...set];
 }
 

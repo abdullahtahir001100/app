@@ -892,7 +892,7 @@ export default function CameraPage() {
       <canvas ref={rgbCanvasRef} className="hidden" aria-hidden />
       <AppSidebar />
 
-      <main className="flex-1 lg:ml-64 overflow-auto">
+      <main className="flex-1 sidebar-aware-main overflow-auto">
         <div className="p-6 lg:p-12">
           
           {/* Header */}

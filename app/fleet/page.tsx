@@ -353,7 +353,7 @@ export default function FleetPage() {
     <div className="flex h-screen bg-background">
       {!isFullscreen && <AppSidebar />}
 
-      <main className={`flex flex-1 flex-col min-h-0 ${isFullscreen ? "w-screen" : "lg:ml-64"}`}>
+      <main className={`flex flex-1 flex-col min-h-0 ${isFullscreen ? "w-screen" : "sidebar-aware-main"}`}>
         {/* Toolbar */}
         <div className="border-b border-border bg-card/80 backdrop-blur px-4 py-3 lg:px-6 z-20">
           <div className="flex flex-wrap items-center gap-3">

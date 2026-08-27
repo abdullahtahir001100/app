@@ -104,7 +104,7 @@ export default function AdminPermissionsPage() {
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />
-        <main className="flex-1 overflow-y-auto lg:ml-64 p-6">
+        <main className="flex-1 overflow-y-auto sidebar-aware-main p-6">
           <Skeleton className="h-8 w-40 mb-2" />
           <Skeleton className="h-4 w-96 mb-6" />
 
@@ -137,7 +137,7 @@ export default function AdminPermissionsPage() {
   return (
     <div className="flex h-screen bg-background">
       <AppSidebar />
-      <main className="flex-1 overflow-y-auto lg:ml-64 p-6">
+      <main className="flex-1 overflow-y-auto sidebar-aware-main p-6">
         <h1 className="text-3xl font-display tracking-tight mb-2">Permissions</h1>
         <p className="text-sm text-muted-foreground mb-6">
           Grant page access per user. <code>devices.any</code> lets a user control every device.

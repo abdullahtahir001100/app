@@ -37,6 +37,8 @@ interface Notification {
   createdAt: string;
   read: boolean;
   category: string;
+  icon?: string;
+  image?: string;
 }
 
 interface Category {
@@ -220,7 +222,7 @@ const filteredNotifications = notifications.filter((n) => {
       <AppSidebar />
       
       {/* Main content */}
-      <main className="flex-1 lg:ml-64 overflow-auto">
+      <main className="flex-1 sidebar-aware-main overflow-auto">
         <div className="p-6 lg:p-12">
           {/* Header */}
           <div className="mb-8">
@@ -332,15 +334,24 @@ const filteredNotifications = notifications.filter((n) => {
                     }`}
                   >
                     <div className="flex items-start gap-4">
-                      {/* Icon */}
-                      <div 
-                        className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0`}
+                      {/* Icon / image */}
+                      <div
+                        className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden`}
                         style={{ backgroundColor: `${color}15` }}
                       >
-                        <IconComponent 
-                          className="w-6 h-6" 
-                          style={{ color }} 
-                        />
+                        {(notification.image || (notification.icon && String(notification.icon).startsWith("data:"))) ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={notification.image || notification.icon}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <IconComponent
+                            className="w-6 h-6"
+                            style={{ color }}
+                          />
+                        )}
                       </div>
 
                       {/* Content */}
@@ -363,6 +374,14 @@ const filteredNotifications = notifications.filter((n) => {
                         <p className="text-sm text-muted-foreground line-clamp-2">
                           {notification.message}
                         </p>
+                        {notification.image && String(notification.image).startsWith("data:") ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={notification.image}
+                            alt=""
+                            className="mt-3 max-h-48 rounded-lg border border-border object-contain bg-muted/30"
+                          />
+                        ) : null}
                       </div>
 
                       {/* Actions */}

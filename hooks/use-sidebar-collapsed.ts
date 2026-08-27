@@ -65,5 +65,8 @@ export function useSidebarCollapsed() {
     setCollapsedPersist(!read());
   }, [setCollapsedPersist]);
 
-  return { collapsed, setCollapsed: setCollapsedPersist, toggle };
+  /** Class for main content so hiding the sidebar removes the empty left gap. */
+  const mainOffsetClass = collapsed ? "lg:ml-0" : "lg:ml-64";
+
+  return { collapsed, setCollapsed: setCollapsedPersist, toggle, mainOffsetClass };
 }

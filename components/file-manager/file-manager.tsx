@@ -330,7 +330,7 @@ export function FileManager() {
         className={`flex flex-1 flex-col min-h-0 bg-background ${
           isFullscreen
             ? "fixed inset-0 z-30 lg:left-64"
-            : "lg:ml-64"
+            : "sidebar-aware-main"
         }`}
       >
         {/* Header */}

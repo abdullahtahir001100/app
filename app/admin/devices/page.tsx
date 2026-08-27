@@ -154,7 +154,7 @@ export default function AdminDevicesPage() {
       <div className="flex h-screen bg-background">
         <AppSidebar />
 
-        <main className="flex-1 lg:ml-64 overflow-auto">
+        <main className="flex-1 sidebar-aware-main overflow-auto">
           <div className="p-6 lg:p-12">
             <Skeleton className="h-12 w-72 mb-3" />
             <Skeleton className="h-5 w-96 mb-8" />
@@ -210,7 +210,7 @@ export default function AdminDevicesPage() {
       <AppSidebar />
 
       {/* Main content */}
-      <main className="flex-1 lg:ml-64 overflow-auto">
+      <main className="flex-1 sidebar-aware-main overflow-auto">
         <div className="p-6 lg:p-12">
           {/* Header */}
           <div className="mb-8">

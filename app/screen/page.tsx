@@ -595,7 +595,7 @@ export default function ScreenPage() {
     <div className="flex h-screen bg-background">
       {!isFullscreen && <AppSidebar />}
 
-      <main className={`flex flex-1 flex-col min-h-0 ${isFullscreen ? "w-screen" : "lg:ml-64"}`}>
+      <main className={`flex flex-1 flex-col min-h-0 ${isFullscreen ? "w-screen" : "sidebar-aware-main"}`}>
         {/* Header toolbar — matches dashboard / camera pages */}
         <div className="border-b border-border bg-card/80 backdrop-blur px-4 py-3 lg:px-8 z-20">
           <div className="flex flex-wrap items-center gap-3">

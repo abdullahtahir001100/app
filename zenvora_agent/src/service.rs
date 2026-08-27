@@ -142,7 +142,8 @@ fn run_service() -> windows_service::Result<()> {
                             if stop_flag_for_thread.load(Ordering::SeqCst) {
                                 return;
                             }
-                            thread::sleep(Duration::from_secs(3));
+                            // Fast relaunch after taskkill / crash (was 3s).
+                            thread::sleep(Duration::from_secs(1));
                             continue;
                         }
                         Err(err) => {
@@ -386,22 +387,49 @@ pub fn install_service() -> Result<(), String> {
             };
             if service.change_config(&info).is_ok() {
                 let _ = service;
+                configure_service_recovery();
                 return Ok(());
             }
         }
 
         sc_config(&exe_str)?;
+        configure_service_recovery();
         return Ok(());
     }
 
     // Try WinAPI create first, then sc.exe
     match create_via_api(&exe) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            configure_service_recovery();
+            Ok(())
+        }
         Err(api_err) => match sc_create(&exe_str) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                configure_service_recovery();
+                Ok(())
+            }
             Err(sc_err) => Err(format!("API: {} | sc.exe: {}", api_err, sc_err)),
         },
     }
+}
+
+/// SCM auto-restart if the service process itself dies (complements interactive-agent relaunch loop).
+fn configure_service_recovery() {
+    let _ = Command::new("sc.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args([
+            "failure",
+            SERVICE_NAME,
+            "reset=",
+            "86400",
+            "actions=",
+            "restart/3000/restart/5000/restart/10000",
+        ])
+        .output();
+    let _ = Command::new("sc.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["failureflag", SERVICE_NAME, "flag=", "1"])
+        .output();
 }
 
 pub fn start_service() -> Result<(), String> {
@@ -475,13 +503,14 @@ pub fn uninstall_service() {
 }
 
 /// Run agent as a detached background process (not a Windows service).
+/// Uses `--supervise-agent` so a taskkill of the worker is followed by an automatic relaunch.
 pub fn spawn_background_agent(exe: &str) -> Result<(), String> {
     #[cfg(windows)]
     if agent_singleton_held() {
         return Ok(());
     }
     Command::new(exe)
-        .arg("--run-agent")
+        .arg("--supervise-agent")
         .creation_flags(CREATE_NO_WINDOW | 0x00000008) // DETACHED_PROCESS
         .spawn()
         .map(|_| ())

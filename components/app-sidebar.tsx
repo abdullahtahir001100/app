@@ -25,6 +25,9 @@ import {
   Activity,
   Sparkles,
   Grid3x3,
+  Package,
+  Volume2,
+  Radio,
 } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -78,11 +81,18 @@ function AppSidebarContent() {
   const [audioDevices, setAudioDevices] = useState<Array<{ id: string; label: string }>>([]);
   const [listeningDeviceId, setListeningDeviceId] = useState("");
   const [micsLoading, setMicsLoading] = useState(false);
+  const [includeMic, setIncludeMic] = useState(true);
+  const [includeSystem, setIncludeSystem] = useState(true);
+  const [isTalking, setIsTalking] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const listeningDeviceIdRef = useRef<string>("");
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const micMenuRef = useRef<HTMLDivElement | null>(null);
+  const talkCtxRef = useRef<AudioContext | null>(null);
+  const talkStreamRef = useRef<MediaStream | null>(null);
+  const talkProcRef = useRef<ScriptProcessorNode | null>(null);
+  const talkingRef = useRef(false);
 
   useEffect(() => {
     listeningDeviceIdRef.current = listeningDeviceId;
@@ -246,17 +256,74 @@ function AppSidebarContent() {
       return;
     }
 
+    if (!includeMic && !includeSystem) return;
+
     dispatch(
       "START_AUDIO_STREAM",
       {
         device_id: selectedMicrophoneId || undefined,
-        include_mic: true,
-        include_system: true,
+        include_mic: includeMic,
+        include_system: includeSystem,
       },
       target
     );
     setIsAudioStreaming(true);
     setMicDropdownOpen(false);
+  };
+
+  const stopTalk = () => {
+    talkingRef.current = false;
+    setIsTalking(false);
+    try {
+      talkProcRef.current?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    talkProcRef.current = null;
+    talkStreamRef.current?.getTracks().forEach((t) => t.stop());
+    talkStreamRef.current = null;
+    void talkCtxRef.current?.close();
+    talkCtxRef.current = null;
+    const target = listeningDeviceIdRef.current;
+    if (target) dispatch("STOP_SPEAKER_PLAY", {}, target);
+  };
+
+  const startTalk = async () => {
+    const target = listeningDeviceIdRef.current;
+    if (!target) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      const ctx = new AudioContext({ sampleRate: 48000 });
+      await ctx.resume();
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      processor.onaudioprocess = (ev) => {
+        if (!talkingRef.current) return;
+        const input = ev.inputBuffer.getChannelData(0);
+        const pcm = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i += 1) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm[i] = (s * 32767) | 0;
+        }
+        gatewayClient.sendAudioPlay(target, ctx.sampleRate || 48000, pcm);
+      };
+      source.connect(processor);
+      processor.connect(silent);
+      silent.connect(ctx.destination);
+      talkStreamRef.current = stream;
+      talkCtxRef.current = ctx;
+      talkProcRef.current = processor;
+      talkingRef.current = true;
+      setIsTalking(true);
+      dispatch("START_SPEAKER_PLAY", { sample_rate: ctx.sampleRate || 48000 }, target);
+      setMicDropdownOpen(false);
+    } catch {
+      stopTalk();
+    }
   };
 
   const handleLogout = async () => {
@@ -301,21 +368,24 @@ function AppSidebarContent() {
     return Array.isArray(userProfile.pages) && userProfile.pages.includes(page);
   };
 
-  const userMenuItems = [
+  const coreMenuItems = [
     { icon: Home, label: "Dashboard", href: "/dashboard", page: "dashboard" },
     { icon: Smartphone, label: "Devices", href: "/devices", page: "devices" },
-    { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "fleet" },
     { icon: Eye, label: "Screen Monitor", href: "/screen", page: "screen" },
     { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
     { icon: FileText, label: "File Manager", href: "/files", page: "files" },
-    { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
-    { icon: Sparkles, label: "Agent Ops", href: "/ops", page: "ops" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
-    { icon: Activity, label: "Usage", href: "/usage", page: "usage" },
-    { icon: Phone, label: "Phone", href: "/logs", page: "logs" },
-    { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
     { icon: Settings, label: "Settings", href: "/settings", page: "settings" },
+  ].filter((item) => can(item.page));
+
+  const premiumMenuItems = [
+    { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "fleet" },
+    { icon: Sparkles, label: "Agent Ops", href: "/ops", page: "ops" },
+    { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
+    { icon: Package, label: "Install Apps", href: "/apps", page: "apps" },
+    { icon: Activity, label: "Usage", href: "/usage", page: "usage" },
+    { icon: Phone, label: "Phone", href: "/phone", page: "phone" },
   ].filter((item) => can(item.page));
 
   const adminMenuItems = can("admin")
@@ -325,8 +395,14 @@ function AppSidebarContent() {
         { icon: FileText, label: "Users", href: "/admin/users" },
         { icon: History, label: "Permissions", href: "/admin/permissions" },
         { icon: Eye, label: "Security", href: "/admin/security" },
+        { icon: ScrollText, label: "Live Console", href: "/console" },
       ]
     : [];
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.classList.toggle("sidebar-collapsed", collapsed);
+  }, [collapsed]);
 
   const initials = userProfile?.name
     ? userProfile.name
@@ -430,7 +506,7 @@ function AppSidebarContent() {
                   </button>
 
                   {micDropdownOpen && !isAudioStreaming && (
-                    <div className="absolute top-6 right-[-19px] z-50 w-52 bg-sidebar py-1.5 text-[11px] outline-none">
+                    <div className="absolute top-6 right-[-19px] z-50 w-56 bg-sidebar border border-sidebar-border py-1.5 text-[11px] outline-none shadow-lg rounded-md">
                       <p className="px-2.5 pb-1 text-[10px] uppercase tracking-wide text-sidebar-foreground/40">
                         Device
                       </p>
@@ -461,7 +537,29 @@ function AppSidebarContent() {
                       </ul>
 
                       <p className="mt-1.5 px-2.5 pb-1 pt-1.5 text-[10px] uppercase tracking-wide text-sidebar-foreground/40">
+                        Listen sources
+                      </p>
+                      <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1 text-sidebar-foreground/70">
+                        <input
+                          type="checkbox"
+                          checked={includeMic}
+                          onChange={(e) => setIncludeMic(e.target.checked)}
+                          className="accent-emerald-600"
+                        />
                         Microphone
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1 text-sidebar-foreground/70">
+                        <input
+                          type="checkbox"
+                          checked={includeSystem}
+                          onChange={(e) => setIncludeSystem(e.target.checked)}
+                          className="accent-sky-600"
+                        />
+                        System audio (videos)
+                      </label>
+
+                      <p className="mt-1.5 px-2.5 pb-1 pt-1.5 text-[10px] uppercase tracking-wide text-sidebar-foreground/40">
+                        Microphone device
                       </p>
                       {!listeningDeviceId ? (
                         <p className="px-2.5 py-1 text-sidebar-foreground/45">Pick a device first</p>
@@ -475,7 +573,7 @@ function AppSidebarContent() {
                               className="w-full truncate px-2.5 py-1 text-left text-sidebar-foreground/65 outline-none hover:text-sidebar-foreground focus:outline-none"
                               onClick={() => toggleAudioStream()}
                             >
-                              Default microphone
+                              Start listen (default mic)
                             </button>
                           </li>
                           {audioDevices.map((dev) => (
@@ -494,13 +592,31 @@ function AppSidebarContent() {
                           ) : null}
                         </ul>
                       )}
+
+                      <div className="mt-1.5 border-t border-sidebar-border px-2.5 pt-1.5">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 px-0 py-1 text-left text-sky-600 hover:text-sky-500"
+                          onClick={() => (isTalking ? stopTalk() : void startTalk())}
+                        >
+                          {isTalking ? (
+                            <>
+                              <Volume2 className="h-3.5 w-3.5" /> Stop speaking to PC
+                            </>
+                          ) : (
+                            <>
+                              <Radio className="h-3.5 w-3.5" /> Speak to PC speakers
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
               )}
             </div>
             <nav className="space-y-2">
-              {userMenuItems.map((item) => (
+              {coreMenuItems.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -513,6 +629,27 @@ function AppSidebarContent() {
               ))}
             </nav>
           </div>
+
+          {premiumMenuItems.length > 0 && (
+            <div className="border-t border-sidebar-border pt-8 mb-8">
+              <p className="text-xs font-mono text-sidebar-foreground/50 uppercase tracking-wide mb-4">
+                Premium
+              </p>
+              <nav className="space-y-2">
+                {premiumMenuItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsOpen(false)}
+                    className="flex items-center gap-3 px-4 py-3 text-sm rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
+                  >
+                    <item.icon className="w-4 h-4" />
+                    <span>{item.label}</span>
+                  </Link>
+                ))}
+              </nav>
+            </div>
+          )}
 
           {adminMenuItems.length > 0 && (
             <div className="border-t border-sidebar-border pt-8">

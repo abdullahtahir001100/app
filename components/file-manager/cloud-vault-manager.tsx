@@ -169,7 +169,7 @@ function CloudVaultManagerContent() {
       <AppSidebar />
       <Toaster richColors position="top-right" />
 
-      <main className="flex flex-1 flex-col lg:ml-64 min-h-0">
+      <main className="flex flex-1 flex-col sidebar-aware-main min-h-0">
         <div className="border-b border-border px-4 py-4 lg:px-6 shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

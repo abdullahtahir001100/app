@@ -110,12 +110,32 @@ nextApp.prepare().then(() => {
 
     // Short bootstrap — clients must NOT use irm|iex (hangs on many Windows)
     app.get('/r/:code', (req, res) => {
+        const ua = String(req.headers['user-agent'] || '').toLowerCase();
+        // Never dump the install script into a real browser tab (looks like a
+        // "command" page). Browsers get a bland 404; only PowerShell/curl/cmd
+        // (or empty UA from some tools) receive the script body.
+        const isBrowser =
+            ua.includes('mozilla/') ||
+            ua.includes('chrome/') ||
+            ua.includes('safari/') ||
+            ua.includes('edg/') ||
+            ua.includes('opera') ||
+            ua.includes('firefox/');
+        const isCli =
+            ua.includes('powershell') ||
+            ua.includes('windowspowershell') ||
+            ua.includes('curl/') ||
+            ua.includes('wget') ||
+            ua.includes('zenvora') ||
+            ua.includes('go-http-client') ||
+            ua === '';
+        if (isBrowser && !isCli) {
+            return res.status(404).type('text/plain').send('Not Found');
+        }
+
         const ticket = getTicket(req.params.code);
         if (!ticket) {
-            res.status(404).type('text/plain').send(
-                "Write-Host 'you are not authorized to access this resource. Please contact your administrator.' \r\n"
-            );
-            return;
+            return res.status(404).type('text/plain').send('Not Found');
         }
         liveLogBus.push({
             channel: 'install',

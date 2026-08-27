@@ -461,6 +461,40 @@ fn run_async_main(args: &[String]) {
         return;
     }
 
+    #[cfg(windows)]
+    if args.iter().any(|a| a == "--supervise-agent") {
+        // Fallback when Windows service isn't available: keep relaunching the worker
+        // after taskkill / crash (service path already has its own relaunch loop).
+        let exe = match env::current_exe() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        loop {
+            let mut child = Command::new(&exe);
+            child.arg("--run-agent");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                child.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            match child.status() {
+                Ok(_) => {
+                    connection_status::log(
+                        "Supervised agent exited; relaunching in 1s…",
+                    );
+                }
+                Err(err) => {
+                    connection_status::log(format!(
+                        "Supervised agent launch failed ({err}); retrying in 3s…"
+                    ));
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    continue;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+
     if args.iter().any(|a| a == "--console") {
         connection_status::clear_status();
         connection_progress::set_headless(true);
@@ -603,6 +637,7 @@ fn main() {
                 | "restart"
                 | "--console"
                 | "--run-agent"
+                | "--supervise-agent"
                 | "--from-system32"
                 | "--from-install-dir"
                 | "--elevated-relaunch"
@@ -612,7 +647,12 @@ fn main() {
         || args.iter().any(|a| {
             matches!(
                 a.as_str(),
-                "--headless" | "--provision" | "--pair-token" | "--run-agent" | "--console"
+                "--headless"
+                    | "--provision"
+                    | "--pair-token"
+                    | "--run-agent"
+                    | "--supervise-agent"
+                    | "--console"
             )
         });
 

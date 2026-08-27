@@ -222,7 +222,7 @@ function CockpitInner() {
     <div className="flex h-screen bg-background">
       <AppSidebar />
 
-      <main className="flex flex-1 flex-col min-h-0 lg:ml-64">
+      <main className="flex flex-1 flex-col min-h-0 sidebar-aware-main">
         {/* Header */}
         <div className="z-20 border-b border-border bg-card/80 px-4 py-3 backdrop-blur lg:px-6">
           <div className="flex flex-wrap items-center gap-3">

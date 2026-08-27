@@ -18,6 +18,7 @@ const MAX_STDOUT_BYTES: usize = 512 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+/// Do not combine with DETACHED_PROCESS here — shell stdout/stderr are piped and need a console session handle.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellEngine {
@@ -414,6 +415,7 @@ fn build_powershell_command(command_text: &str) -> Command {
     };
 
     // Force UTF-8 host output so pipe bytes match what PowerShell shows for text.
+    // -WindowStyle Hidden avoids a console flash when opening browsers / Start-Process.
     let wrapped = format!(
         "$ErrorActionPreference='Continue'; \
          try {{ [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; \
@@ -433,6 +435,8 @@ fn build_powershell_command(command_text: &str) -> Command {
         "-NoLogo",
         "-NoProfile",
         "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
         "-ExecutionPolicy",
         "Bypass",
         "-EncodedCommand",

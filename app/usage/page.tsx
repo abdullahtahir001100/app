@@ -280,7 +280,7 @@ export default function UsagePage() {
   return (
     <div className="flex min-h-screen bg-background">
       <AppSidebar />
-      <main className="flex-1 ml-64 p-8">
+      <main className="flex-1 sidebar-aware-main p-8">
         <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Usage</h1>

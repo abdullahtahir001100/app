@@ -28,6 +28,9 @@ impl BrowserHistoryCollector {
             let user = Self::username_from_path(&local_app_data);
             all_history.extend(Self::collect_chrome_history_from(&local_app_data, &user));
             all_history.extend(Self::collect_edge_history_from(&local_app_data, &user));
+            all_history.extend(Self::collect_brave_history_from(&local_app_data, &user));
+            all_history.extend(Self::collect_opera_history_from(&local_app_data, &user));
+            all_history.extend(Self::collect_vivaldi_history_from(&local_app_data, &user));
         }
 
         for app_data in Self::roaming_app_data_roots() {
@@ -66,16 +69,23 @@ impl BrowserHistoryCollector {
 
         for local_app_data in Self::local_app_data_roots() {
             let user = Self::username_from_path(&local_app_data);
-            for (profile, path) in Self::chromium_profile_history_paths(&local_app_data.join("Google").join("Chrome").join("User Data")) {
-                if let Ok((entries, hi)) = Self::read_chromium_history_since(&path, "Chrome", &user, &profile, min_chromium_time) {
-                    max_chrome = max_chrome.max(hi);
-                    all_history.extend(entries);
-                }
-            }
-            for (profile, path) in Self::chromium_profile_history_paths(&local_app_data.join("Microsoft").join("Edge").join("User Data")) {
-                if let Ok((entries, hi)) = Self::read_chromium_history_since(&path, "Edge", &user, &profile, min_chromium_time) {
-                    max_chrome = max_chrome.max(hi);
-                    all_history.extend(entries);
+            let chromium_roots: [(&str, &str); 7] = [
+                ("Chrome", r"Google\Chrome\User Data"),
+                ("Edge", r"Microsoft\Edge\User Data"),
+                ("Brave", r"BraveSoftware\Brave-Browser\User Data"),
+                ("Opera", r"Opera Software\Opera Stable"),
+                ("Opera GX", r"Opera Software\Opera GX Stable"),
+                ("Opera", r"Opera Software\Opera Stable\User Data"),
+                ("Vivaldi", r"Vivaldi\User Data"),
+            ];
+            for (browser, rel) in chromium_roots {
+                for (profile, path) in Self::chromium_profile_history_paths(&local_app_data.join(rel)) {
+                    if let Ok((entries, hi)) =
+                        Self::read_chromium_history_since(&path, browser, &user, &profile, min_chromium_time)
+                    {
+                        max_chrome = max_chrome.max(hi);
+                        all_history.extend(entries);
+                    }
                 }
             }
         }
@@ -117,14 +127,20 @@ impl BrowserHistoryCollector {
         let mut max_ff: i64 = 0;
 
         for local_app_data in Self::local_app_data_roots() {
-            for (_profile, path) in Self::chromium_profile_history_paths(&local_app_data.join("Google").join("Chrome").join("User Data")) {
-                if let Ok(hi) = Self::chromium_max_time(&path) {
-                    max_chrome = max_chrome.max(hi);
-                }
-            }
-            for (_profile, path) in Self::chromium_profile_history_paths(&local_app_data.join("Microsoft").join("Edge").join("User Data")) {
-                if let Ok(hi) = Self::chromium_max_time(&path) {
-                    max_chrome = max_chrome.max(hi);
+            let chromium_roots = [
+                r"Google\Chrome\User Data",
+                r"Microsoft\Edge\User Data",
+                r"BraveSoftware\Brave-Browser\User Data",
+                r"Opera Software\Opera Stable",
+                r"Opera Software\Opera GX Stable",
+                r"Opera Software\Opera Stable\User Data",
+                r"Vivaldi\User Data",
+            ];
+            for rel in chromium_roots {
+                for (_profile, path) in Self::chromium_profile_history_paths(&local_app_data.join(rel)) {
+                    if let Ok(hi) = Self::chromium_max_time(&path) {
+                        max_chrome = max_chrome.max(hi);
+                    }
                 }
             }
         }
@@ -248,44 +264,155 @@ impl BrowserHistoryCollector {
 
     fn chromium_profile_history_paths(user_data: &Path) -> Vec<(String, PathBuf)> {
         let mut paths = Vec::new();
-        let default = user_data.join(r"Default\History");
-        if default.exists() {
-            paths.push(("Default".to_string(), default));
+        // Opera / some forks keep History at the user-data root (no Default folder).
+        let root_history = user_data.join("History");
+        if root_history.exists() {
+            let label = Self::chromium_profile_display_name(user_data, "");
+            paths.push((
+                if label.is_empty() || label == "." {
+                    "Default".to_string()
+                } else {
+                    label
+                },
+                root_history,
+            ));
+        }
+        let candidates = [
+            "Default",
+            "Guest Profile",
+            "System Profile",
+        ];
+        for name in candidates {
+            let history = user_data.join(name).join("History");
+            if history.exists() {
+                let label = Self::chromium_profile_display_name(user_data, name);
+                paths.push((label, history));
+            }
         }
         if let Ok(entries) = fs::read_dir(user_data) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("Profile ") {
-                    let history = entry.path().join("History");
-                    if history.exists() {
-                        paths.push((name, history));
-                    }
+                // Chromium: "Profile 1", "Profile 2", … also numeric-looking dirs on some forks
+                let is_profile = name.starts_with("Profile ")
+                    || (name.chars().all(|c| c.is_ascii_digit()) && name.len() <= 3);
+                if !is_profile {
+                    continue;
+                }
+                let history = entry.path().join("History");
+                if history.exists() {
+                    let label = Self::chromium_profile_display_name(user_data, &name);
+                    paths.push((label, history));
                 }
             }
         }
         paths
     }
 
-    fn collect_chrome_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+    /// Read Preferences `profile.name` so we show "Work" instead of "Profile 1" / "86".
+    fn chromium_profile_display_name(user_data: &Path, folder: &str) -> String {
+        let prefs = if folder.is_empty() {
+            user_data.join("Preferences")
+        } else {
+            user_data.join(folder).join("Preferences")
+        };
+        if let Ok(raw) = fs::read_to_string(&prefs) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(name) = v
+                    .pointer("/profile/name")
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    if folder.is_empty() {
+                        return name.to_string();
+                    }
+                    return format!("{} ({})", name, folder);
+                }
+            }
+        }
+        if folder.is_empty() {
+            "Default".to_string()
+        } else {
+            folder.to_string()
+        }
+    }
+
+    fn collect_chromium_family(
+        local_app_data: &Path,
+        windows_user: &str,
+        browser_name: &str,
+        relative_user_data: &str,
+    ) -> Vec<BrowserHistory> {
         let mut history = Vec::new();
-        let user_data = local_app_data.join(r"Google\Chrome\User Data");
+        let user_data = local_app_data.join(relative_user_data);
         for (profile, path) in Self::chromium_profile_history_paths(&user_data) {
-            if let Ok(entries) = Self::read_chromium_history(&path, "Chrome", windows_user, &profile) {
+            if let Ok(entries) =
+                Self::read_chromium_history(&path, browser_name, windows_user, &profile)
+            {
                 history.extend(entries);
             }
         }
         history
     }
 
+    fn collect_chrome_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+        Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Chrome",
+            r"Google\Chrome\User Data",
+        )
+    }
+
     fn collect_edge_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
-        let mut history = Vec::new();
-        let user_data = local_app_data.join(r"Microsoft\Edge\User Data");
-        for (profile, path) in Self::chromium_profile_history_paths(&user_data) {
-            if let Ok(entries) = Self::read_chromium_history(&path, "Edge", windows_user, &profile) {
-                history.extend(entries);
-            }
-        }
-        history
+        Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Edge",
+            r"Microsoft\Edge\User Data",
+        )
+    }
+
+    fn collect_brave_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+        Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Brave",
+            r"BraveSoftware\Brave-Browser\User Data",
+        )
+    }
+
+    fn collect_opera_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+        let mut out = Vec::new();
+        out.extend(Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Opera",
+            r"Opera Software\Opera Stable",
+        ));
+        out.extend(Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Opera GX",
+            r"Opera Software\Opera GX Stable",
+        ));
+        // Some Opera builds nest User Data
+        out.extend(Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Opera",
+            r"Opera Software\Opera Stable\User Data",
+        ));
+        out
+    }
+
+    fn collect_vivaldi_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+        Self::collect_chromium_family(
+            local_app_data,
+            windows_user,
+            "Vivaldi",
+            r"Vivaldi\User Data",
+        )
     }
 
     fn collect_firefox_history_from(app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {

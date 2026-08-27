@@ -119,7 +119,7 @@ export default function SettingsPage() {
   return (
     <div className="flex h-screen bg-background">
       <AppSidebar />
-      <main className="flex-1 lg:ml-64 overflow-auto">
+      <main className="flex-1 sidebar-aware-main overflow-auto">
         <div className="relative min-h-full">
           <div
             className="pointer-events-none absolute inset-0 opacity-[0.35]"

@@ -213,7 +213,7 @@ export default function ConsolePage() {
   return (
     <div className="flex min-h-screen bg-background">
       <AppSidebar />
-      <main className="flex-1 md:ml-64 p-4 md:p-6">
+      <main className="flex-1 sidebar-aware-main p-4 md:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Live Console</h1>

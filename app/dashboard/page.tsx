@@ -225,6 +225,8 @@ export default function DashboardPage() {
   })();
   const agentDownloadUrl =
     process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL || `${apiBase}/api/agent/download`;
+  const androidApkUrl =
+    process.env.NEXT_PUBLIC_ANDROID_APK_URL || `${apiBase}/api/agent/download?platform=android`;
 
   const refreshBootstrapCommand = async (token: string, userId: string) => {
     setBootstrapLoading(true);
@@ -338,7 +340,7 @@ export default function DashboardPage() {
     <div className="flex h-screen bg-background">
       <AppSidebar />
 
-      <main className="flex-1 lg:ml-64 overflow-auto">
+      <main className="flex-1 sidebar-aware-main overflow-auto">
         <div className="p-6 lg:p-12">
           <div className="mb-12">
             <div className="flex items-end justify-between mb-4">
@@ -971,10 +973,80 @@ export default function DashboardPage() {
             </DialogHeader>
 
             {/* Content */}
-            {['android', 'mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
+            {selectedPlatform === "android" ? (
+              <div className="px-8 py-6 overflow-y-auto max-h-[calc(90vh-180px)] space-y-6">
+                <div>
+                  <h3 className="text-xl font-semibold mb-1">
+                    Install Zenvora APK
+                    {selectedAndroidVersion ? ` · Android ${selectedAndroidVersion}` : ""}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Sideload the workspace companion. After install, open the app and enter the Pair Token below.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Pair Token</p>
+                    <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Pair User ID</p>
+                    <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border p-4 space-y-3">
+                  <h4 className="font-semibold text-foreground">Install options</h4>
+                  <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                    <li>Download the APK on this phone (or transfer from PC).</li>
+                    <li>Allow install from this browser / Files (Unknown apps).</li>
+                    <li>Open Zenvora → enter Pair Token + User ID → Grant permissions (battery, notifications, device admin).</li>
+                    <li>Keep the ongoing “Zenvora connection” notification on (silent is fine).</li>
+                  </ol>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <a href={androidApkUrl} target="_blank" rel="noreferrer">
+                      <Button className="bg-foreground text-background hover:bg-foreground/90">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download Zenvora APK
+                      </Button>
+                    </a>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (pairingToken) void navigator.clipboard.writeText(pairingToken);
+                      }}
+                    >
+                      Copy Pair Token
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (pairingUserId) void navigator.clipboard.writeText(pairingUserId);
+                      }}
+                    >
+                      Copy User ID
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-2 text-sm">
+                  <h4 className="font-semibold text-foreground">Play Protect / legitimate install</h4>
+                  <p className="text-muted-foreground">
+                    Zenvora is a signed workspace agent (not on Play Store by default). Google Play Protect may warn on first sideload — that is normal for enterprise companions.
+                  </p>
+                  <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                    <li>Install only from <strong className="text-foreground">your</strong> Zenvora dashboard URL.</li>
+                    <li>If Play Protect blocks: open the warning → Details → Install anyway (only if you trust this workspace).</li>
+                    <li>Or: Play Store → profile → Play Protect → Settings → scan apps with Play Protect (temporarily off while installing), then turn back on.</li>
+                    <li>For org-wide trust: publish via Managed Google Play / private track, or enroll as Device Owner / work profile MDM.</li>
+                  </ul>
+                </div>
+              </div>
+            ) : ['mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
               <div className="px-8 py-12 text-center">
                 <h3 className="text-2xl font-semibold mb-4">Coming soon</h3>
-                <p className="text-muted-foreground">Pairing for {selectedPlatform}{selectedAndroidVersion ? ` (Android ${selectedAndroidVersion})` : ''} is coming soon. Check back later or use the gateway installer.</p>
+                <p className="text-muted-foreground">Pairing for {selectedPlatform} is coming soon. Check back later or use the gateway installer.</p>
               </div>
             ) : (
               <div className="flex flex-col ">
@@ -1139,16 +1211,22 @@ export default function DashboardPage() {
 
             <div className="border-t border-border px-8 py-5 bg-background">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">ZenvoraAgent.exe · headless provision + service install</p>
+                <p className="text-sm text-muted-foreground">
+                  {selectedPlatform === "android"
+                    ? "Zenvora.apk · pair in-app after install"
+                    : "ZenvoraAgent.exe · headless provision + service install"}
+                </p>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <Button variant="outline" onClick={() => setShowPairModal(false)}>
                     Close
                   </Button>
-                  {selectedPlatform === "android" && selectedAndroidVersion ? (
-                    <Button className="bg-foreground text-background hover:bg-foreground/90" disabled>
-                      <DownloadCloud className="w-4 h-4 mr-2" />
-                      Coming soon
-                    </Button>
+                  {selectedPlatform === "android" ? (
+                    <a href={androidApkUrl} target="_blank" rel="noreferrer">
+                      <Button className="bg-foreground text-background hover:bg-foreground/90">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download APK
+                      </Button>
+                    </a>
                   ) : selectedPlatform === "windows" ? (
                     <a href={agentDownloadUrl} target="_blank" rel="noreferrer">
                       <Button className="bg-foreground text-background hover:bg-foreground/90">
@@ -1156,6 +1234,11 @@ export default function DashboardPage() {
                         Download exe
                       </Button>
                     </a>
+                  ) : ['mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
+                    <Button className="bg-foreground text-background hover:bg-foreground/90" disabled>
+                      <DownloadCloud className="w-4 h-4 mr-2" />
+                      Coming soon
+                    </Button>
                   ) : (
                     <Button
                       className="bg-foreground text-background hover:bg-foreground/90"

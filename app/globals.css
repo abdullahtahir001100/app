@@ -385,3 +385,14 @@
     margin: 0 auto !important;
 
 }
+
+/* Sidebar collapse: pages use .sidebar-aware-main instead of hardcoded lg:ml-64 */
+@media (min-width: 1024px) {
+  .sidebar-aware-main {
+    margin-left: 16rem;
+    transition: margin-left 0.3s ease;
+  }
+  html.sidebar-collapsed .sidebar-aware-main {
+    margin-left: 0;
+  }
+}

@@ -207,10 +207,18 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
                     title: String(entry.title || "Notification"),
                     message: String(entry.message || ""),
                     icon: String(entry.icon || ""),
+                    image: String(entry.image || entry.picture || ""),
                     category: String(entry.category || "other"),
                     read: false,
                     isDeleted: false,
                     createdAt: new Date()
+                },
+                $set: {
+                    ...(entry.image || entry.picture
+                        ? { image: String(entry.image || entry.picture || "") }
+                        : {}),
+                    ...(entry.icon ? { icon: String(entry.icon || "") } : {}),
+                    category: String(entry.category || "other")
                 }
             },
             {

@@ -11,7 +11,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
       <AppSidebar />
       <main
         className={`flex-1 overflow-auto ml-0 transition-all duration-300 ${
-          collapsed ? "lg:ml-0" : "lg:ml-64"
+          collapsed ? "lg:ml-0" : "sidebar-aware-main"
         }`}
       >
         {children}

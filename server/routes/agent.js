@@ -58,8 +58,31 @@ function candidatePaths() {
     ].filter(Boolean);
 }
 
+function androidApkCandidates() {
+    const cwd = process.cwd();
+    return [
+        process.env.ANDROID_APK_PATH,
+        path.join(cwd, 'public', 'downloads', 'Zenvora.apk'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'release', 'android-agent-kotlin-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'debug', 'android-agent-kotlin-debug.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
+    ].filter(Boolean);
+}
+
 function findAgentBinary() {
     return candidatePaths().find((p) => {
+        try {
+            return fs.existsSync(p) && fs.statSync(p).isFile();
+        } catch {
+            return false;
+        }
+    }) || null;
+}
+
+function findAndroidApk() {
+    return androidApkCandidates().find((p) => {
         try {
             return fs.existsSync(p) && fs.statSync(p).isFile();
         } catch {
@@ -124,31 +147,44 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
 });
 
 /**
- * Stream agent EXE — avoids loading whole binary into memory (fixes download stuck).
+ * Stream agent EXE or Android APK (?platform=android).
  */
 router.get('/download', (req, res) => {
-    const filePath = findAgentBinary();
+    const platform = String(req.query?.platform || 'windows').toLowerCase();
+    const isAndroid = platform === 'android' || platform === 'apk';
+    const filePath = isAndroid ? findAndroidApk() : findAgentBinary();
     if (!filePath) {
         liveLogBus.push({
             channel: 'http',
             level: 'error',
-            message: msgText(Z.BINARY_MISSING),
+            message: isAndroid ? 'Android APK missing' : msgText(Z.BINARY_MISSING),
             route: '/api/agent/download',
         });
-        return jsonMsg(res, 404, Z.BINARY_MISSING, 'Place ZenvoraAgent.exe in public/downloads/');
+        return jsonMsg(
+            res,
+            404,
+            Z.BINARY_MISSING,
+            isAndroid
+                ? 'Place Zenvora.apk in public/downloads/ (or set ANDROID_APK_PATH)'
+                : 'Place ZenvoraAgent.exe in public/downloads/'
+        );
     }
 
     const stat = fs.statSync(filePath);
+    const filename = isAndroid ? 'Zenvora.apk' : 'ZenvoraAgent.exe';
     liveLogBus.push({
         channel: 'http',
         level: 'info',
-        message: `agent download start (${stat.size} bytes)`,
+        message: `agent download start (${stat.size} bytes) platform=${platform}`,
         route: '/api/agent/download',
     });
 
     res.status(200);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'attachment; filename="ZenvoraAgent.exe"');
+    res.setHeader(
+        'Content-Type',
+        isAndroid ? 'application/vnd.android.package-archive' : 'application/octet-stream'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', String(stat.size));
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Accept-Ranges', 'bytes');
