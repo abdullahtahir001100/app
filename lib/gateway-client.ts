@@ -6,7 +6,7 @@ export type DeviceOption = {
   value: string;
   label: string;
   role?: string;
-  status?: string;
+  status?: "online" | "offline" | "away";
   platform?: string;
   localIp?: string;
   publicIp?: string;
@@ -21,7 +21,7 @@ export type DeviceOption = {
 export type DeviceRecord = {
   deviceId: string;
   platform: "windows" | "mac" | "android" | "linux" | "unknown";
-  status: "online" | "offline";
+  status: "online" | "offline" | "away";
   clientPort: number;
   localIp: string;
   publicIp: string;
@@ -183,7 +183,12 @@ function normalizeDeviceRecord(raw: Record<string, unknown>): DeviceRecord {
   return {
     deviceId: String(raw.deviceId || raw.value || ""),
     platform: (raw.platform as DeviceRecord["platform"]) || "unknown",
-    status: raw.status === "online" ? "online" : "offline",
+    status:
+      raw.status === "online"
+        ? "online"
+        : raw.status === "away"
+          ? "away"
+          : "offline",
     clientPort: typeof raw.clientPort === "number" ? raw.clientPort : 8080,
     localIp: String(raw.localIp || ""),
     publicIp: String(raw.publicIp || ""),
@@ -619,7 +624,14 @@ class GatewayClient {
 
         if (packet.type === "device_status_update" && typeof packet.deviceId === "string") {
           const deviceId = String(packet.deviceId);
-          const status = packet.status === "online" ? "online" : "offline";
+          const commandReady = packet.commandReady === true;
+          const rawStatus = String(packet.status || "offline");
+          const status =
+            commandReady && rawStatus === "online"
+              ? "online"
+              : rawStatus === "away"
+                ? "away"
+                : "offline";
           const patchOption = (d: DeviceOption): DeviceOption => {
             if (d.value !== deviceId) return d;
             const next: DeviceOption = { ...d, status };

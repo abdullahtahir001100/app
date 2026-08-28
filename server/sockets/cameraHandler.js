@@ -7,6 +7,7 @@ const {
     sendToOwnerDashboards,
     broadcastOwnerBinary,
 } = require('./fanout');
+const { dispatchAgentCommand } = require('./dispatchAgent');
 
 const FRAME_STREAM = 0x01;
 const FRAME_SNAPSHOT = 0x02;
@@ -48,61 +49,61 @@ function handleCameraCommand(ws, packet, activeConnections) {
         return;
     }
 
-    const targetKey = activeConnections.has(`AGENT_${targetDeviceId}`)
-        ? `AGENT_${targetDeviceId}`
-        : `DEVICE_${targetDeviceId}`;
+    const outboundPacket = {
+        action,
+        payload: {}
+    };
 
-    const targetAgentSocket = activeConnections.get(targetKey);
-
-    if (targetAgentSocket && targetAgentSocket.readyState === 1) {
-        const outboundPacket = {
-            action,
-            payload: {}
+    if (action === 'SWITCH_CAMERA') {
+        outboundPacket.payload = {
+            camera_index: parseCameraIndex(payload),
+            camera: payload?.camera
         };
+    } else if (action === 'LIST_CAMERAS' || action === 'PROBE_HARDWARE' || action === 'START_STREAM' || action === 'STOP_STREAM') {
+        outboundPacket.payload = {};
+    } else if (action === 'SET_HARDWARE_PARAMETER') {
+        const paramName = String(payload?.param || payload?.parameter || 'BRIGHTNESS').toUpperCase();
+        outboundPacket.payload = {
+            param: paramName,
+            degree_value: Number(payload?.value ?? payload?.degree_value ?? 50)
+        };
+    } else if (action === 'SET_FLASH_STATE') {
+        outboundPacket.payload = {
+            enabled: !!payload?.enabled
+        };
+    } else if (action === 'START_RECORDING' || action === 'STOP_RECORDING') {
+        outboundPacket.payload = {
+            camera_index: parseCameraIndex({ camera: payload?.camera }),
+            camera: payload?.camera
+        };
+    } else if (action === 'CAPTURE_SNAPSHOT' || action === 'FETCH_TELEMETRY' || action === 'FETCH_LATEST_MEDIA') {
+        outboundPacket.payload = {
+            camera_index: parseCameraIndex({ camera: payload?.camera }),
+            camera: payload?.camera,
+            flash: !!payload?.flash,
+            include_frame: action === 'FETCH_TELEMETRY'
+                ? !!payload?.include_frame
+                : true
+        };
+    }
 
-        if (action === 'SWITCH_CAMERA') {
-            outboundPacket.payload = {
-                camera_index: parseCameraIndex(payload),
-                camera: payload?.camera
-            };
-        } else if (action === 'LIST_CAMERAS' || action === 'PROBE_HARDWARE' || action === 'START_STREAM' || action === 'STOP_STREAM') {
-            outboundPacket.payload = {};
-        } else if (action === 'SET_HARDWARE_PARAMETER') {
-            const paramName = String(payload?.param || payload?.parameter || 'BRIGHTNESS').toUpperCase();
-            outboundPacket.payload = {
-                param: paramName,
-                degree_value: Number(payload?.value ?? payload?.degree_value ?? 50)
-            };
-        } else if (action === 'SET_FLASH_STATE') {
-            outboundPacket.payload = {
-                enabled: !!payload?.enabled
-            };
-        } else if (action === 'START_RECORDING' || action === 'STOP_RECORDING') {
-            outboundPacket.payload = {
-                camera_index: parseCameraIndex({ camera: payload?.camera }),
-                camera: payload?.camera
-            };
-        } else if (action === 'CAPTURE_SNAPSHOT' || action === 'FETCH_TELEMETRY' || action === 'FETCH_LATEST_MEDIA') {
-            outboundPacket.payload = {
-                camera_index: parseCameraIndex({ camera: payload?.camera }),
-                camera: payload?.camera,
-                flash: !!payload?.flash,
-                include_frame: action === 'FETCH_TELEMETRY'
-                    ? !!payload?.include_frame
-                    : true
-            };
-        }
+    const result = dispatchAgentCommand(
+        targetDeviceId,
+        outboundPacket.action,
+        outboundPacket.payload,
+        activeConnections
+    );
 
-        targetAgentSocket.send(JSON.stringify(outboundPacket));
-
+    if (result.ok) {
         ws.send(JSON.stringify({
             type: 'sys_ack',
-            status: `Camera operation [${action}] piped downstream safely.`
+            status: `Camera operation [${action}] piped downstream safely.`,
+            transport: result.transport,
         }));
     } else {
         ws.send(JSON.stringify({
             type: 'sys_error',
-            message: `Native Camera Node [${targetDeviceId}] is offline or unreachable.`
+            message: `Node [${targetDeviceId}] is not command-ready — open Zenvora on the phone and wait for green online.`,
         }));
     }
 }

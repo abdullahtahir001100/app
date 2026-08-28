@@ -137,6 +137,7 @@ async function handleAuth(socket, seq, payload) {
         registry.set(key, {
             readyState: 1,
             connectionKey: key,
+            _placeholder: true,
             authContext: {
                 kind: 'agent',
                 deviceId,
@@ -179,6 +180,7 @@ async function handleAuth(socket, seq, payload) {
         type: 'device_status_update',
         deviceId,
         status: 'online',
+        commandReady: true,
         transport: 'tcp',
         lastSeen: new Date().toISOString(),
     });

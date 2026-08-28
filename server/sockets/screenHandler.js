@@ -7,6 +7,7 @@ const {
     sendToOwnerDashboards,
     broadcastOwnerBinary,
 } = require('./fanout');
+const { dispatchAgentCommand } = require('./dispatchAgent');
 
 const FRAME_SCREEN_STREAM = 0x04;
 const FRAME_SCREEN_SNAPSHOT = 0x05;
@@ -50,13 +51,10 @@ function handleScreenCommand(ws, packet, activeConnections) {
         ? `AGENT_${targetDeviceId}`
         : `DEVICE_${targetDeviceId}`;
 
-    const targetAgentSocket = activeConnections.get(targetKey);
-
-    if (targetAgentSocket && targetAgentSocket.readyState === 1) {
-        const outboundPacket = {
-            action,
-            payload: {}
-        };
+    const outboundPacket = {
+        action,
+        payload: {}
+    };
 
         if (action === 'SWITCH_DISPLAY') {
             outboundPacket.payload = {
@@ -133,18 +131,25 @@ function handleScreenCommand(ws, packet, activeConnections) {
             };
         }
 
-        targetAgentSocket.send(JSON.stringify(outboundPacket));
+    const result = dispatchAgentCommand(
+        targetDeviceId,
+        outboundPacket.action,
+        outboundPacket.payload,
+        activeConnections
+    );
 
+    if (result.ok) {
         if (!isRemoteInput) {
             ws.send(JSON.stringify({
                 type: 'sys_ack',
-                status: `Screen operation [${action}] piped downstream safely.`
+                status: `Screen operation [${action}] piped downstream safely.`,
+                transport: result.transport,
             }));
         }
     } else {
         ws.send(JSON.stringify({
             type: 'sys_error',
-            message: `Native Screen Node [${targetDeviceId}] is offline or unreachable.`
+            message: `Node [${targetDeviceId}] is not command-ready — open Zenvora on the phone and wait for green online (not heartbeat-only).`,
         }));
     }
 }

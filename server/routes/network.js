@@ -5,6 +5,7 @@ const { getLiveDeviceOptions } = require('../sockets/handler');
 const { verifyAgentToken } = require('../services/authService');
 const { persistHistoryPayload } = require('../services/historySyncService');
 const { recordAndroidBeat, overlayDeviceStatus } = require('../services/androidBeat');
+const { getConnectionRegistry } = require('../sockets/registry');
 const {
     attachUser,
     requireUserIdOwnership,
@@ -23,10 +24,11 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
         const devices = allDevices.map((device) => {
             const deviceId = String(device.deviceId || '');
             const isLive = liveDeviceIds.has(deviceId);
+            const registry = getConnectionRegistry();
             return {
                 ...device,
                 deviceId,
-                status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive),
+                status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive, registry),
                 label: device.hostname || deviceId,
                 value: deviceId
             };
@@ -63,13 +65,14 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
         }
 
         const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
+        const registry = getConnectionRegistry();
         const isLive = liveDevices.some((d) => String(d.value) === String(device.deviceId));
 
         res.status(200).json({
             success: true,
             device: {
                 ...device,
-                status: overlayDeviceStatus(device.deviceId, device.platform, device.lastAndroidBeatAt, isLive)
+                status: overlayDeviceStatus(device.deviceId, device.platform, device.lastAndroidBeatAt, isLive, registry)
             }
         });
     } catch (error) {
@@ -96,6 +99,7 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
             return null;
         };
 
+        const registry = getConnectionRegistry();
         const devices = deviceRecords.map((record) => {
             const deviceId = String(record.deviceId || '');
             const isLive = liveDeviceIds.has(deviceId);
@@ -104,7 +108,7 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
                 label: record.hostname || deviceId,
                 role: 'AGENT',
                 platform: record.platform || 'unknown',
-                status: overlayDeviceStatus(deviceId, record.platform, record.lastAndroidBeatAt, isLive),
+                status: overlayDeviceStatus(deviceId, record.platform, record.lastAndroidBeatAt, isLive, registry),
                 localIp: record.localIp || '',
                 publicIp: record.publicIp || '',
                 battery: metricPercent(record.battery),

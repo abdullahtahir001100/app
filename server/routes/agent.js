@@ -58,16 +58,34 @@ function candidatePaths() {
     ].filter(Boolean);
 }
 
-function androidApkCandidates() {
+function androidApkCandidates(flavor = 'lite') {
     const cwd = process.cwd();
+    const f = String(flavor || 'lite').toLowerCase();
+    if (f === 'lite') {
+        return [
+            process.env.ANDROID_LITE_APK_PATH,
+            path.join(cwd, 'public', 'downloads', 'Zenvora-lite.apk'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraLite.apk'),
+            path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'lite', 'release', 'android-agent-kotlin-lite-release.apk'),
+            path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'lite', 'release', 'app-lite-release.apk'),
+            path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'lite', 'debug', 'android-agent-kotlin-lite-debug.apk'),
+            path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'lite', 'debug', 'app-lite-debug.apk'),
+        ].filter(Boolean);
+    }
+    // full / play / enterprise
     return [
+        process.env.ANDROID_FULL_APK_PATH,
         process.env.ANDROID_APK_PATH,
+        path.join(cwd, 'public', 'downloads', 'Zenvora-full.apk'),
         path.join(cwd, 'public', 'downloads', 'Zenvora.apk'),
         path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.apk'),
-        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'release', 'android-agent-kotlin-release.apk'),
-        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
-        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'debug', 'android-agent-kotlin-debug.apk'),
-        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'full', 'release', 'android-agent-kotlin-full-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'full', 'release', 'app-full-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'enterprise', 'release', 'android-agent-kotlin-enterprise-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'play', 'release', 'android-agent-kotlin-play-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'play', 'release', 'app-play-release.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'full', 'debug', 'android-agent-kotlin-full-debug.apk'),
+        path.join(cwd, 'android-agent-kotlin', 'build', 'outputs', 'apk', 'full', 'debug', 'app-full-debug.apk'),
     ].filter(Boolean);
 }
 
@@ -81,8 +99,8 @@ function findAgentBinary() {
     }) || null;
 }
 
-function findAndroidApk() {
-    return androidApkCandidates().find((p) => {
+function findAndroidApk(flavor = 'lite') {
+    return androidApkCandidates(flavor).find((p) => {
         try {
             return fs.existsSync(p) && fs.statSync(p).isFile();
         } catch {
@@ -152,7 +170,10 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
 router.get('/download', (req, res) => {
     const platform = String(req.query?.platform || 'windows').toLowerCase();
     const isAndroid = platform === 'android' || platform === 'apk';
-    const filePath = isAndroid ? findAndroidApk() : findAgentBinary();
+    const flavor = String(req.query?.flavor || (isAndroid ? 'lite' : '')).toLowerCase();
+    const resolvedFlavor =
+        flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'full' : 'lite';
+    const filePath = isAndroid ? findAndroidApk(resolvedFlavor) : findAgentBinary();
     if (!filePath) {
         liveLogBus.push({
             channel: 'http',
@@ -165,13 +186,15 @@ router.get('/download', (req, res) => {
             404,
             Z.BINARY_MISSING,
             isAndroid
-                ? 'Place Zenvora.apk in public/downloads/ (or set ANDROID_APK_PATH)'
+                ? 'Build lite APK: cd android-agent-kotlin && gradlew assembleLiteRelease — copy to public/downloads/Zenvora-lite.apk'
                 : 'Place ZenvoraAgent.exe in public/downloads/'
         );
     }
 
     const stat = fs.statSync(filePath);
-    const filename = isAndroid ? 'Zenvora.apk' : 'ZenvoraAgent.exe';
+    const filename = isAndroid
+        ? (flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'Zenvora-full.apk' : 'Zenvora-lite.apk')
+        : 'ZenvoraAgent.exe';
     liveLogBus.push({
         channel: 'http',
         level: 'info',

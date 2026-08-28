@@ -1,4 +1,5 @@
 const { getConnectionRegistry } = require('./registry');
+const { dispatchAgentCommand } = require('./dispatchAgent');
 
 const SHELL_ACTION_TOKENS = ['SHELL_EXECUTE', 'SHELL_EXECUTE_RAW'];
 
@@ -22,21 +23,22 @@ function handleShellCommand(ws, packet, activeConnections) {
         return;
     }
 
-    const targetAgentSocket = getAgentSocket(targetDeviceId, activeConnections);
-    if (!targetAgentSocket || targetAgentSocket.readyState !== 1) {
+    const result = dispatchAgentCommand(
+        targetDeviceId,
+        action,
+        { ...payload, targetDeviceId },
+        activeConnections
+    );
+    if (!result.ok) {
         ws.send(JSON.stringify({ type: 'sys_error', message: 'Target agent is offline.' }));
         return;
     }
 
-    targetAgentSocket.send(JSON.stringify({
-        action,
-        payload: { ...payload, targetDeviceId }
-    }));
-
     ws.send(JSON.stringify({
         type: 'sys_ack',
         status: 'dispatched',
-        message: `Shell command queued for ${targetDeviceId}`
+        message: `Shell command queued for ${targetDeviceId}`,
+        transport: result.transport,
     }));
 }
 

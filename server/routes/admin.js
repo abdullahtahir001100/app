@@ -194,7 +194,7 @@ router.get('/devices', async (_req, res) => {
                 userId: String(d.userId || ''),
                 hostname: d.hostname || d.deviceId,
                 platform: d.platform,
-                status: overlayDeviceStatus(String(d.deviceId), d.platform, d.lastAndroidBeatAt, online.has(String(d.deviceId))),
+                status: overlayDeviceStatus(String(d.deviceId), d.platform, d.lastAndroidBeatAt, online.has(String(d.deviceId)), getConnectionRegistry()),
                 lastSeen: d.lastSeen || d.updatedAt,
                 battery: metricPercent(d.battery),
                 storage: metricPercent(d.storage),

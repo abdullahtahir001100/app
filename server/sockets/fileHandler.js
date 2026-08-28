@@ -3,6 +3,7 @@
  */
 const { randomUUID } = require('crypto');
 const { getConnectionRegistry } = require('./registry');
+const { dispatchAgentCommand } = require('./dispatchAgent');
 const {
     extractDeviceIdFromAgentSocket,
     extractOwnerUserId,
@@ -85,16 +86,10 @@ function forwardFileCommandToAgent(action, targetDeviceId, payload, activeConnec
         throw new Error('Select a live agent before file operations.');
     }
 
-    const targetAgentSocket = getAgentSocket(targetDeviceId, activeConnections);
-
-    if (!targetAgentSocket || targetAgentSocket.readyState !== 1) {
-        throw new Error(`Agent [${targetDeviceId}] is offline. Start the Rust agent first.`);
+    const result = dispatchAgentCommand(targetDeviceId, action, payload || {}, activeConnections);
+    if (!result.ok) {
+        throw new Error(`Agent [${targetDeviceId}] is offline. Start the agent and keep permissions granted.`);
     }
-
-    targetAgentSocket.send(JSON.stringify({
-        action,
-        payload: payload || {}
-    }));
 }
 
 function execFileCommand(action, targetDeviceId, payload = {}) {

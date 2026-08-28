@@ -1,4 +1,5 @@
 const Device = require('../models/Device');
+const { getControlAgent } = require('../control/controlHandler');
 
 const ANDROID_BEAT_MS = 5 * 60 * 1000;
 const beats = new Map();
@@ -28,7 +29,7 @@ async function recordAndroidBeat(deviceId, extras = {}) {
     const $set = {
         lastAndroidBeatAt: now,
         lastSeen: now,
-        status: 'online',
+        status: 'away',
         platform: extras.platform || 'android',
     };
     if (extras.hostname) $set.hostname = extras.hostname;
@@ -60,10 +61,16 @@ function isBeatOnline(deviceId, mongoLastBeat) {
     return isFresh(mongoLastBeat);
 }
 
-function overlayDeviceStatus(deviceId, platform, lastAndroidBeatAt, isLiveWs) {
-    if (isLiveWs) return 'online';
+function overlayDeviceStatus(deviceId, platform, lastAndroidBeatAt, isLiveWs, activeConnections = null) {
+    const { isCommandReady } = require('../sockets/dispatchAgent');
+    const registry = activeConnections || require('../sockets/registry').getConnectionRegistry();
+    if (isCommandReady(deviceId, registry)) return 'online';
+    if (isLiveWs) {
+        const control = getControlAgent(deviceId);
+        if (control?.socket && !control.socket.destroyed) return 'online';
+    }
     if (looksAndroidDevice(deviceId, platform) && isBeatOnline(deviceId, lastAndroidBeatAt)) {
-        return 'online';
+        return 'away';
     }
     return 'offline';
 }
