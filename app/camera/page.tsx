@@ -604,7 +604,7 @@ export default function CameraPage() {
     if (isCameraOn) {
       resetLivePreview();
       setTimeout(() => {
-        dispatchControl("START_STREAM", {}, undefined, true);
+        dispatchControl("START_STREAM", { target_fps: 24, jpeg_quality: 42 }, undefined, true);
       }, 300);
     }
   };
@@ -766,7 +766,7 @@ export default function CameraPage() {
     } catch {
       // ignore storage errors
     }
-    dispatchControl("START_STREAM", {}, deviceId, true);
+    dispatchControl("START_STREAM", { target_fps: 24, jpeg_quality: 42 }, deviceId, true);
     void loadServerGallery(deviceId);
     setCommandStatus(`Camera turning on for ${deviceId}...`);
   };
