@@ -20,7 +20,20 @@ yarn-error.log*
 .env*
 
 # kotlin 
-/android-agent-kotlin/
+# Android project
+android-agent-kotlin/.gradle/
+android-agent-kotlin/.idea/
+android-agent-kotlin/**/build/
+android-agent-kotlin/local.properties
+android-agent-kotlin/*.iml
+android-agent-kotlin/.externalNativeBuild/
+android-agent-kotlin/.cxx/
+android-agent-kotlin/captures/
+
+# Signing
+android-agent-kotlin/**/*.jks
+android-agent-kotlin/**/*.keystore
+
 
 
 # Rust

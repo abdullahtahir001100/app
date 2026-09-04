@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="zenvora_bg">#FDF8F8</color>
+    <color name="zenvora_surface">#FFFFFF</color>
+    <color name="zenvora_text">#1C1B1B</color>
+    <color name="zenvora_muted">#444748</color>
+    <color name="zenvora_primary">#060607</color>
+    <color name="zenvora_on_primary">#FFFFFF</color>
+    <color name="zenvora_outline">#C4C7C7</color>
+    <color name="zenvora_high">#EBE7E7</color>
+    <color name="zenvora_container">#1F1F1F</color>
+</resources>

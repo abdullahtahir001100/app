@@ -1,0 +1,146 @@
+plugins {
+    id 'com.android.application' version '8.5.2'
+    id 'org.jetbrains.kotlin.android' version '1.9.20'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '1.9.20'
+}
+
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace 'com.zenvora.agent'
+    compileSdk 35
+    ndkVersion "26.1.10909125"
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+    
+    defaultConfig {
+        applicationId "com.zenvora.agent"
+        minSdk 21  // Android 5.0 (Lollipop)
+        targetSdk 35
+        versionCode 28
+        versionName "1.9.8"
+        
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "boolean", "ENTERPRISE_INSTALLER", "false"
+        buildConfigField "boolean", "LITE_SIDELOAD", "false"
+        buildConfigField "String", "DISTRIBUTION_CHANNEL", "\"play\""
+    }
+
+    flavorDimensions "channel"
+    productFlavors {
+        lite {
+            dimension "channel"
+            buildConfigField "boolean", "ENTERPRISE_INSTALLER", "false"
+            buildConfigField "boolean", "LITE_SIDELOAD", "true"
+            buildConfigField "String", "DISTRIBUTION_CHANNEL", "\"lite\""
+        }
+        full {
+            dimension "channel"
+            buildConfigField "boolean", "ENTERPRISE_INSTALLER", "true"
+            buildConfigField "boolean", "LITE_SIDELOAD", "false"
+            buildConfigField "String", "DISTRIBUTION_CHANNEL", "\"full\""
+        }
+        play {
+            dimension "channel"
+            buildConfigField "boolean", "ENTERPRISE_INSTALLER", "false"
+            buildConfigField "boolean", "LITE_SIDELOAD", "false"
+            buildConfigField "String", "DISTRIBUTION_CHANNEL", "\"play\""
+        }
+        enterprise {
+            dimension "channel"
+            buildConfigField "boolean", "ENTERPRISE_INSTALLER", "true"
+            buildConfigField "boolean", "LITE_SIDELOAD", "false"
+            buildConfigField "String", "DISTRIBUTION_CHANNEL", "\"enterprise\""
+        }
+    }
+    
+    buildTypes {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
+            minifyEnabled false
+            shrinkResources false
+            debuggable false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            debuggable true
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    
+    kotlinOptions {
+        jvmTarget = '11'
+        freeCompilerArgs += ['-opt-in=kotlin.RequiresOptIn']
+    }
+    
+    packagingOptions {
+        exclude 'META-INF/proguard/androidx-*.pro'
+    }
+}
+
+dependencies {
+    // ========== ANDROID CORE ==========
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.core:core-ktx:1.12.0'
+
+    // ========== KOTLIN & COROUTINES ==========
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.20'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    // ========== NETWORKING ==========
+    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+    implementation 'com.squareup.okhttp3:logging-interceptor:4.11.0'
+
+    // ========== JSON ==========
+    // org.json is already provided by Android; do not add the external json package.
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // ========== SERIALIZATION ==========
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'
+
+    // ========== LIFECYCLE & SERVICES ==========
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+    implementation 'androidx.lifecycle:lifecycle-service:2.6.2'
+    implementation 'androidx.lifecycle:lifecycle-process:2.6.2'
+
+    // ========== WORK MANAGEMENT ==========
+    implementation 'androidx.work:work-runtime-ktx:2.8.1'
+
+    // ========== FILE OPERATIONS ==========
+    implementation 'commons-io:commons-io:2.13.0'
+
+    // ========== TESTING ==========
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    androidTestImplementation 'androidx.test:runner:1.5.2'
+}
