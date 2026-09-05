@@ -107,6 +107,8 @@ nextApp.prepare().then(() => {
     app.use('/api/agent', agentRoutes);
     const adminRoutes = require('./server/routes/admin');
     app.use('/api/admin', express.json(), adminRoutes);
+    const integrationsRoutes = require('./server/routes/integrations');
+    app.use('/api/integrations', express.json(), integrationsRoutes);
 
     // Short bootstrap — clients must NOT use irm|iex (hangs on many Windows)
     app.get('/r/:code', (req, res) => {
