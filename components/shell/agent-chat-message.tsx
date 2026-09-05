@@ -117,7 +117,7 @@ export function AgentChatMessage({ message }: AgentChatMessageProps) {
   );
 }
 
-{/* Loading Skeleton */}
+/* Loading Skeleton */
 export function AgentChatSkeleton() {
   return (
     <div className="flex items-start space-x-3 py-3 opacity-40">

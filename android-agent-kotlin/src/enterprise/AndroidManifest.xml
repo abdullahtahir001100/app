@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Enterprise / MDM channel only — not used for Google Play builds. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-</manifest>
