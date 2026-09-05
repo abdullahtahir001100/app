@@ -137,7 +137,7 @@ export default function LogsPage() {
           if (entries.length > 0) {
             setBrowserHistory((prev) => {
               const keyOf = (e: any) =>
-                `${e.url}|${e.visitTime || e.visit_time}|${e.browser}|${e.windowsUser || e.windows_user || ""}|${e.browserProfile || e.browser_profile || ""}`;
+                `${e?.url || ""}|${e?.visitTime || e?.visit_time || ""}|${e?.browser || ""}|${e?.windowsUser || e?.windows_user || ""}|${e?.browserProfile || e?.browser_profile || ""}`;
               const seen = new Set(prev.map(keyOf));
               const merged = [...prev];
               for (const entry of entries as BrowserEntry[]) {
@@ -298,9 +298,12 @@ export default function LogsPage() {
   };
 
   const formatTime = (timestamp: string) => {
+    if (!timestamp) return "recently";
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return "recently";
     const now = new Date();
     const diff = now.getTime() - date.getTime();
+    if (diff < 0) return "just now";
     
     const mins = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
@@ -322,30 +325,53 @@ export default function LogsPage() {
     }
   };
 
-  const filteredActivityLogs = activityLogs.filter(log =>
-    (filter === "all" || log.status === filter) &&
-    (searchQuery === "" || log.details.toLowerCase().includes(searchQuery.toLowerCase()) || log.action.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredActivityLogs = activityLogs.filter(log => {
+    if (!log) return false;
+    const matchesFilter = filter === "all" || log.status === filter;
+    if (!matchesFilter) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    const details = String(log.details || "").toLowerCase();
+    const action = String(log.action || "").toLowerCase();
+    return details.includes(q) || action.includes(q);
+  });
 
-  const filteredLiveActivityLogs = liveActivityLogs.filter(log =>
-    (filter === "all" || log.status === filter) &&
-    (searchQuery === "" || log.details.toLowerCase().includes(searchQuery.toLowerCase()) || log.action.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredLiveActivityLogs = liveActivityLogs.filter(log => {
+    if (!log) return false;
+    const matchesFilter = filter === "all" || log.status === filter;
+    if (!matchesFilter) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    const details = String(log.details || "").toLowerCase();
+    const action = String(log.action || "").toLowerCase();
+    return details.includes(q) || action.includes(q);
+  });
 
   const combinedActivityLogs = [...filteredLiveActivityLogs, ...filteredActivityLogs];
   const uniqueActivityLogs = combinedActivityLogs.filter((log, index, self) =>
     self.findIndex((item) => item._id === log._id) === index
   );
 
-  const filteredBrowserHistory = browserHistory.filter(entry =>
-    (browserFilter === "all" || entry.browser === browserFilter) &&
-    (browserSearchQuery === "" || entry.url.toLowerCase().includes(browserSearchQuery.toLowerCase()) || (entry.title || "").toLowerCase().includes(browserSearchQuery.toLowerCase()))
-  );
+  const filteredBrowserHistory = browserHistory.filter(entry => {
+    if (!entry) return false;
+    const matchesFilter = browserFilter === "all" || entry.browser === browserFilter;
+    if (!matchesFilter) return false;
+    if (!browserSearchQuery.trim()) return true;
+    const q = browserSearchQuery.trim().toLowerCase();
+    const url = String(entry.url || "").toLowerCase();
+    const title = String(entry.title || "").toLowerCase();
+    return url.includes(q) || title.includes(q);
+  });
 
-  const filteredAppHistory = appHistory.filter(entry =>
-    (appFilter === "all" || entry.appType === appFilter) &&
-    (searchQuery === "" || entry.appName.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredAppHistory = appHistory.filter(entry => {
+    if (!entry) return false;
+    const matchesFilter = appFilter === "all" || entry.appType === appFilter;
+    if (!matchesFilter) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    const name = String(entry.appName || (entry as any).app_name || "").toLowerCase();
+    return name.includes(q);
+  });
 
   const getBrowsers = () => [...new Set(browserHistory.map(h => h.browser))];
   const getAppTypes = () => [...new Set(appHistory.map(a => a.appType))];
@@ -635,8 +661,12 @@ export default function LogsPage() {
                           ) : null}
                         </div>
                         <h4 className="font-semibold mt-2 truncate text-foreground">{entry.title || "Untitled"}</h4>
-                        <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate block mt-1">{entry.url}</a>
-                        <p className="text-xs text-muted-foreground mt-2 font-mono">Visited {formatTime(entry.visitTime)} • {entry.visitCount} times</p>
+                        {entry.url ? (
+                          <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate block mt-1">{entry.url}</a>
+                        ) : (
+                          <span className="text-sm text-muted-foreground italic block mt-1">No URL available</span>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-2 font-mono">Visited {formatTime(entry.visitTime || (entry as any).visit_time)} • {entry.visitCount || (entry as any).visit_count || 1} times</p>
                       </div>
                     </div>
                   </Card>
