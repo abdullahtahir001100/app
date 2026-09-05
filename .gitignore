@@ -56,3 +56,7 @@ zenvora_agent/target.nosync/
 next-env.d.tszenvora_agent/target/
 zenvora_agent/target.nosync/
 *.nosync
+
+public/downloads/
+*.app/
+.next/
