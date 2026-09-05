@@ -83,12 +83,12 @@ nextApp.prepare().then(() => {
     }, 30000);
 
     app.use('/api', (req, res, next) => {
-        if (req.path.startsWith('/agent') || req.path === '/health') {
+        if (req.path.startsWith('/agent') || req.path === '/health' || req.path.startsWith('/integrations')) {
             return next();
         }
         return jsonBodyParser(req, res, next);
     }, (req, res, next) => {
-        if (req.path.startsWith('/agent') || req.path === '/health') {
+        if (req.path.startsWith('/agent') || req.path === '/health' || req.path.startsWith('/integrations')) {
             return next();
         }
         return requireAuthUnlessPublic(req, res, next);

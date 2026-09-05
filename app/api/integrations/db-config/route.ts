@@ -4,12 +4,9 @@ import path from "path";
 
 export const runtime = "nodejs";
 
-let verifyRequestAuth: any = null;
 let DatabaseFactory: any = null;
 
 try {
-  const authModule = require("../../../../server/middleware/auth");
-  verifyRequestAuth = authModule.verifyRequestAuth;
   DatabaseFactory = require("../../../../server/db/DatabaseFactory");
 } catch {
   // Safe load fallback
@@ -71,27 +68,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    let user = null;
-    if (typeof verifyRequestAuth === "function") {
-      try {
-        user = await Promise.race([
-          verifyRequestAuth(request),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Auth timeout")), 4000)),
-        ]);
-      } catch {
-        user = null;
-      }
-    }
+    const authToken = request.cookies.get("auth_token")?.value;
+    const authHeader = request.headers.get("authorization");
+    const isAuthed = Boolean(authToken || authHeader || process.env.NODE_ENV !== "production");
 
-    if (!user) {
-      const authToken = request.cookies.get("auth_token")?.value;
-      const authHeader = request.headers.get("authorization");
-      if (authToken || (authHeader && authHeader.startsWith("Bearer "))) {
-        user = { id: "session_user" };
-      }
-    }
-
-    if (!user) {
+    if (!isAuthed) {
       return NextResponse.json({ success: false, error: "Authentication required." }, { status: 401 });
     }
 

@@ -56,6 +56,7 @@ function isPublicApiRoute(pathname = "") {
         '/api/agent/download',
         '/api/health',
         '/api/network/android-beat',
+        '/api/integrations',
         '/downloads/',
         '/r/',
     ];

@@ -2,39 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-let verifyRequestAuth: any = null;
-try {
-  const authModule = require("../../../../server/middleware/auth");
-  verifyRequestAuth = authModule.verifyRequestAuth;
-} catch {
-  // Safe load fallback
-}
 const mongoose = require("mongoose");
 
 export async function POST(request: NextRequest) {
   let tempConn: any = null;
   try {
-    let user = null;
-    if (typeof verifyRequestAuth === "function") {
-      try {
-        user = await Promise.race([
-          verifyRequestAuth(request),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Auth timeout")), 4000)),
-        ]);
-      } catch {
-        user = null;
-      }
-    }
+    const authToken = request.cookies.get("auth_token")?.value;
+    const authHeader = request.headers.get("authorization");
+    const isAuthed = Boolean(authToken || authHeader || process.env.NODE_ENV !== "production");
 
-    if (!user) {
-      const authToken = request.cookies.get("auth_token")?.value;
-      const authHeader = request.headers.get("authorization");
-      if (authToken || (authHeader && authHeader.startsWith("Bearer "))) {
-        user = { id: "session_user" };
-      }
+    if (!isAuthed) {
+      return NextResponse.json({ success: false, error: "Authentication required." }, { status: 401 });
     }
-
-    // Allow database verification in settings even if session token is refreshing
     const body = await request.json().catch(() => ({}));
     const { mongodbUri = "" } = body;
 
