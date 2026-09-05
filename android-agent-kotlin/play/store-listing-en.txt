@@ -1,0 +1,15 @@
+Zenvora — Family & device safety companion
+
+Keep a child's or family phone connected to your Zenvora parent dashboard.
+View activity, notifications, location, and device health with clear consent
+and on-device permissions — the same class of capabilities used by parental-control apps.
+
+Features for parents / guardians:
+• Pair with a secure dashboard token
+• Stay connected in the background (battery-friendly)
+• Optional device administrator for lock policies
+• Notification and browsing visibility for family safety
+• Call, SMS, and contacts visibility when you grant those permissions
+
+Privacy: data goes only to your Zenvora workspace. Revoke permissions or uninstall anytime.
+Support: see in-app / dashboard help. Privacy policy required on your public site before Play review.

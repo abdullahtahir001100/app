@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Lite = Chrome-friendly: keep screen/camera/files/shell/notifications/browser.
+  Only strip SMS / call log / contacts / device-admin / install-packages
+  (those trigger Play Protect "identity theft" hard-block).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.READ_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" tools:node="remove" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:node="remove" />
+
+    <application>
+        <receiver
+            android:name="com.zenvora.agent.admin.ZenvoraDeviceAdminReceiver"
+            tools:node="remove" />
+    </application>
+</manifest>
