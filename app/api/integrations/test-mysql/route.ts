@@ -41,12 +41,40 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { mysqlUri = "" } = body;
+    const {
+      mode,
+      mysqlUri = "",
+      host = "",
+      port = "",
+      user: dbUser = "",
+      password = "",
+      database = "",
+      mysqlHost = "",
+      mysqlPort = "",
+      mysqlUser = "",
+      mysqlPassword = "",
+      mysqlDatabase = "",
+    } = body;
 
+    const targetHost = String(host || mysqlHost || "").trim();
+    const targetUser = String(dbUser || mysqlUser || "").trim();
+    const targetPort = String(port || mysqlPort || "").trim();
+    const targetPass = String(password ?? mysqlPassword ?? "");
+    const targetDb = String(database || mysqlDatabase || "").trim();
     const trimmedUri = String(mysqlUri || "").trim();
-    if (!trimmedUri) {
+
+    const isParamsMode = mode === "params" || (!trimmedUri && (targetHost || targetUser));
+
+    if (isParamsMode) {
+      if (!targetHost) {
+        return NextResponse.json(
+          { success: false, error: "MySQL Host is required." },
+          { status: 400 }
+        );
+      }
+    } else if (!trimmedUri) {
       return NextResponse.json(
-        { success: false, error: "MySQL Connection URI is required." },
+        { success: false, error: "MySQL Connection URI or Host is required." },
         { status: 400 }
       );
     }
@@ -56,7 +84,17 @@ export async function POST(request: NextRequest) {
       testMysqlConnection = mysqlConn.testMysqlConnection;
     }
 
-    const result = await testMysqlConnection(trimmedUri);
+    const testPayload = isParamsMode
+      ? {
+          host: targetHost,
+          port: targetPort ? Number(targetPort) : 3306,
+          user: targetUser || "root",
+          password: targetPass,
+          database: targetDb,
+        }
+      : trimmedUri;
+
+    const result = await testMysqlConnection(testPayload);
     return NextResponse.json(result);
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);

@@ -17,7 +17,7 @@ function resolveProvider() {
     if (process.env.DATABASE_PROVIDER) {
         return String(process.env.DATABASE_PROVIDER).trim().toLowerCase();
     }
-    if (process.env.MYSQL_URL || process.env.DATABASE_URL?.includes('mysql')) return 'mysql';
+    if (process.env.MYSQL_URL || process.env.MYSQL_HOST || process.env.DATABASE_URL?.includes('mysql')) return 'mysql';
     if (process.env.POSTGRES_URL || process.env.DATABASE_URL?.includes('postgres')) return 'postgres';
     if (process.env.MONGODB_URI) return 'mongo';
     return 'mongo';

@@ -100,8 +100,42 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 `;
 
+function buildMysqlUri(params) {
+    if (!params || typeof params !== 'object') return '';
+    const user = params.user || params.mysqlUser || '';
+    const password = params.password ?? params.mysqlPassword ?? '';
+    const host = params.host || params.mysqlHost || '127.0.0.1';
+    const port = Number(params.port || params.mysqlPort) || 3306;
+    const database = params.database || params.mysqlDatabase || '';
+
+    const auth = user ? `${encodeURIComponent(user)}${password ? `:${encodeURIComponent(password)}` : ''}@` : '';
+    const db = database ? `/${encodeURIComponent(database)}` : '';
+    return `mysql://${auth}${host}:${port}${db}`;
+}
+
+function parseMysqlConnectionString(uri) {
+    if (!uri || typeof uri !== 'string') return null;
+    try {
+        const raw = uri.trim();
+        const normalized = raw.startsWith('mysql://') ? raw : `mysql://${raw}`;
+        const parsed = new URL(normalized);
+        return {
+            host: parsed.hostname || '127.0.0.1',
+            port: parsed.port ? Number(parsed.port) : 3306,
+            user: parsed.username ? decodeURIComponent(parsed.username) : 'root',
+            password: parsed.password ? decodeURIComponent(parsed.password) : '',
+            database: parsed.pathname ? decodeURIComponent(parsed.pathname.replace(/^\//, '')) : '',
+        };
+    } catch {
+        return null;
+    }
+}
+
 function parseMysqlUri(uri) {
     if (!uri) return null;
+    if (typeof uri === 'object') {
+        return buildMysqlUri(uri);
+    }
     try {
         if (uri.startsWith('mysql://')) {
             return uri;
@@ -112,21 +146,102 @@ function parseMysqlUri(uri) {
     }
 }
 
-async function connectMysql(customUri) {
-    if (pool && !customUri) {
+function resolveMysqlConfig(input) {
+    // 1. Explicit object provided
+    if (input && typeof input === 'object') {
+        if (input.mysqlUri || input.uri) {
+            const rawUri = String(input.mysqlUri || input.uri).trim();
+            const uri = rawUri.startsWith('mysql://') ? rawUri : `mysql://${rawUri}`;
+            return {
+                mode: 'uri',
+                uri,
+                options: parseMysqlConnectionString(uri) || {},
+            };
+        }
+        const host = input.host || input.mysqlHost || '127.0.0.1';
+        const port = Number(input.port || input.mysqlPort) || 3306;
+        const user = input.user || input.mysqlUser || 'root';
+        const password = input.password ?? input.mysqlPassword ?? '';
+        const database = input.database || input.mysqlDatabase || '';
+        const generatedUri = buildMysqlUri({ host, port, user, password, database });
+
+        return {
+            mode: 'params',
+            uri: generatedUri,
+            options: { host, port, user, password, database },
+        };
+    }
+
+    // 2. String URI provided
+    if (typeof input === 'string' && input.trim()) {
+        const trimmed = input.trim();
+        const uri = trimmed.startsWith('mysql://') ? trimmed : `mysql://${trimmed}`;
+        return {
+            mode: 'uri',
+            uri,
+            options: parseMysqlConnectionString(uri) || {},
+        };
+    }
+
+    // 3. Fallback to process.env (MYSQL_URL / DATABASE_URL)
+    const envUrl = process.env.MYSQL_URL || (process.env.DATABASE_URL?.includes('mysql') ? process.env.DATABASE_URL : null);
+    if (envUrl) {
+        const uri = envUrl.startsWith('mysql://') ? envUrl : `mysql://${envUrl}`;
+        return {
+            mode: 'uri',
+            uri,
+            options: parseMysqlConnectionString(uri) || {},
+        };
+    }
+
+    // 4. Fallback to discrete env vars (MYSQL_HOST, etc.)
+    if (process.env.MYSQL_HOST) {
+        const host = process.env.MYSQL_HOST;
+        const port = Number(process.env.MYSQL_PORT) || 3306;
+        const user = process.env.MYSQL_USER || 'root';
+        const password = process.env.MYSQL_PASSWORD || '';
+        const database = process.env.MYSQL_DATABASE || '';
+        const generatedUri = buildMysqlUri({ host, port, user, password, database });
+        return {
+            mode: 'params',
+            uri: generatedUri,
+            options: { host, port, user, password, database },
+        };
+    }
+
+    return null;
+}
+
+async function connectMysql(customConfig) {
+    if (pool && !customConfig) {
         return pool;
     }
 
-    const uri = parseMysqlUri(customUri || process.env.MYSQL_URL || process.env.DATABASE_URL);
-    if (!uri) {
-        throw new Error('MYSQL_URL is missing. Set MYSQL_URL or configure MySQL in Settings.');
+    const config = resolveMysqlConfig(customConfig);
+    if (!config) {
+        throw new Error('MYSQL configuration is missing. Configure MySQL Host/Port/User/Password or Connection URI in Settings.');
     }
 
-    const newPool = mysql.createPool({
-        uri,
-        ...POOL_OPTIONS,
-        multipleStatements: true,
-    });
+    let poolOptions;
+    if (config.mode === 'params' && config.options.host) {
+        poolOptions = {
+            host: config.options.host,
+            port: config.options.port,
+            user: config.options.user,
+            password: config.options.password,
+            database: config.options.database || undefined,
+            ...POOL_OPTIONS,
+            multipleStatements: true,
+        };
+    } else {
+        poolOptions = {
+            uri: config.uri,
+            ...POOL_OPTIONS,
+            multipleStatements: true,
+        };
+    }
+
+    const newPool = mysql.createPool(poolOptions);
 
     // Verify connectivity
     const [rows] = await newPool.query('SELECT 1 AS ok');
@@ -134,7 +249,7 @@ async function connectMysql(customUri) {
         throw new Error('MySQL connection verification failed.');
     }
 
-    if (!customUri) {
+    if (!customConfig) {
         pool = newPool;
         if (!tablesInitialized) {
             await initializeMysqlTables(pool);
@@ -175,23 +290,37 @@ function getMysqlPool() {
     return pool;
 }
 
-async function testMysqlConnection(uri) {
+async function testMysqlConnection(targetConfig) {
     const start = Date.now();
     let conn = null;
     let timer = null;
     try {
-        const parsed = parseMysqlUri(uri);
-        if (!parsed) {
-            throw new Error('MySQL URI is required.');
+        const config = resolveMysqlConfig(targetConfig);
+        if (!config) {
+            throw new Error('MySQL configuration is required (either Host/User or Connection String).');
         }
 
-        const connectPromise = mysql.createConnection({
-            uri: parsed,
-            connectTimeout: 3000,
-        });
+        let connOptions;
+        if (config.mode === 'params' && config.options.host) {
+            connOptions = {
+                host: config.options.host,
+                port: config.options.port,
+                user: config.options.user,
+                password: config.options.password,
+                database: config.options.database || undefined,
+                connectTimeout: 3500,
+            };
+        } else {
+            connOptions = {
+                uri: config.uri,
+                connectTimeout: 3500,
+            };
+        }
+
+        const connectPromise = mysql.createConnection(connOptions);
 
         const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error('Connection timed out connecting to MySQL host (3000ms).')), 3500);
+            timer = setTimeout(() => reject(new Error('Connection timed out connecting to MySQL host (3500ms).')), 4000);
         });
 
         conn = await Promise.race([connectPromise, timeoutPromise]);
@@ -200,7 +329,8 @@ async function testMysqlConnection(uri) {
         const [rows] = await conn.query('SELECT VERSION() AS version, DATABASE() AS current_db');
         const latencyMs = Date.now() - start;
         const version = rows[0]?.version || 'Unknown';
-        const dbName = rows[0]?.current_db || 'default';
+        const dbName = rows[0]?.current_db || config.options?.database || 'default';
+        const hostDisplay = config.options?.host || 'server';
 
         try {
             await conn.end();
@@ -214,7 +344,8 @@ async function testMysqlConnection(uri) {
             latencyMs,
             version,
             dbName,
-            message: `✓ Connected to MySQL database "${dbName}" v${version} (${latencyMs}ms ping)!`,
+            host: hostDisplay,
+            message: `✓ Connected to MySQL host "${hostDisplay}" (DB: "${dbName}") v${version} (${latencyMs}ms ping)!`,
         };
     } catch (err) {
         if (timer) clearTimeout(timer);
@@ -238,4 +369,7 @@ module.exports = {
     initializeMysqlTables,
     testMysqlConnection,
     parseMysqlUri,
+    buildMysqlUri,
+    parseMysqlConnectionString,
+    resolveMysqlConfig,
 };

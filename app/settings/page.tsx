@@ -29,6 +29,10 @@ import {
   XCircle,
   ShieldAlert,
   Wifi,
+  Sliders,
+  Link2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   useApiConfig,
@@ -48,11 +52,18 @@ type PairingState = {
 };
 
 type DbProviderKey = "mongo" | "mysql";
+type MysqlConfigMode = "params" | "uri";
 
 type IntegrationVariables = {
   activeDbProvider: DbProviderKey;
   mongodbUri: string;
+  mysqlMode: MysqlConfigMode;
   mysqlUri: string;
+  mysqlHost: string;
+  mysqlPort: string;
+  mysqlDatabase: string;
+  mysqlUser: string;
+  mysqlPassword: string;
   cloudinaryCloudName: string;
   cloudinaryApiKey: string;
   cloudinaryApiSecret: string;
@@ -63,7 +74,13 @@ type IntegrationVariables = {
 const DEFAULT_INTEGRATION_VARS: IntegrationVariables = {
   activeDbProvider: "mongo",
   mongodbUri: "",
+  mysqlMode: "params",
   mysqlUri: "",
+  mysqlHost: "127.0.0.1",
+  mysqlPort: "3306",
+  mysqlDatabase: "",
+  mysqlUser: "root",
+  mysqlPassword: "",
   cloudinaryCloudName: "",
   cloudinaryApiKey: "",
   cloudinaryApiSecret: "",
@@ -143,6 +160,8 @@ export default function SettingsPage() {
   } | null>(null);
 
   const [testingMysql, setTestingMysql] = useState(false);
+  const [showMysqlPass, setShowMysqlPass] = useState(false);
+  const [showMysqlUri, setShowMysqlUri] = useState(false);
   const [mysqlTestResult, setMysqlTestResult] = useState<{
     success: boolean;
     message?: string;
@@ -151,6 +170,42 @@ export default function SettingsPage() {
     version?: string;
     dbName?: string;
   } | null>(null);
+
+  const buildMysqlUriStr = (v: {
+    mysqlUser?: string;
+    mysqlPassword?: string;
+    mysqlHost?: string;
+    mysqlPort?: string;
+    mysqlDatabase?: string;
+  }): string => {
+    const user = v.mysqlUser || "";
+    const password = v.mysqlPassword || "";
+    const host = v.mysqlHost || "127.0.0.1";
+    const port = v.mysqlPort || "3306";
+    const database = v.mysqlDatabase || "";
+
+    const auth = user ? `${encodeURIComponent(user)}${password ? `:${encodeURIComponent(password)}` : ""}@` : "";
+    const db = database ? `/${encodeURIComponent(database)}` : "";
+    return `mysql://${auth}${host}:${port}${db}`;
+  };
+
+  const parseUriToParams = (uri: string) => {
+    if (!uri) return null;
+    try {
+      const raw = uri.trim();
+      const normalized = raw.startsWith("mysql://") ? raw : `mysql://${raw}`;
+      const url = new URL(normalized);
+      return {
+        host: url.hostname || "127.0.0.1",
+        port: url.port || "3306",
+        user: url.username ? decodeURIComponent(url.username) : "root",
+        password: url.password ? decodeURIComponent(url.password) : "",
+        database: url.pathname ? decodeURIComponent(url.pathname.replace(/^\//, "")) : "",
+      };
+    } catch {
+      return null;
+    }
+  };
 
   const [testingCloudinary, setTestingCloudinary] = useState(false);
   const [cloudinaryTestResult, setCloudinaryTestResult] = useState<{
@@ -187,13 +242,41 @@ export default function SettingsPage() {
     apiConfig.activeProvider || "gemini"
   );
 
+  const safeFetchJson = async (url: string, options: RequestInit = {}) => {
+    try {
+      const res = await fetch(url, {
+        ...options,
+        credentials: "include",
+      });
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      if (!data) {
+        data = {
+          success: false,
+          error: text || (res.statusText ? `HTTP ${res.status}: ${res.statusText}` : "Empty response from server."),
+        };
+      }
+      return data;
+    } catch (fetchErr) {
+      const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      return {
+        success: false,
+        error: `Request failed: ${msg}`,
+      };
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.authenticated) {
+      const data = await safeFetchJson("/api/auth/session", { cache: "no-store" });
+      if (!data?.authenticated) {
         setError(data?.message || "Could not load settings.");
         return;
       }
@@ -206,14 +289,19 @@ export default function SettingsPage() {
 
       // Load server db-config
       try {
-        const dbRes = await fetch("/api/integrations/db-config", { credentials: "include" });
-        const dbData = await dbRes.json();
+        const dbData = await safeFetchJson("/api/integrations/db-config");
         if (dbData?.success) {
           setVars((prev) => ({
             ...prev,
             activeDbProvider: dbData.activeProvider === "mysql" ? "mysql" : "mongo",
             mongodbUri: prev.mongodbUri || dbData.mongodbUri || "",
+            mysqlMode: (prev.mysqlMode || dbData.mysqlMode || "params") as MysqlConfigMode,
             mysqlUri: prev.mysqlUri || dbData.mysqlUri || "",
+            mysqlHost: prev.mysqlHost || dbData.mysqlHost || "127.0.0.1",
+            mysqlPort: prev.mysqlPort || dbData.mysqlPort || "3306",
+            mysqlDatabase: prev.mysqlDatabase || dbData.mysqlDatabase || "",
+            mysqlUser: prev.mysqlUser || dbData.mysqlUser || "root",
+            mysqlPassword: prev.mysqlPassword || dbData.mysqlPassword || "",
           }));
         }
       } catch (_) {}
@@ -251,15 +339,13 @@ export default function SettingsPage() {
     setError("");
     setSuccessMsg("");
     try {
-      const res = await fetch("/api/auth/pairing", {
+      const data = await safeFetchJson("/api/auth/pairing", {
         method: "PUT",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(pairing),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        setError(data.message || "Could not update pairing credentials.");
+      if (!data?.success) {
+        setError(data?.message || data?.error || "Could not update pairing credentials.");
         alertFromApi(data, Z.UPDATE_FAILED);
         return;
       }
@@ -281,13 +367,11 @@ export default function SettingsPage() {
     setError("");
     setSuccessMsg("");
     try {
-      const res = await fetch("/api/auth/pairing/rotate", {
+      const data = await safeFetchJson("/api/auth/pairing/rotate", {
         method: "POST",
-        credentials: "include",
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        setError(data.message || "Could not rotate pairing credentials.");
+      if (!data?.success) {
+        setError(data?.message || data?.error || "Could not rotate pairing credentials.");
         alertFromApi(data, Z.UPDATE_FAILED);
         return;
       }
@@ -307,19 +391,26 @@ export default function SettingsPage() {
   const saveVariables = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setError("");
+    setSuccessMsg("");
     try {
       localStorage.setItem("zenvora-workspace-variables", JSON.stringify(vars));
       // Persist active database provider and credentials to server
-      await fetch("/api/integrations/db-config", {
+      await safeFetchJson("/api/integrations/db-config", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: vars.activeDbProvider,
           mongodbUri: vars.mongodbUri,
+          mysqlMode: vars.mysqlMode,
           mysqlUri: vars.mysqlUri,
+          mysqlHost: vars.mysqlHost,
+          mysqlPort: vars.mysqlPort,
+          mysqlDatabase: vars.mysqlDatabase,
+          mysqlUser: vars.mysqlUser,
+          mysqlPassword: vars.mysqlPassword,
         }),
-      }).catch(() => {});
+      });
       setSuccessMsg(`Database provider (${vars.activeDbProvider.toUpperCase()}) & integration variables saved.`);
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err) {
@@ -351,9 +442,8 @@ export default function SettingsPage() {
     setAiTestResult(null);
     setError("");
     try {
-      const res = await fetch("/api/integrations/test-ai", {
+      const data = await safeFetchJson("/api/integrations/test-ai", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: selectedAiProvider,
@@ -361,7 +451,6 @@ export default function SettingsPage() {
           model: activeProviderConfig.model,
         }),
       });
-      const data = await res.json();
       setAiTestResult(data);
       if (data.success) {
         setSuccessMsg(data.message || "AI API Key verified successfully!");
@@ -386,12 +475,11 @@ export default function SettingsPage() {
     setMongoTestResult(null);
     setError("");
     try {
-      const res = await fetch("/api/integrations/test-mongo", {
+      const data = await safeFetchJson("/api/integrations/test-mongo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mongodbUri: vars.mongodbUri.trim() }),
       });
-      const data = await res.json();
       setMongoTestResult(data);
       if (data.success) {
         setSuccessMsg(data.message || "MongoDB connection succeeded!");
@@ -408,21 +496,46 @@ export default function SettingsPage() {
   };
 
   const runMysqlTest = async () => {
-    if (!vars.mysqlUri?.trim()) {
-      setError("Please enter a MySQL Connection URI before testing.");
-      return;
+    const isParams = vars.mysqlMode === "params";
+    if (isParams) {
+      if (!vars.mysqlHost?.trim()) {
+        setError("Please enter MySQL Host (e.g. 127.0.0.1) before testing.");
+        return;
+      }
+      if (!vars.mysqlUser?.trim()) {
+        setError("Please enter MySQL User (e.g. root) before testing.");
+        return;
+      }
+    } else {
+      if (!vars.mysqlUri?.trim()) {
+        setError("Please enter a MySQL Connection URI before testing.");
+        return;
+      }
     }
+
     setTestingMysql(true);
     setMysqlTestResult(null);
     setError("");
     try {
-      const res = await fetch("/api/integrations/test-mysql", {
+      const payload = isParams
+        ? {
+            mode: "params",
+            host: vars.mysqlHost.trim(),
+            port: vars.mysqlPort.trim() || "3306",
+            database: vars.mysqlDatabase.trim(),
+            user: vars.mysqlUser.trim(),
+            password: vars.mysqlPassword,
+          }
+        : {
+            mode: "uri",
+            mysqlUri: vars.mysqlUri.trim(),
+          };
+
+      const data = await safeFetchJson("/api/integrations/test-mysql", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mysqlUri: vars.mysqlUri.trim() }),
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
       setMysqlTestResult(data);
       if (data.success) {
         setSuccessMsg(data.message || "MySQL connection succeeded!");
@@ -447,7 +560,7 @@ export default function SettingsPage() {
     setCloudinaryTestResult(null);
     setError("");
     try {
-      const res = await fetch("/api/integrations/test-cloudinary", {
+      const data = await safeFetchJson("/api/integrations/test-cloudinary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -456,7 +569,6 @@ export default function SettingsPage() {
           apiSecret: vars.cloudinaryApiSecret.trim(),
         }),
       });
-      const data = await res.json();
       setCloudinaryTestResult(data);
       if (data.success) {
         setSuccessMsg(data.message || "Cloudinary credentials verified!");
@@ -1210,13 +1322,13 @@ export default function SettingsPage() {
                   {/* 2. MYSQL PANEL (Rendered when activeDbProvider === 'mysql') */}
                   {vars.activeDbProvider === "mysql" && (
                     <div className="space-y-4 pt-1 animate-in fade-in duration-200">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div className="text-xs text-muted-foreground">
-                          Relational tables (<code className="text-blue-500">users</code>, <code className="text-blue-500">devices</code>, <code className="text-blue-500">permissions</code>, <code className="text-blue-500">activity_logs</code>, <code className="text-blue-500">virtual_files</code>) with connection pooling.
+                          Relational tables (<code className="text-blue-500">users</code>, <code className="text-blue-500">devices</code>, <code className="text-blue-500">permissions</code>, <code className="text-blue-500">activity_logs</code>) with connection pooling.
                         </div>
                         {mysqlTestResult && (
                           <span
-                            className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
+                            className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium self-start sm:self-auto ${
                               mysqlTestResult.success
                                 ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
                                 : "bg-destructive/10 text-destructive border border-destructive/20"
@@ -1227,31 +1339,238 @@ export default function SettingsPage() {
                         )}
                       </div>
 
-                      <div className="space-y-2">
-                        <Label htmlFor="mysqlUri" className="text-xs font-mono uppercase tracking-wider">
-                          MySQL Connection URI / URL
-                        </Label>
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <Input
-                            id="mysqlUri"
-                            type="password"
-                            placeholder="mysql://username:password@127.0.0.1:3306/zenvora"
-                            value={vars.mysqlUri}
-                            onChange={(e) => setVars({ ...vars, mysqlUri: e.target.value })}
-                            className="font-mono text-sm flex-1"
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void runMysqlTest()}
-                            disabled={testingMysql || !vars.mysqlUri?.trim()}
-                            className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
-                          >
-                            <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
-                            {testingMysql ? "Testing…" : "Test MySQL"}
-                          </Button>
-                        </div>
+                      {/* Mode Selector Tabs: Parameters vs Connection String */}
+                      <div className="flex items-center gap-2 p-1 bg-muted/60 dark:bg-muted/30 rounded-lg border border-border/60 w-fit">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVars((prev) => {
+                              if (prev.mysqlUri && (!prev.mysqlHost || prev.mysqlHost === "127.0.0.1")) {
+                                const parsed = parseUriToParams(prev.mysqlUri);
+                                if (parsed) {
+                                  return {
+                                    ...prev,
+                                    mysqlMode: "params",
+                                    mysqlHost: parsed.host || prev.mysqlHost,
+                                    mysqlPort: parsed.port || prev.mysqlPort,
+                                    mysqlUser: parsed.user || prev.mysqlUser,
+                                    mysqlPassword: parsed.password || prev.mysqlPassword,
+                                    mysqlDatabase: parsed.database || prev.mysqlDatabase,
+                                  };
+                                }
+                              }
+                              return { ...prev, mysqlMode: "params" };
+                            });
+                          }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                            vars.mysqlMode === "params"
+                              ? "bg-background text-foreground shadow-sm border border-border/50"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          <Sliders className="w-3.5 h-3.5 text-blue-500" />
+                          <span>Host / Port / Database</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVars((prev) => {
+                              if (!prev.mysqlUri && prev.mysqlHost) {
+                                const generated = buildMysqlUriStr(prev);
+                                return { ...prev, mysqlMode: "uri", mysqlUri: generated };
+                              }
+                              return { ...prev, mysqlMode: "uri" };
+                            });
+                          }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                            vars.mysqlMode === "uri"
+                              ? "bg-background text-foreground shadow-sm border border-border/50"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          <Link2 className="w-3.5 h-3.5 text-blue-500" />
+                          <span>Connection String (URL)</span>
+                        </button>
                       </div>
+
+                      {/* 1. Host / Port / User / Password / Database Mode */}
+                      {vars.mysqlMode === "params" ? (
+                        <div className="space-y-3 bg-muted/20 p-4 rounded-xl border border-border/50">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="space-y-1.5 sm:col-span-2">
+                              <Label htmlFor="mysqlHost" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                                <Server className="w-3.5 h-3.5 text-blue-500" />
+                                Host / Server IP
+                              </Label>
+                              <Input
+                                id="mysqlHost"
+                                placeholder="127.0.0.1 or localhost"
+                                value={vars.mysqlHost}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setVars((prev) => ({
+                                    ...prev,
+                                    mysqlHost: val,
+                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlHost: val }),
+                                  }));
+                                }}
+                                className="font-mono text-sm"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mysqlPort" className="text-xs font-mono uppercase tracking-wider">
+                                Port
+                              </Label>
+                              <Input
+                                id="mysqlPort"
+                                placeholder="3306"
+                                value={vars.mysqlPort}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setVars((prev) => ({
+                                    ...prev,
+                                    mysqlPort: val,
+                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlPort: val }),
+                                  }));
+                                }}
+                                className="font-mono text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mysqlDatabase" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                                <Database className="w-3.5 h-3.5 text-blue-500" />
+                                Database Name
+                              </Label>
+                              <Input
+                                id="mysqlDatabase"
+                                placeholder="zenvora"
+                                value={vars.mysqlDatabase}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setVars((prev) => ({
+                                    ...prev,
+                                    mysqlDatabase: val,
+                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlDatabase: val }),
+                                  }));
+                                }}
+                                className="font-mono text-sm"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mysqlUser" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                                <KeyRound className="w-3.5 h-3.5 text-blue-500" />
+                                Username
+                              </Label>
+                              <Input
+                                id="mysqlUser"
+                                placeholder="root"
+                                value={vars.mysqlUser}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setVars((prev) => ({
+                                    ...prev,
+                                    mysqlUser: val,
+                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlUser: val }),
+                                  }));
+                                }}
+                                className="font-mono text-sm"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mysqlPassword" className="text-xs font-mono uppercase tracking-wider">
+                                Password
+                              </Label>
+                              <div className="relative">
+                                <Input
+                                  id="mysqlPassword"
+                                  type={showMysqlPass ? "text" : "password"}
+                                  placeholder="••••••••"
+                                  value={vars.mysqlPassword}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setVars((prev) => ({
+                                      ...prev,
+                                      mysqlPassword: val,
+                                      mysqlUri: buildMysqlUriStr({ ...prev, mysqlPassword: val }),
+                                    }));
+                                  }}
+                                  className="font-mono text-sm pr-9"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowMysqlPass(!showMysqlPass)}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                >
+                                  {showMysqlPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-2 border-t border-border/40">
+                            <span className="text-[11px] font-mono text-muted-foreground truncate max-w-md">
+                              URI Preview: <span className="opacity-75">{buildMysqlUriStr(vars) || "(incomplete)"}</span>
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void runMysqlTest()}
+                              disabled={testingMysql || !vars.mysqlHost?.trim()}
+                              className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs self-end sm:self-auto"
+                            >
+                              <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
+                              {testingMysql ? "Testing…" : "Test MySQL"}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* 2. Connection String (URI) Mode */
+                        <div className="space-y-2 bg-muted/20 p-4 rounded-xl border border-border/50">
+                          <Label htmlFor="mysqlUri" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                            <Link2 className="w-3.5 h-3.5 text-blue-500" />
+                            MySQL Connection URI / URL
+                          </Label>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <div className="relative flex-1">
+                              <Input
+                                id="mysqlUri"
+                                type={showMysqlUri ? "text" : "password"}
+                                placeholder="mysql://username:password@127.0.0.1:3306/zenvora"
+                                value={vars.mysqlUri}
+                                onChange={(e) => setVars({ ...vars, mysqlUri: e.target.value })}
+                                className="font-mono text-sm pr-9"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowMysqlUri(!showMysqlUri)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                              >
+                                {showMysqlUri ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void runMysqlTest()}
+                              disabled={testingMysql || !vars.mysqlUri?.trim()}
+                              className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
+                            >
+                              <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
+                              {testingMysql ? "Testing…" : "Test MySQL"}
+                            </Button>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Format: <code className="text-blue-500">mysql://[user]:[password]@[host]:[port]/[database]</code>
+                          </p>
+                        </div>
+                      )}
 
                       {mysqlTestResult && (
                         <div
