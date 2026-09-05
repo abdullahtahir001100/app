@@ -365,7 +365,10 @@ router.post('/test-mysql', async (req, res) => {
             mysqlDatabase = '',
         } = body;
 
-        const targetHost = String(host || mysqlHost || '').trim();
+        let targetHost = String(host || mysqlHost || '').trim();
+        targetHost = targetHost.replace(/^tcp:/i, '');
+        targetHost = targetHost.replace(/(\.(?:net|com|org|io|dev|cloud|azure\.com|windows\.net|gov|edu))127\.0\.0\.1$/i, '$1');
+
         const targetUser = String(user || mysqlUser || '').trim();
         const targetPort = String(port || mysqlPort || '').trim();
         const targetPass = String(password ?? mysqlPassword ?? '');

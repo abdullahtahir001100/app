@@ -191,12 +191,49 @@ export default function SettingsPage() {
 
   const parseUriToParams = (uri: string) => {
     if (!uri) return null;
+    const raw = uri.trim();
+    if (!raw) return null;
+
+    // 1. Support ADO.NET / Azure connection string format
+    // e.g. Server=tcp:ne-az-sql-serv1.database.windows.net,1433;Initial Catalog=dhodn6pdjcyqw98;User ID=...;Password=...
+    if (/Server=/i.test(raw) || /Data Source=/i.test(raw) || /Initial Catalog=/i.test(raw)) {
+      const parts = raw.split(";").map((p) => p.trim()).filter(Boolean);
+      const kv: Record<string, string> = {};
+      for (const p of parts) {
+        const eq = p.indexOf("=");
+        if (eq > 0) {
+          kv[p.substring(0, eq).trim().toLowerCase()] = p.substring(eq + 1).trim();
+        }
+      }
+      let server = (kv["server"] || kv["data source"] || "").replace(/^tcp:/i, "");
+      let host = server;
+      let port = "3306";
+      if (server.includes(",")) {
+        const [h, pt] = server.split(",");
+        host = h.trim();
+        port = pt.trim() || "3306";
+      } else if (server.includes(":")) {
+        const [h, pt] = server.split(":");
+        host = h.trim();
+        port = pt.trim() || "3306";
+      }
+      return {
+        host: host.replace(/^tcp:/i, "").replace(/(\.(?:net|com|org|io|dev|cloud|windows\.net|azure\.com))127\.0\.0\.1$/i, "$1"),
+        port,
+        database: kv["initial catalog"] || kv["database"] || "",
+        user: kv["user id"] || kv["uid"] || kv["user"] || "root",
+        password: kv["password"] || kv["pwd"] || "",
+      };
+    }
+
     try {
-      const raw = uri.trim();
       const normalized = raw.startsWith("mysql://") ? raw : `mysql://${raw}`;
       const url = new URL(normalized);
+      const host = (url.hostname || "127.0.0.1")
+        .replace(/^tcp:/i, "")
+        .replace(/(\.(?:net|com|org|io|dev|cloud|windows\.net|azure\.com))127\.0\.0\.1$/i, "$1");
       return {
-        host: url.hostname || "127.0.0.1",
+        host,
         port: url.port || "3306",
         user: url.username ? decodeURIComponent(url.username) : "root",
         password: url.password ? decodeURIComponent(url.password) : "",
@@ -517,11 +554,17 @@ export default function SettingsPage() {
     setMysqlTestResult(null);
     setError("");
     try {
+      const hostClean = vars.mysqlHost
+        .trim()
+        .replace(/^tcp:/i, "")
+        .replace(/(\.(?:net|com|org|io|dev|cloud|windows\.net|azure\.com))127\.0\.0\.1$/i, "$1");
+      const portClean = vars.mysqlPort.trim() || "3306";
+
       const payload = isParams
         ? {
             mode: "params",
-            host: vars.mysqlHost.trim(),
-            port: vars.mysqlPort.trim() || "3306",
+            host: hostClean,
+            port: portClean,
             database: vars.mysqlDatabase.trim(),
             user: vars.mysqlUser.trim(),
             password: vars.mysqlPassword,
@@ -1403,12 +1446,30 @@ export default function SettingsPage() {
                                 <Server className="w-3.5 h-3.5 text-blue-500" />
                                 Host / Server IP
                               </Label>
-                              <Input
+                               <Input
                                 id="mysqlHost"
                                 placeholder="127.0.0.1 or localhost"
                                 value={vars.mysqlHost}
                                 onChange={(e) => {
-                                  const val = e.target.value;
+                                  let val = e.target.value;
+                                  // If user pasted a full ADO.NET string (e.g. Server=tcp:...;Database=...)
+                                  if (/Server=/i.test(val) || /Initial Catalog=/i.test(val)) {
+                                    const parsed = parseUriToParams(val);
+                                    if (parsed) {
+                                      setVars((prev) => ({
+                                        ...prev,
+                                        mysqlHost: parsed.host,
+                                        mysqlPort: parsed.port,
+                                        mysqlDatabase: parsed.database,
+                                        mysqlUser: parsed.user,
+                                        mysqlPassword: parsed.password,
+                                        mysqlUri: buildMysqlUriStr({ ...prev, ...parsed }),
+                                      }));
+                                      return;
+                                    }
+                                  }
+                                  val = val.replace(/^tcp:/i, "");
+                                  val = val.replace(/(\.(?:net|com|org|io|dev|cloud|windows\.net|azure\.com))127\.0\.0\.1$/i, "$1");
                                   setVars((prev) => ({
                                     ...prev,
                                     mysqlHost: val,
@@ -1542,9 +1603,25 @@ export default function SettingsPage() {
                               <Input
                                 id="mysqlUri"
                                 type={showMysqlUri ? "text" : "password"}
-                                placeholder="mysql://username:password@127.0.0.1:3306/zenvora"
+                                placeholder="mysql://username:password@127.0.0.1:3306/zenvora or Azure connection string"
                                 value={vars.mysqlUri}
-                                onChange={(e) => setVars({ ...vars, mysqlUri: e.target.value })}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const parsed = parseUriToParams(val);
+                                  setVars((prev) => ({
+                                    ...prev,
+                                    mysqlUri: val,
+                                    ...(parsed
+                                      ? {
+                                          mysqlHost: parsed.host,
+                                          mysqlPort: parsed.port,
+                                          mysqlDatabase: parsed.database,
+                                          mysqlUser: parsed.user,
+                                          mysqlPassword: parsed.password,
+                                        }
+                                      : {}),
+                                  }));
+                                }}
                                 className="font-mono text-sm pr-9"
                               />
                               <button

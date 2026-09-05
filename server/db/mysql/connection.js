@@ -113,14 +113,58 @@ function buildMysqlUri(params) {
     return `mysql://${auth}${host}:${port}${db}`;
 }
 
+function cleanHostString(host) {
+    if (!host) return '127.0.0.1';
+    let clean = String(host).trim();
+    clean = clean.replace(/^tcp:/i, '');
+    // Clean up accidental paste of hostname next to default 127.0.0.1 (e.g. host.database.windows.net127.0.0.1)
+    clean = clean.replace(/(\.(?:net|com|org|io|dev|cloud|azure\.com|windows\.net|gov|edu))127\.0\.0\.1$/i, '$1');
+    return clean;
+}
+
 function parseMysqlConnectionString(uri) {
     if (!uri || typeof uri !== 'string') return null;
+    const raw = uri.trim();
+    if (!raw) return null;
+
+    // 1. Support ADO.NET / Azure connection string format
+    // e.g. Server=tcp:ne-az-sql-serv1.database.windows.net,1433;Initial Catalog=dhodn6pdjcyqw98;User ID=...;Password=...
+    if (/Server=/i.test(raw) || /Data Source=/i.test(raw) || /Initial Catalog=/i.test(raw)) {
+        const parts = raw.split(';').map((p) => p.trim()).filter(Boolean);
+        const kv = {};
+        for (const p of parts) {
+            const eq = p.indexOf('=');
+            if (eq > 0) {
+                kv[p.substring(0, eq).trim().toLowerCase()] = p.substring(eq + 1).trim();
+            }
+        }
+        let server = (kv['server'] || kv['data source'] || '').replace(/^tcp:/i, '');
+        let host = server;
+        let port = 3306;
+        if (server.includes(',')) {
+            const [h, pt] = server.split(',');
+            host = h.trim();
+            port = Number(pt.trim()) || 3306;
+        } else if (server.includes(':')) {
+            const [h, pt] = server.split(':');
+            host = h.trim();
+            port = Number(pt.trim()) || 3306;
+        }
+        return {
+            host: cleanHostString(host),
+            port,
+            database: kv['initial catalog'] || kv['database'] || '',
+            user: kv['user id'] || kv['uid'] || kv['user'] || 'root',
+            password: kv['password'] || kv['pwd'] || '',
+        };
+    }
+
+    // 2. Standard URI format
     try {
-        const raw = uri.trim();
         const normalized = raw.startsWith('mysql://') ? raw : `mysql://${raw}`;
         const parsed = new URL(normalized);
         return {
-            host: parsed.hostname || '127.0.0.1',
+            host: cleanHostString(parsed.hostname || '127.0.0.1'),
             port: parsed.port ? Number(parsed.port) : 3306,
             user: parsed.username ? decodeURIComponent(parsed.username) : 'root',
             password: parsed.password ? decodeURIComponent(parsed.password) : '',
@@ -150,15 +194,16 @@ function resolveMysqlConfig(input) {
     // 1. Explicit object provided
     if (input && typeof input === 'object') {
         if (input.mysqlUri || input.uri) {
-            const rawUri = String(input.mysqlUri || input.uri).trim();
-            const uri = rawUri.startsWith('mysql://') ? rawUri : `mysql://${rawUri}`;
+            const raw = String(input.mysqlUri || input.uri).trim();
+            const parsed = parseMysqlConnectionString(raw);
+            const uri = parsed ? buildMysqlUri(parsed) : (raw.startsWith('mysql://') ? raw : `mysql://${raw}`);
             return {
                 mode: 'uri',
                 uri,
-                options: parseMysqlConnectionString(uri) || {},
+                options: parsed || {},
             };
         }
-        const host = input.host || input.mysqlHost || '127.0.0.1';
+        const host = cleanHostString(input.host || input.mysqlHost || '127.0.0.1');
         const port = Number(input.port || input.mysqlPort) || 3306;
         const user = input.user || input.mysqlUser || 'root';
         const password = input.password ?? input.mysqlPassword ?? '';
@@ -174,12 +219,13 @@ function resolveMysqlConfig(input) {
 
     // 2. String URI provided
     if (typeof input === 'string' && input.trim()) {
-        const trimmed = input.trim();
-        const uri = trimmed.startsWith('mysql://') ? trimmed : `mysql://${trimmed}`;
+        const raw = input.trim();
+        const parsed = parseMysqlConnectionString(raw);
+        const uri = parsed ? buildMysqlUri(parsed) : (raw.startsWith('mysql://') ? raw : `mysql://${raw}`);
         return {
             mode: 'uri',
             uri,
-            options: parseMysqlConnectionString(uri) || {},
+            options: parsed || {},
         };
     }
 
@@ -300,11 +346,25 @@ async function testMysqlConnection(targetConfig) {
             throw new Error('MySQL configuration is required (either Host/User or Connection String).');
         }
 
+        const rawHost = config.options?.host || '';
+        const targetHost = cleanHostString(rawHost);
+        const targetPort = Number(config.options?.port || 3306);
+
+        // Check if user is attempting to connect to Microsoft SQL Server (Azure SQL) instead of MySQL
+        if (targetPort === 1433 || targetHost.includes('database.windows.net')) {
+            return {
+                success: false,
+                latencyMs: Date.now() - start,
+                host: targetHost,
+                error: `Microsoft SQL Server detected (${targetHost}:${targetPort}). This driver connects to MySQL (port 3306). On Azure, you created an "Azure SQL Database" (MSSQL/TDS protocol). For MySQL, create an "Azure Database for MySQL flexible server" (port 3306).`,
+            };
+        }
+
         let connOptions;
-        if (config.mode === 'params' && config.options.host) {
+        if (config.mode === 'params' && targetHost) {
             connOptions = {
-                host: config.options.host,
-                port: config.options.port,
+                host: targetHost,
+                port: targetPort,
                 user: config.options.user,
                 password: config.options.password,
                 database: config.options.database || undefined,
