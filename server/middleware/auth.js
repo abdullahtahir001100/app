@@ -67,8 +67,14 @@ function isPublicApiRoute(pathname = "") {
 
 async function loadUserPermissions(userId, role) {
     try {
+        const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
         const Permission = require('../models/Permission');
-        const doc = await Permission.findOne({ userId }).lean();
+        let doc;
+        if (isMysql()) {
+            doc = await getMysqlAdapter().findPermissionByUser(userId);
+        } else {
+            doc = await Permission.findOne({ userId }).lean();
+        }
         let pages;
         if (!doc) {
             pages = Permission.defaultsForRole(role);

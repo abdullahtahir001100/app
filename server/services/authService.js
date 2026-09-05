@@ -6,6 +6,7 @@ const AgentCredential = require('../models/AgentCredential');
 const Device = require('../models/Device');
 const { ensureMongooseConnected } = require('../db/mongo/connection');
 const { sendPasswordResetOtp } = require('./mailService');
+const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
@@ -80,7 +81,9 @@ async function verifyUserToken(token) {
         const payload = jwt.verify(token, getJwtSecret());
         if (!payload?.sub) return null;
 
-        const user = await User.findById(payload.sub).lean();
+        const user = isMysql()
+            ? await getMysqlAdapter().findUserById(payload.sub)
+            : await User.findById(payload.sub).lean();
         if (!user) return null;
         if (user.authTokenHash) {
             const matches = await bcrypt.compare(token, user.authTokenHash);
@@ -113,26 +116,44 @@ function verifyUserTokenFast(token) {
 }
 
 async function ensureAuthDatabase() {
-    await ensureMongooseConnected();
+    if (isMysql()) {
+        const { ensureMysqlConnected } = require('../db/mysql/connection');
+        await ensureMysqlConnected();
+    } else {
+        await ensureMongooseConnected();
+    }
 }
 
 async function setUserAuthSession(user, token) {
     if (!user?._id || !token) return null;
     const tokenHash = await bcrypt.hash(token, 12);
-    await User.findByIdAndUpdate(user._id, {
-        authTokenHash: tokenHash,
-        lastLoginAt: new Date()
-    });
+    if (isMysql()) {
+        await getMysqlAdapter().updateUser(user._id, {
+            authTokenHash: tokenHash,
+            lastLoginAt: new Date()
+        });
+    } else {
+        await User.findByIdAndUpdate(user._id, {
+            authTokenHash: tokenHash,
+            lastLoginAt: new Date()
+        });
+    }
     return tokenHash;
 }
 
 async function clearUserAuthSession(userId) {
     if (!userId) return null;
-    await User.findByIdAndUpdate(userId, {
-        authTokenHash: '',
-        passwordResetOtpHash: '',
-        passwordResetOtpExpiresAt: null
-    });
+    if (isMysql()) {
+        await getMysqlAdapter().updateUser(userId, {
+            authTokenHash: ''
+        });
+    } else {
+        await User.findByIdAndUpdate(userId, {
+            authTokenHash: '',
+            passwordResetOtpHash: '',
+            passwordResetOtpExpiresAt: null
+        });
+    }
     return true;
 }
 
@@ -192,7 +213,12 @@ function generateSixDigitCode() {
 async function generateUniqueUserField(fieldName) {
     while (true) {
         const candidate = generateStrongSixDigitCode();
-        const existing = await User.findOne({ [fieldName]: candidate }).lean();
+        let existing;
+        if (isMysql()) {
+            existing = await getMysqlAdapter().findUserByPairing(candidate);
+        } else {
+            existing = await User.findOne({ [fieldName]: candidate }).lean();
+        }
         if (!existing) {
             return candidate;
         }
@@ -211,6 +237,9 @@ async function ensureUserPairingFields(user) {
     if (Object.keys(updates).length === 0) {
         return user;
     }
+    if (isMysql()) {
+        return await getMysqlAdapter().updateUser(user._id, updates);
+    }
     await User.findByIdAndUpdate(user._id, updates);
     return await User.findById(user._id).lean();
 }
@@ -221,13 +250,21 @@ async function rotateUserPairingFields(userId) {
         error.status = 400;
         throw error;
     }
+
     const pairingToken = await generateUniqueUserField('pairingToken');
     const pairingUserId = await generateUniqueUserField('pairingUserId');
-    const user = await User.findByIdAndUpdate(
-        userId,
-        { pairingToken, pairingUserId },
-        { new: true }
-    ).lean();
+
+    let user;
+    if (isMysql()) {
+        user = await getMysqlAdapter().updateUser(userId, { pairingToken, pairingUserId });
+    } else {
+        user = await User.findByIdAndUpdate(
+            userId,
+            { pairingToken, pairingUserId },
+            { new: true }
+        ).lean();
+    }
+
     if (!user) {
         const error = new Error('User not found.');
         error.status = 404;
@@ -289,7 +326,9 @@ async function registerUser({ email, password, passwordHash, name, provider = 'l
         throw error;
     }
 
-    const existing = await User.findOne({ email: normalized });
+    const existing = isMysql()
+        ? await getMysqlAdapter().findUserByEmail(normalized)
+        : await User.findOne({ email: normalized });
     if (existing) {
         const error = new Error('Email already registered.');
         error.status = 409;
@@ -299,8 +338,13 @@ async function registerUser({ email, password, passwordHash, name, provider = 'l
     const passwordHashValue = passwordHash
         ? String(passwordHash)
         : await bcrypt.hash(plain, 12);
-    const userCount = await User.countDocuments();
-    const user = await User.create({
+    const userCount = isMysql()
+        ? await getMysqlAdapter().countUsers()
+        : await User.countDocuments();
+    const pairingToken = await generateUniqueUserField('pairingToken');
+    const pairingUserId = await generateUniqueUserField('pairingUserId');
+
+    const userData = {
         email: normalized,
         passwordHash: passwordHashValue,
         name: String(name || normalized.split('@')[0] || 'User').trim(),
@@ -309,16 +353,22 @@ async function registerUser({ email, password, passwordHash, name, provider = 'l
         googleId: String(googleId || '').trim(),
         avatarUrl: String(avatarUrl || '').trim(),
         emailVerified: provider === 'google',
-        pairingToken: await generateUniqueUserField('pairingToken'),
-        pairingUserId: await generateUniqueUserField('pairingUserId')
-    });
+        pairingToken,
+        pairingUserId
+    };
+
+    const user = isMysql()
+        ? await getMysqlAdapter().createUser(userData)
+        : await User.create(userData);
 
     return user;
 }
 
 async function loginUser({ email, password }) {
     const normalized = String(email || '').trim().toLowerCase();
-    const user = await User.findOne({ email: normalized });
+    const user = isMysql()
+        ? await getMysqlAdapter().findUserByEmail(normalized)
+        : await User.findOne({ email: normalized });
     if (!user) {
         const error = new Error('Invalid email or password.');
         error.status = 401;
@@ -645,6 +695,10 @@ async function pairAgent(body, req) {
 }
 async function userOwnsDevice(userId, deviceId) {
     if (!userId || !deviceId) return false;
+    if (isMysql()) {
+        const dev = await getMysqlAdapter().findDeviceById(deviceId);
+        return Boolean(dev && String(dev.userId) === String(userId));
+    }
     const cred = await AgentCredential.findOne({
         userId,
         deviceId: String(deviceId).trim()
@@ -659,11 +713,21 @@ async function userOwnsDevice(userId, deviceId) {
 }
 
 async function listUserDevices(userId) {
+    if (isMysql()) {
+        const devices = await getMysqlAdapter().listDevices({ userId });
+        return devices.map(d => ({
+            deviceId: d.deviceId,
+            label: d.hostname || d.deviceId,
+            lastConnectedAt: d.lastSeen
+        }));
+    }
     return AgentCredential.find({ userId }).sort({ updatedAt: -1 }).lean();
 }
 
 async function ensureDefaultAdmin() {
-    const count = await User.countDocuments();
+    const count = isMysql()
+        ? await getMysqlAdapter().countUsers()
+        : await User.countDocuments();
     if (count > 0) return null;
 
     if (process.env.NODE_ENV === 'production') {

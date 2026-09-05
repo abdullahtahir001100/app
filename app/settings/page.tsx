@@ -47,8 +47,12 @@ type PairingState = {
   pairingUserId: string;
 };
 
+type DbProviderKey = "mongo" | "mysql";
+
 type IntegrationVariables = {
+  activeDbProvider: DbProviderKey;
   mongodbUri: string;
+  mysqlUri: string;
   cloudinaryCloudName: string;
   cloudinaryApiKey: string;
   cloudinaryApiSecret: string;
@@ -57,7 +61,9 @@ type IntegrationVariables = {
 };
 
 const DEFAULT_INTEGRATION_VARS: IntegrationVariables = {
+  activeDbProvider: "mongo",
   mongodbUri: "",
+  mysqlUri: "",
   cloudinaryCloudName: "",
   cloudinaryApiKey: "",
   cloudinaryApiSecret: "",
@@ -136,6 +142,16 @@ export default function SettingsPage() {
     dbName?: string;
   } | null>(null);
 
+  const [testingMysql, setTestingMysql] = useState(false);
+  const [mysqlTestResult, setMysqlTestResult] = useState<{
+    success: boolean;
+    message?: string;
+    error?: string;
+    latencyMs?: number;
+    version?: string;
+    dbName?: string;
+  } | null>(null);
+
   const [testingCloudinary, setTestingCloudinary] = useState(false);
   const [cloudinaryTestResult, setCloudinaryTestResult] = useState<{
     success: boolean;
@@ -187,6 +203,20 @@ export default function SettingsPage() {
         pairingToken: String(data.user?.pairingToken || ""),
         pairingUserId: String(data.user?.pairingUserId || ""),
       });
+
+      // Load server db-config
+      try {
+        const dbRes = await fetch("/api/integrations/db-config", { credentials: "include" });
+        const dbData = await dbRes.json();
+        if (dbData?.success) {
+          setVars((prev) => ({
+            ...prev,
+            activeDbProvider: dbData.activeProvider === "mysql" ? "mysql" : "mongo",
+            mongodbUri: prev.mongodbUri || dbData.mongodbUri || "",
+            mysqlUri: prev.mysqlUri || dbData.mysqlUri || "",
+          }));
+        }
+      } catch (_) {}
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
     } finally {
@@ -274,12 +304,23 @@ export default function SettingsPage() {
     }
   };
 
-  const saveVariables = (e: FormEvent) => {
+  const saveVariables = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
       localStorage.setItem("zenvora-workspace-variables", JSON.stringify(vars));
-      setSuccessMsg("Integration variables and network settings saved.");
+      // Persist active database provider and credentials to server
+      await fetch("/api/integrations/db-config", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: vars.activeDbProvider,
+          mongodbUri: vars.mongodbUri,
+          mysqlUri: vars.mysqlUri,
+        }),
+      }).catch(() => {});
+      setSuccessMsg(`Database provider (${vars.activeDbProvider.toUpperCase()}) & integration variables saved.`);
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err) {
       setError("Failed to save variables locally.");
@@ -363,6 +404,37 @@ export default function SettingsPage() {
       setError("Network error testing MongoDB connection: " + msg);
     } finally {
       setTestingMongo(false);
+    }
+  };
+
+  const runMysqlTest = async () => {
+    if (!vars.mysqlUri?.trim()) {
+      setError("Please enter a MySQL Connection URI before testing.");
+      return;
+    }
+    setTestingMysql(true);
+    setMysqlTestResult(null);
+    setError("");
+    try {
+      const res = await fetch("/api/integrations/test-mysql", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mysqlUri: vars.mysqlUri.trim() }),
+      });
+      const data = await res.json();
+      setMysqlTestResult(data);
+      if (data.success) {
+        setSuccessMsg(data.message || "MySQL connection succeeded!");
+      } else {
+        setError(data.error || "MySQL connection test failed.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMysqlTestResult({ success: false, error: msg });
+      setError("Network error testing MySQL connection: " + msg);
+    } finally {
+      setTestingMysql(false);
     }
   };
 
@@ -1016,75 +1088,191 @@ export default function SettingsPage() {
             {/* Tab 3: Variables & Storage */}
             {activeTab === "integrations" && (
               <form onSubmit={saveVariables} className="space-y-8">
-                {/* MongoDB Section */}
-                <section className="space-y-4 p-5 border border-border rounded-xl bg-card shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Database className="w-5 h-5 text-emerald-500" />
+                {/* Database Engine Section (MongoDB or MySQL - One at a Time) */}
+                <section className="space-y-5 p-5 border border-border rounded-xl bg-card shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/50">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                        <Database className="w-5 h-5" />
+                      </div>
                       <div>
-                        <h2 className="text-base font-semibold">Database Connection (MongoDB)</h2>
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-base font-semibold">Primary Database Engine</h2>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                            Active: {vars.activeDbProvider.toUpperCase()}
+                          </span>
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Connect your MongoDB cluster for fleet telemetry, app history, device logs, and configuration.
+                          Select your primary database engine. Choose between MySQL and MongoDB (only one engine active at a time).
                         </p>
                       </div>
                     </div>
-                    {mongoTestResult && (
-                      <span
-                        className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
-                          mongoTestResult.success
-                            ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
-                            : "bg-destructive/10 text-destructive border border-destructive/20"
+
+                    {/* Active Provider Selector Pills */}
+                    <div className="flex items-center bg-muted/60 p-1 rounded-lg border border-border shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setVars({ ...vars, activeDbProvider: "mongo" })}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${
+                          vars.activeDbProvider === "mongo"
+                            ? "bg-emerald-600 text-white shadow-sm font-bold"
+                            : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        {mongoTestResult.success ? `Connected (${mongoTestResult.latencyMs}ms)` : "Failed"}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 pt-1">
-                    <Label htmlFor="mongodbUri" className="text-xs font-mono uppercase tracking-wider">
-                      MongoDB Connection URI
-                    </Label>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <Input
-                        id="mongodbUri"
-                        type="password"
-                        placeholder="mongodb+srv://username:password@cluster.mongodb.net/zenvora?retryWrites=true&w=majority"
-                        value={vars.mongodbUri}
-                        onChange={(e) => setVars({ ...vars, mongodbUri: e.target.value })}
-                        className="font-mono text-sm flex-1"
-                      />
-                      <Button
+                        <Database className="w-3.5 h-3.5" />
+                        <span>MongoDB</span>
+                      </button>
+                      <button
                         type="button"
-                        variant="outline"
-                        onClick={() => void runMongoTest()}
-                        disabled={testingMongo || !vars.mongodbUri?.trim()}
-                        className="gap-2 shrink-0 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-500 text-xs"
+                        onClick={() => setVars({ ...vars, activeDbProvider: "mysql" })}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${
+                          vars.activeDbProvider === "mysql"
+                            ? "bg-blue-600 text-white shadow-sm font-bold"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
                       >
-                        <Activity className={`w-3.5 h-3.5 text-emerald-500 ${testingMongo ? "animate-spin" : ""}`} />
-                        {testingMongo ? "Testing…" : "Test Connection"}
-                      </Button>
+                        <Database className="w-3.5 h-3.5" />
+                        <span>MySQL</span>
+                      </button>
                     </div>
                   </div>
 
-                  {mongoTestResult && (
-                    <div
-                      className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
-                        mongoTestResult.success
-                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
-                          : "border-destructive/30 bg-destructive/5 text-destructive"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        {mongoTestResult.success ? (
-                          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                  {/* 1. MONGODB PANEL (Rendered when activeDbProvider === 'mongo') */}
+                  {vars.activeDbProvider === "mongo" && (
+                    <div className="space-y-4 pt-1 animate-in fade-in duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-muted-foreground">
+                          Used for fleet telemetry, real-time agent registration, browser/app history, and accounts.
+                        </div>
+                        {mongoTestResult && (
+                          <span
+                            className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
+                              mongoTestResult.success
+                                ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                                : "bg-destructive/10 text-destructive border border-destructive/20"
+                            }`}
+                          >
+                            {mongoTestResult.success ? `Connected (${mongoTestResult.latencyMs}ms)` : "Failed"}
+                          </span>
                         )}
-                        <span className="truncate">{mongoTestResult.message || mongoTestResult.error}</span>
                       </div>
-                      {mongoTestResult.latencyMs !== undefined && (
-                        <span className="text-[10px] opacity-75 shrink-0 ml-2">{mongoTestResult.latencyMs}ms ping</span>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="mongodbUri" className="text-xs font-mono uppercase tracking-wider">
+                          MongoDB Connection URI
+                        </Label>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <Input
+                            id="mongodbUri"
+                            type="password"
+                            placeholder="mongodb+srv://username:password@cluster.mongodb.net/zenvora?retryWrites=true&w=majority"
+                            value={vars.mongodbUri}
+                            onChange={(e) => setVars({ ...vars, mongodbUri: e.target.value })}
+                            className="font-mono text-sm flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void runMongoTest()}
+                            disabled={testingMongo || !vars.mongodbUri?.trim()}
+                            className="gap-2 shrink-0 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-500 text-xs"
+                          >
+                            <Activity className={`w-3.5 h-3.5 text-emerald-500 ${testingMongo ? "animate-spin" : ""}`} />
+                            {testingMongo ? "Testing…" : "Test MongoDB"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {mongoTestResult && (
+                        <div
+                          className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
+                            mongoTestResult.success
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
+                              : "border-destructive/30 bg-destructive/5 text-destructive"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            {mongoTestResult.success ? (
+                              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                            ) : (
+                              <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                            )}
+                            <span className="truncate">{mongoTestResult.message || mongoTestResult.error}</span>
+                          </div>
+                          {mongoTestResult.latencyMs !== undefined && (
+                            <span className="text-[10px] opacity-75 shrink-0 ml-2">{mongoTestResult.latencyMs}ms ping</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. MYSQL PANEL (Rendered when activeDbProvider === 'mysql') */}
+                  {vars.activeDbProvider === "mysql" && (
+                    <div className="space-y-4 pt-1 animate-in fade-in duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-muted-foreground">
+                          Relational tables (<code className="text-blue-500">users</code>, <code className="text-blue-500">devices</code>, <code className="text-blue-500">permissions</code>, <code className="text-blue-500">activity_logs</code>, <code className="text-blue-500">virtual_files</code>) with connection pooling.
+                        </div>
+                        {mysqlTestResult && (
+                          <span
+                            className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
+                              mysqlTestResult.success
+                                ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
+                                : "bg-destructive/10 text-destructive border border-destructive/20"
+                            }`}
+                          >
+                            {mysqlTestResult.success ? `Connected (${mysqlTestResult.latencyMs}ms)` : "Failed"}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="mysqlUri" className="text-xs font-mono uppercase tracking-wider">
+                          MySQL Connection URI / URL
+                        </Label>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <Input
+                            id="mysqlUri"
+                            type="password"
+                            placeholder="mysql://username:password@127.0.0.1:3306/zenvora"
+                            value={vars.mysqlUri}
+                            onChange={(e) => setVars({ ...vars, mysqlUri: e.target.value })}
+                            className="font-mono text-sm flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void runMysqlTest()}
+                            disabled={testingMysql || !vars.mysqlUri?.trim()}
+                            className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
+                          >
+                            <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
+                            {testingMysql ? "Testing…" : "Test MySQL"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {mysqlTestResult && (
+                        <div
+                          className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
+                            mysqlTestResult.success
+                              ? "border-blue-500/30 bg-blue-500/5 text-blue-600 dark:text-blue-400"
+                              : "border-destructive/30 bg-destructive/5 text-destructive"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            {mysqlTestResult.success ? (
+                              <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-500" />
+                            ) : (
+                              <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                            )}
+                            <span className="truncate">{mysqlTestResult.message || mysqlTestResult.error}</span>
+                          </div>
+                          {mysqlTestResult.version && (
+                            <span className="text-[10px] opacity-75 shrink-0 ml-2">v{mysqlTestResult.version}</span>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

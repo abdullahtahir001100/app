@@ -118,6 +118,13 @@ function clearOwnershipForDevice(deviceId) {
 async function upsertDeviceExclusive(deviceId, update, ownerUserId) {
     const id = String(deviceId || '');
     if (!id) return;
+    const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+    if (isMysql()) {
+        const setDoc = { ...update };
+        if (ownerUserId) setDoc.userId = ownerUserId;
+        await getMysqlAdapter().upsertDevice(id, setDoc);
+        return;
+    }
     const setDoc = { ...update, deviceId: id };
     if (ownerUserId) setDoc.userId = ownerUserId;
     await Device.updateOne({ deviceId: id }, { $set: setDoc }, { upsert: true });
@@ -191,11 +198,17 @@ async function getDeviceOptions(userId = null, opts = {}) {
     const liveDevices = getLiveDeviceOptions(userId, { seeAll });
     const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
     const query = seeAll ? {} : { userId };
-    const allDevices = await Device.find(query)
-        .select('deviceId hostname platform localIp publicIp battery storage lastSeen lastAndroidBeatAt network username userId')
-        .sort({ lastSeen: -1 })
-        .lean()
-        .maxTimeMS(2500);
+    const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+    let allDevices;
+    if (isMysql()) {
+        allDevices = await getMysqlAdapter().listDevices(seeAll ? {} : { userId });
+    } else {
+        allDevices = await Device.find(query)
+            .select('deviceId hostname platform localIp publicIp battery storage lastSeen lastAndroidBeatAt network username userId')
+            .sort({ lastSeen: -1 })
+            .lean()
+            .maxTimeMS(2500);
+    }
 
     const devices = allDevices.map((device) => {
         const deviceId = String(device.deviceId || '');

@@ -12,12 +12,18 @@ const {
     requireDeviceAccess,
     userCanAccessAnyDevice,
 } = require('../middleware/auth');
+const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 
 router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const seeAll = await userCanAccessAnyDevice(req.user);
         const query = seeAll ? {} : { userId: req.user.id };
-        const allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
+        let allDevices;
+        if (isMysql()) {
+            allDevices = await getMysqlAdapter().listDevices(seeAll ? {} : { userId: req.user.id });
+        } else {
+            allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
+        }
         const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
         const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
 
@@ -59,7 +65,15 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
         const filter = seeAll
             ? { deviceId: req.params.deviceId }
             : { userId: req.user.id, deviceId: req.params.deviceId };
-        const device = await Device.findOne(filter).lean();
+        let device;
+        if (isMysql()) {
+            device = await getMysqlAdapter().findDeviceById(req.params.deviceId);
+            if (device && !seeAll && String(device.userId) !== String(req.user.id)) {
+                device = null;
+            }
+        } else {
+            device = await Device.findOne(filter).lean();
+        }
         if (!device) {
             return res.status(404).json({ success: false, message: 'Device not found' });
         }

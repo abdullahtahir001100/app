@@ -4,21 +4,47 @@ const { PostgresVirtualFileRepository } = require('./postgres/PostgresVirtualFil
 const { PostgresVirtualFolderRepository } = require('./postgres/PostgresVirtualFolderRepository');
 const { MysqlVirtualFileRepository } = require('./mysql/MysqlVirtualFileRepository');
 const { MysqlVirtualFolderRepository } = require('./mysql/MysqlVirtualFolderRepository');
+const { ensureMongooseConnected } = require('./mongo/connection');
+const { ensureMysqlConnected, isMysqlConnected } = require('./mysql/connection');
+
+let activeProvider = null;
+let fileRepository = null;
+let folderRepository = null;
+let connectPromise = null;
 
 function resolveProvider() {
+    if (activeProvider) return activeProvider;
     if (process.env.DATABASE_PROVIDER) {
         return String(process.env.DATABASE_PROVIDER).trim().toLowerCase();
     }
-    if (process.env.MONGODB_URI) return 'mongo';
-    if (process.env.POSTGRES_URL || process.env.DATABASE_URL?.includes('postgres')) return 'postgres';
     if (process.env.MYSQL_URL || process.env.DATABASE_URL?.includes('mysql')) return 'mysql';
+    if (process.env.POSTGRES_URL || process.env.DATABASE_URL?.includes('postgres')) return 'postgres';
+    if (process.env.MONGODB_URI) return 'mongo';
     return 'mongo';
 }
 
-let fileRepository = null;
-let folderRepository = null;
-let activeProvider = null;
-let connectPromise = null;
+function setActiveProvider(provider) {
+    const p = String(provider || 'mongo').trim().toLowerCase();
+    if (['mongo', 'mysql', 'postgres'].includes(p)) {
+        activeProvider = p;
+        process.env.DATABASE_PROVIDER = p;
+        fileRepository = null;
+        folderRepository = null;
+        connectPromise = null;
+    }
+}
+
+function isMysql() {
+    return resolveProvider() === 'mysql';
+}
+
+function isMongo() {
+    return resolveProvider() === 'mongo';
+}
+
+function isPostgres() {
+    return resolveProvider() === 'postgres';
+}
 
 function createRepositories(provider) {
     switch (provider) {
@@ -42,16 +68,32 @@ function createRepositories(provider) {
 }
 
 async function connectDatabase() {
-    activeProvider = resolveProvider();
-    const repos = createRepositories(activeProvider);
+    const provider = resolveProvider();
+    activeProvider = provider;
+
+    if (provider === 'mysql') {
+        await ensureMysqlConnected();
+        console.log('=> MySQL connection pool and schema verified.');
+    } else if (provider === 'postgres') {
+        console.log('=> PostgreSQL ready.');
+    } else {
+        await ensureMongooseConnected();
+        console.log('=> MongoDB connection verified.');
+    }
+
+    const repos = createRepositories(provider);
     fileRepository = repos.fileRepository;
     folderRepository = repos.folderRepository;
 
-    await fileRepository.connect();
-    await folderRepository.connect();
+    try {
+        await fileRepository.connect();
+        await folderRepository.connect();
+    } catch (repoErr) {
+        console.warn(`Virtual storage repo init warning for ${provider}:`, repoErr.message);
+    }
 
-    console.log(`=> Database provider active: ${activeProvider.toUpperCase()}`);
-    return { provider: activeProvider, fileRepository, folderRepository };
+    console.log(`=> Database provider active: ${provider.toUpperCase()}`);
+    return { provider, fileRepository, folderRepository };
 }
 
 async function ensureDatabase() {
@@ -83,7 +125,11 @@ function getFolderRepository() {
 }
 
 function getActiveProvider() {
-    return activeProvider || resolveProvider();
+    return resolveProvider();
+}
+
+function getMysqlAdapter() {
+    return require('./mysql/MysqlModelAdapter');
 }
 
 module.exports = {
@@ -92,5 +138,10 @@ module.exports = {
     getFileRepository,
     getFolderRepository,
     getActiveProvider,
-    resolveProvider
+    setActiveProvider,
+    resolveProvider,
+    isMysql,
+    isMongo,
+    isPostgres,
+    getMysqlAdapter,
 };

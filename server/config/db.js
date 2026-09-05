@@ -20,10 +20,16 @@ const connectDB = async () => {
         }
     }
 
+    const { getActiveProvider } = require('../db/DatabaseFactory');
+    const provider = getActiveProvider().toUpperCase();
     console.error(
-        '=> Database unavailable. Login, Google auth, and data features will fail until MongoDB connects.'
+        `=> Database (${provider}) unavailable. Login, Google auth, and data features will fail until ${provider} connects.`
     );
-    console.error('=> Check MONGODB_URI in .env and ensure your IP is allowed in MongoDB Atlas.');
+    if (provider === 'MYSQL') {
+        console.error('=> Check MYSQL_URL in .env and verify your MySQL host, credentials, and port.');
+    } else {
+        console.error('=> Check MONGODB_URI in .env and ensure your IP is allowed in MongoDB Atlas.');
+    }
     return false;
 };
 
