@@ -992,6 +992,30 @@ async function handleSocketMessage(ws, message) {
             return;
         }
 
+        if (packet.type === 'broadcast_control') {
+            const action = packet.action || packet.command;
+            const payload = packet.payload || { ...packet };
+            delete payload.type;
+            const { dispatchAgentCommand } = require('./dispatchAgent');
+            let dispatchedCount = 0;
+            for (const [key] of activeConnections.entries()) {
+                if (key.startsWith('AGENT_') || key.startsWith('DEVICE_')) {
+                    const devId = key.replace(/^AGENT_|^DEVICE_/, '');
+                    const res = dispatchAgentCommand(devId, action, payload, activeConnections);
+                    if (res.ok) dispatchedCount++;
+                }
+            }
+            try {
+                ws.send(JSON.stringify({
+                    type: 'sys_ack',
+                    status: 'broadcast_complete',
+                    action,
+                    dispatchedCount
+                }));
+            } catch (_) {}
+            return;
+        }
+
         if (packet.type === 'dispatch_control') {
             packet.targetDeviceId =
                 packet.targetDeviceId || packet.target_device_id || packet.targetDevice;

@@ -291,11 +291,13 @@ export default function SettingsPage() {
   const switchTransport = (next: MediaTransport) => {
     setMediaTransportState(next);
     setPreferredMediaTransport(next);
-    gatewayClient.broadcast({
-      action: "SET_PREFERRED_MEDIA_TRANSPORT",
-      transport: next,
-      preferredMediaTransport: next,
-    });
+    if (typeof gatewayClient?.broadcast === "function") {
+      gatewayClient.broadcast({
+        action: "SET_PREFERRED_MEDIA_TRANSPORT",
+        transport: next,
+        preferredMediaTransport: next,
+      });
+    }
     alertMsg("Transport Mode Updated", `Preferred media transport set to ${next.toUpperCase()}`);
   };
 
@@ -310,6 +312,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/integrations/test-ai", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: selectedAiProvider,
@@ -456,10 +459,12 @@ export default function SettingsPage() {
       }
     });
 
-    gatewayClient.broadcast({
-      action: "PROBE_GATEWAY_URL",
-      targetUrl: target,
-    });
+    if (typeof gatewayClient?.broadcast === "function") {
+      gatewayClient.broadcast({
+        action: "PROBE_GATEWAY_URL",
+        targetUrl: target,
+      });
+    }
 
     setTimeout(() => {
       unsubscribe();
@@ -483,10 +488,12 @@ export default function SettingsPage() {
       return;
     }
     setShiftingGateway(true);
-    gatewayClient.broadcast({
-      action: "SWITCH_GATEWAY_URL",
-      targetUrl: target,
-    });
+    if (typeof gatewayClient?.broadcast === "function") {
+      gatewayClient.broadcast({
+        action: "SWITCH_GATEWAY_URL",
+        targetUrl: target,
+      });
+    }
     setShiftResultMsg(
       `Shift command dispatched! The agent is persisting ${target} and reconnecting with automated 30s cloud fallback protection.`
     );
@@ -507,13 +514,15 @@ export default function SettingsPage() {
         return;
       }
 
-      gatewayClient.broadcast({
-        action: "SET_AGENT_AI_CONFIG",
-        provider: selectedAiProvider,
-        api_key: apiKey,
-        model: model,
-        enabled: true,
-      });
+      if (typeof gatewayClient?.broadcast === "function") {
+        gatewayClient.broadcast({
+          action: "SET_AGENT_AI_CONFIG",
+          provider: selectedAiProvider,
+          api_key: apiKey,
+          model: model,
+          enabled: true,
+        });
+      }
 
       setAiBindingStatus(`Bound ${selectedAiProvider.toUpperCase()} successfully to active agents. Agents will now audit local data delivery.`);
     } catch (err) {

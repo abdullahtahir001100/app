@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -22,7 +22,9 @@ import {
 } from "lucide-react";
 import { ARCHITECTURE_DIAGRAMS, DiagramDef } from "@/lib/architecture-diagrams";
 
-// Safe dynamic loader for Mermaid via CDN script (avoids Webpack dynamic chunk split errors)
+let mermaidInitialized = false;
+
+// Safe dynamic loader for Mermaid via CDN script
 function loadMermaid(): Promise<any> {
   if (typeof window === "undefined") return Promise.reject("SSR");
   if ((window as any).mermaid) return Promise.resolve((window as any).mermaid);
@@ -55,15 +57,127 @@ function loadMermaid(): Promise<any> {
   });
 }
 
+// Dedicated, crash-safe SVG viewer using dangerouslySetInnerHTML on an empty leaf node
+const MermaidSvgViewer = React.memo(function MermaidSvgViewer({
+  diagramId,
+  mermaidCode,
+  zoom = 1,
+  className = "",
+}: {
+  diagramId: string;
+  mermaidCode: string;
+  zoom?: number;
+  className?: string;
+}) {
+  const [svgContent, setSvgContent] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    const render = async () => {
+      try {
+        const mermaid = await loadMermaid();
+        if (!mermaidInitialized) {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: "default",
+            themeVariables: {
+              fontFamily: "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+              fontSize: "13px",
+              primaryColor: "#e0f2fe",
+              primaryTextColor: "#0369a1",
+              primaryBorderColor: "#38bdf8",
+              lineColor: "#64748b",
+              secondaryColor: "#f1f5f9",
+              tertiaryColor: "#f8fafc",
+              background: "#ffffff",
+              mainBkg: "#ffffff",
+              nodeBorder: "#cbd5e1",
+              clusterBkg: "#f8fafc",
+              clusterBorder: "#cbd5e1",
+            },
+            securityLevel: "loose",
+            flowchart: { curve: "basis", useMaxWidth: true, htmlLabels: true },
+            sequence: { useMaxWidth: true, showSequenceNumbers: true },
+          });
+          mermaidInitialized = true;
+        }
+
+        const renderId = `zen-svg-${diagramId.replace(/[^a-zA-Z0-9_-]/g, "")}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const { svg } = await mermaid.render(renderId, mermaidCode);
+
+        if (!cancelled) {
+          setSvgContent(svg);
+          setLoading(false);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          console.warn("Mermaid render error for " + diagramId, err);
+          setError(err?.message || "Failed to render vector diagram");
+          setLoading(false);
+        }
+      }
+    };
+
+    render();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [diagramId, mermaidCode]);
+
+  return (
+    <div className={`relative flex flex-col items-center justify-center w-full min-h-[360px] ${className}`}>
+      {loading && (
+        <div className="flex items-center justify-center gap-2 py-16 text-gray-500 font-mono text-xs">
+          <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+          <span>Generating High-DPI Vector SVG…</span>
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="p-6 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-sm text-center my-auto max-w-lg">
+          <p className="font-bold mb-1">Rendering Notice</p>
+          <p className="text-xs">{error}</p>
+          <a
+            href="/architecture.html"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 mt-3 px-3 py-1.5 rounded-lg bg-white border border-rose-300 text-xs font-semibold text-rose-700 shadow-sm hover:bg-rose-50 transition"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Open in Standalone Viewer
+          </a>
+        </div>
+      )}
+
+      {!loading && !error && svgContent && (
+        <div
+          id={`mermaid-container-${diagramId}`}
+          style={{
+            transform: zoom !== 1 ? `scale(${zoom})` : undefined,
+            transformOrigin: "top center",
+            transition: "transform 0.15s ease-out",
+            width: "100%",
+          }}
+          className="flex items-center justify-center w-full overflow-visible"
+          dangerouslySetInnerHTML={{ __html: svgContent }}
+        />
+      )}
+    </div>
+  );
+});
+
 export default function ArchitecturePage() {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [viewMode, setViewMode] = useState<"canvas" | "document">("canvas");
   const [activeTab, setActiveTab] = useState<string>("diagram-1");
   const [zoomMap, setZoomMap] = useState<Record<string, number>>({});
-  const [isRendering, setIsRendering] = useState(false);
-  const [renderError, setRenderError] = useState<string | null>(null);
-  const initializedRef = useRef(false);
 
   // 1. Strict Admin Authorization Check
   useEffect(() => {
@@ -89,101 +203,6 @@ export default function ArchitecturePage() {
     };
   }, []);
 
-  // 2. Client-side Mermaid Initialization & Rendering
-  useEffect(() => {
-    if (!isAdmin) return;
-    let cancelled = false;
-
-    const renderDiagram = async () => {
-      try {
-        setIsRendering(true);
-        setRenderError(null);
-        const mermaid = await loadMermaid();
-
-        if (!initializedRef.current) {
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: "default",
-            themeVariables: {
-              fontFamily: "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
-              fontSize: "13px",
-              primaryColor: "#e0f2fe",
-              primaryTextColor: "#0369a1",
-              primaryBorderColor: "#38bdf8",
-              lineColor: "#64748b",
-              secondaryColor: "#f1f5f9",
-              tertiaryColor: "#f8fafc",
-              background: "#ffffff",
-              mainBkg: "#ffffff",
-              nodeBorder: "#cbd5e1",
-              clusterBkg: "#f8fafc",
-              clusterBorder: "#cbd5e1",
-            },
-            securityLevel: "loose",
-            flowchart: { curve: "basis", useMaxWidth: true, htmlLabels: true },
-            sequence: { useMaxWidth: true, showSequenceNumbers: true },
-          });
-          initializedRef.current = true;
-        }
-
-        if (viewMode === "canvas") {
-          const targetDiagram = ARCHITECTURE_DIAGRAMS.find((d) => d.id === activeTab);
-          if (!targetDiagram) return;
-
-          const container = document.getElementById(`mermaid-canvas-${targetDiagram.id}`);
-          if (!container || cancelled) return;
-
-          const renderId = `canvas-svg-${targetDiagram.id}-${Date.now()}`;
-          const { svg } = await mermaid.render(renderId, targetDiagram.mermaid);
-
-          if (!cancelled && container) {
-            container.innerHTML = svg;
-            const svgEl = container.querySelector("svg");
-            if (svgEl) {
-              svgEl.style.maxWidth = "100%";
-              svgEl.style.height = "auto";
-              svgEl.style.margin = "0 auto";
-            }
-          }
-        } else if (viewMode === "document") {
-          // Render all diagrams sequentially for the document view
-          for (const diag of ARCHITECTURE_DIAGRAMS) {
-            const container = document.getElementById(`mermaid-doc-${diag.id}`);
-            if (!container || cancelled) continue;
-            try {
-              const renderId = `doc-svg-${diag.id}-${Date.now()}`;
-              const { svg } = await mermaid.render(renderId, diag.mermaid);
-              if (!cancelled && container) {
-                container.innerHTML = svg;
-                const svgEl = container.querySelector("svg");
-                if (svgEl) {
-                  svgEl.style.maxWidth = "100%";
-                  svgEl.style.height = "auto";
-                  svgEl.style.margin = "0 auto";
-                }
-              }
-            } catch (dErr) {
-              console.warn(`Doc diagram ${diag.id} render error:`, dErr);
-            }
-          }
-        }
-      } catch (err: any) {
-        console.error("Mermaid CDN render error:", err);
-        if (!cancelled) {
-          setRenderError(err?.message || "Failed to render vector diagram");
-        }
-      } finally {
-        if (!cancelled) setIsRendering(false);
-      }
-    };
-
-    renderDiagram();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAdmin, activeTab, viewMode]);
-
   const currentZoom = zoomMap[activeTab] || 1;
 
   const handleZoom = (delta: number) => {
@@ -199,7 +218,7 @@ export default function ArchitecturePage() {
   };
 
   const downloadSvg = (targetId = activeTab) => {
-    const container = document.getElementById(`mermaid-canvas-${targetId}`) || document.getElementById(`mermaid-doc-${targetId}`);
+    const container = document.getElementById(`mermaid-container-${targetId}`);
     const svg = container?.querySelector("svg");
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -215,7 +234,7 @@ export default function ArchitecturePage() {
   };
 
   const downloadPng = (targetId = activeTab) => {
-    const container = document.getElementById(`mermaid-canvas-${targetId}`) || document.getElementById(`mermaid-doc-${targetId}`);
+    const container = document.getElementById(`mermaid-container-${targetId}`);
     const svg = container?.querySelector("svg");
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -285,7 +304,7 @@ export default function ArchitecturePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-900 flex flex-col font-sans">
-      {/* Top Application Bar */}
+      {/* Top Application Bar - Clean Light Aesthetics */}
       <header className="h-16 bg-white border-b border-gray-200 px-6 flex items-center justify-between sticky top-0 z-50 shadow-sm no-print">
         <div className="flex items-center gap-4">
           <Link
@@ -397,7 +416,7 @@ export default function ArchitecturePage() {
         </div>
       </header>
 
-      {/* VIEW 1: INTERACTIVE DIAGRAM CANVAS WITH TABS */}
+      {/* VIEW 1: INTERACTIVE DIAGRAM CANVAS WITH TABS (NO SIDEBAR) */}
       {viewMode === "canvas" && (
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Tabs Navigation Strip */}
@@ -447,46 +466,15 @@ export default function ArchitecturePage() {
                 </div>
               </div>
 
-              {/* Error or Spinner fallback */}
-              {renderError ? (
-                <div className="p-6 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-sm text-center my-auto">
-                  <p className="font-bold mb-1">Rendering Notice</p>
-                  <p className="text-xs">{renderError}</p>
-                  <a
-                    href="/architecture.html"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 mt-3 px-3 py-1.5 rounded-lg bg-white border border-rose-300 text-xs font-semibold text-rose-700 shadow-sm"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Open in Standalone Viewer
-                  </a>
-                </div>
-              ) : (
-                <div className="diagram-viewport overflow-auto p-4 flex items-center justify-center min-h-[460px]">
-                  <div
-                    style={{
-                      transform: `scale(${currentZoom})`,
-                      transformOrigin: "top center",
-                      transition: "transform 0.15s ease-out",
-                      width: "100%",
-                    }}
-                    className="text-center"
-                  >
-                    <div
-                      id={`mermaid-canvas-${activeDiagram.id}`}
-                      className="flex items-center justify-center w-full"
-                    >
-                      {isRendering && (
-                        <div className="flex items-center justify-center gap-2 py-16 text-gray-500 font-mono text-xs">
-                          <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                          <span>Generating Vector SVG…</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Diagram Canvas Viewport */}
+              <div className="diagram-viewport overflow-auto p-4 flex items-center justify-center min-h-[460px]">
+                <MermaidSvgViewer
+                  key={activeDiagram.id}
+                  diagramId={activeDiagram.id}
+                  mermaidCode={activeDiagram.mermaid}
+                  zoom={currentZoom}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -557,7 +545,11 @@ export default function ArchitecturePage() {
 
                 {/* Embedded Diagram */}
                 <div className="diagram-viewport overflow-auto p-4 flex items-center justify-center bg-white min-h-[300px]">
-                  <div id={`mermaid-doc-${diag.id}`} className="w-full text-center" />
+                  <MermaidSvgViewer
+                    diagramId={`doc-${diag.id}`}
+                    mermaidCode={diag.mermaid}
+                    zoom={1}
+                  />
                 </div>
               </div>
             ))}

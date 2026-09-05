@@ -24,6 +24,12 @@ function extractToken(req) {
         return authHeader.slice(7).trim();
     }
 
+    if (typeof req.cookies?.get === 'function') {
+        const c = req.cookies.get(AUTH_COOKIE);
+        if (c && typeof c === 'object' && c.value) return c.value;
+        if (typeof c === 'string') return c;
+    }
+
     if (req.cookies?.[AUTH_COOKIE]) {
         return req.cookies[AUTH_COOKIE];
     }

@@ -848,6 +848,46 @@ class GatewayClient {
   }
 
   /**
+   * Broadcast a control packet to all connected agents and the central gateway.
+   */
+  broadcast(packet: Record<string, unknown>): boolean {
+    let sent = false;
+
+    // 1. Direct WebSocket broadcast packet to gateway
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: "broadcast_control",
+            ...packet,
+          })
+        );
+        sent = true;
+      } catch {
+        // ignore send error
+      }
+    }
+
+    // 2. Dispatch to each known active agent device in registry
+    const action = String(packet.action || packet.type || "");
+    const payload = (packet.payload as Record<string, unknown>) || { ...packet };
+    if (action) {
+      for (const d of this.devices) {
+        if (d.value) {
+          try {
+            this.dispatch(action, d.value, payload);
+            sent = true;
+          } catch {
+            // ignore device dispatch error
+          }
+        }
+      }
+    }
+
+    return sent;
+  }
+
+  /**
    * Send a raw agent frame wrapped for dashboard→agent relay.
    * Envelope: [0xFD][idLen][deviceId][inner...]
    */
