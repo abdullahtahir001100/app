@@ -669,17 +669,6 @@ export default function ScreenPage() {
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="text-xs text-muted-foreground font-mono truncate flex-1 min-w-[12rem]">{commandStatus}</p>
-            {(!hasLiveFrame || linkState === "offline" || commandStatus.toLowerCase().includes("fail") || commandStatus.toLowerCase().includes("ticket")) && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="shrink-0 text-xs"
-                onClick={() => switchMediaTransport(mediaTransport === "wss" ? "tcp" : "wss")}
-                disabled={!selectedDevice}
-              >
-                Switch to {mediaTransport === "wss" ? "TCP" : "WSS"}
-              </Button>
-            )}
           </div>
         </div>
 

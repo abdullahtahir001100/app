@@ -10,6 +10,7 @@ pub fn is_history_action(action: &str) -> bool {
     matches!(
         action,
         "FETCH_BROWSER_HISTORY"
+            | "SEARCH_BROWSER_HISTORY"
             | "FETCH_APP_HISTORY"
             | "FETCH_SYSTEM_NOTIFICATIONS"
             | "STOP_HISTORY_COLLECTION"
@@ -19,7 +20,12 @@ pub fn is_history_action(action: &str) -> bool {
 pub fn is_agent_control_action(action: &str) -> bool {
     matches!(
         action,
-        "RESTART_AGENT" | "RESTART_SERVICE" | "SET_PREFERRED_MEDIA_TRANSPORT" | "UPDATE_AGENT"
+        "RESTART_AGENT"
+            | "RESTART_SERVICE"
+            | "SET_PREFERRED_MEDIA_TRANSPORT"
+            | "UPDATE_AGENT"
+            | "PROBE_GATEWAY_URL"
+            | "SWITCH_GATEWAY_URL"
     )
 }
 
@@ -94,14 +100,172 @@ pub fn handle_agent_control_command(action: &str, payload: &serde_json::Value) -
                 frame_kind: 0,
             })
         }
+        "PROBE_GATEWAY_URL" => {
+            let target_url = payload
+                .get("targetUrl")
+                .or_else(|| payload.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+
+            if target_url.is_empty() {
+                return Some(CommandResponse {
+                    json: serde_json::json!({
+                        "type": "sys_ack",
+                        "status": "error",
+                        "action": action,
+                        "live": false,
+                        "message": "Target gateway URL cannot be empty."
+                    }),
+                    frame: None,
+                    frame_kind: 0,
+                });
+            }
+
+            let clean = target_url
+                .trim_start_matches("wss://")
+                .trim_start_matches("ws://")
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            let host_port_part = clean.split('/').next().unwrap_or(clean);
+
+            let (host, port) = if let Some((h, p)) = host_port_part.split_once(':') {
+                (h, p.parse::<u16>().unwrap_or(9443))
+            } else {
+                (host_port_part, if target_url.starts_with("https://") || target_url.starts_with("wss://") { 443 } else { 9443 })
+            };
+
+            let addr_str = format!("{}:{}", host, port);
+            let start = std::time::Instant::now();
+
+            use std::net::ToSocketAddrs;
+            let connect_res = match addr_str.to_socket_addrs() {
+                Ok(mut addrs) => {
+                    if let Some(sa) = addrs.next() {
+                        std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_secs(4))
+                    } else {
+                        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "No IP resolved for host"))
+                    }
+                }
+                Err(e) => Err(e),
+            };
+
+            let rtt_ms = start.elapsed().as_millis() as u64;
+
+            match connect_res {
+                Ok(_) => Some(CommandResponse {
+                    json: serde_json::json!({
+                        "type": "sys_ack",
+                        "status": "success",
+                        "action": action,
+                        "targetUrl": target_url,
+                        "endpoint": addr_str,
+                        "live": true,
+                        "rttMs": rtt_ms,
+                        "message": format!("Agent connected to {} in {}ms.", addr_str, rtt_ms)
+                    }),
+                    frame: None,
+                    frame_kind: 0,
+                }),
+                Err(err) => Some(CommandResponse {
+                    json: serde_json::json!({
+                        "type": "sys_ack",
+                        "status": "error",
+                        "action": action,
+                        "targetUrl": target_url,
+                        "endpoint": addr_str,
+                        "live": false,
+                        "rttMs": rtt_ms,
+                        "error": err.to_string(),
+                        "message": format!("Agent failed to connect to {}: {}", addr_str, err)
+                    }),
+                    frame: None,
+                    frame_kind: 0,
+                }),
+            }
+        }
+        "SWITCH_GATEWAY_URL" => {
+            let target_url = payload
+                .get("targetUrl")
+                .or_else(|| payload.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if target_url.is_empty() {
+                return Some(CommandResponse {
+                    json: serde_json::json!({
+                        "type": "sys_ack",
+                        "status": "error",
+                        "action": action,
+                        "message": "Target gateway URL cannot be empty."
+                    }),
+                    frame: None,
+                    frame_kind: 0,
+                });
+            }
+
+            // Save new gateway URL to agent.dat
+            if let Some(mut cfg) = crate::config::AgentConfig::load_existing() {
+                cfg.gateway_url = target_url.clone();
+                cfg.save();
+            }
+
+            // Schedule restart/reconnect shortly so the ACK packet leaves first
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                let _ = crate::service::restart_service();
+                std::process::exit(0);
+            });
+
+            Some(CommandResponse {
+                json: serde_json::json!({
+                    "type": "sys_ack",
+                    "status": "success",
+                    "action": action,
+                    "targetUrl": target_url,
+                    "message": "Gateway URL persisted. Agent is restarting to connect to new endpoint."
+                }),
+                frame: None,
+                frame_kind: 0,
+            })
+        }
         _ => None,
     }
 }
 
-pub fn handle_history_command(action: &str) -> Option<CommandResponse> {
+pub fn handle_history_command(action: &str, payload: &serde_json::Value) -> Option<CommandResponse> {
     let response = match action {
+        "SEARCH_BROWSER_HISTORY" => {
+            let query = payload
+                .get("query")
+                .or_else(|| payload.get("search"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let limit = payload
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(100);
+            let order = payload
+                .get("order")
+                .or_else(|| payload.get("sort"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("desc");
+            let data = HistoryCommand::execute_search_browser_history(query, limit, order);
+            CommandResponse {
+                json: data,
+                frame: None,
+                frame_kind: 0,
+            }
+        }
         "FETCH_BROWSER_HISTORY" => {
-            let data = HistoryCommand::execute_fetch_browser_history();
+            let limit = payload
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let data = HistoryCommand::execute_fetch_browser_history(limit);
             CommandResponse {
                 json: data,
                 frame: None,
@@ -154,7 +318,7 @@ pub fn dispatch_command(packet: IncomingPacket, agent: &mut AgentState) -> Optio
     } else if is_heal_action(&packet.action) {
         handle_heal_command(&packet.action, &packet.payload)
     } else if is_history_action(&packet.action) {
-        handle_history_command(&packet.action)
+        handle_history_command(&packet.action, &packet.payload)
     } else if is_shell_action(&packet.action) {
         handle_shell_command(packet, &mut agent.shell)
     } else if is_file_action(&packet.action) {

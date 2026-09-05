@@ -5,12 +5,6 @@ import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGateway } from "@/hooks/use-gateway";
 import { RefreshCw, Trash2, Radio } from "lucide-react";
-import {
-  dispatchMediaTransportPreference,
-  getPreferredMediaTransport,
-  setPreferredMediaTransport,
-  type MediaTransport,
-} from "@/lib/media-transport";
 
 type LiveLog = {
   id: string;
@@ -62,8 +56,6 @@ export default function ConsolePage() {
   const [channel, setChannel] = useState<(typeof CHANNELS)[number]>("all");
   const [query, setQuery] = useState("");
   const [paused, setPaused] = useState(false);
-  const [mediaTransport, setMediaTransport] = useState<MediaTransport>("wss");
-  const [transportMsg, setTransportMsg] = useState("");
   const [health, setHealth] = useState<{
     ok?: boolean;
     agents?: number;
@@ -185,30 +177,6 @@ export default function ConsolePage() {
   }, [logs, channel, query]);
 
   const onlineDevices = devices.filter((d) => d.status === "online").length;
-  const selectedAgent =
-    devices.find((d) => d.status === "online")?.value || devices[0]?.value || "";
-
-  useEffect(() => {
-    setMediaTransport(getPreferredMediaTransport());
-  }, []);
-
-  const applyMediaTransport = useCallback(
-    (next: MediaTransport) => {
-      setMediaTransport(next);
-      setPreferredMediaTransport(next);
-      if (!selectedAgent) {
-        setTransportMsg(`Saved ${next.toUpperCase()} locally. Select/start an agent to push live.`);
-        return;
-      }
-      const ok = dispatchMediaTransportPreference(dispatch, next, selectedAgent);
-      setTransportMsg(
-        ok
-          ? `Pushed ${next.toUpperCase()} to agent ${selectedAgent} (manual — no auto-failover).`
-          : `Saved ${next.toUpperCase()} locally; agent offline — push when online.`
-      );
-    },
-    [dispatch, selectedAgent]
-  );
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -233,36 +201,6 @@ export default function ConsolePage() {
               <Trash2 className="mr-2 h-4 w-4" /> Clear
             </Button>
           </div>
-        </div>
-
-        <div className="mb-4 rounded-lg border border-border bg-card/40 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">Preferred media transport</p>
-              <p className="text-xs text-muted-foreground">
-                Agent env <code className="text-[11px]">PREFERRED_MEDIA_TRANSPORT</code> · no auto-switch on failure
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant={mediaTransport === "wss" ? "default" : "outline"}
-                onClick={() => applyMediaTransport("wss")}
-              >
-                WSS
-              </Button>
-              <Button
-                size="sm"
-                variant={mediaTransport === "tcp" ? "default" : "outline"}
-                onClick={() => applyMediaTransport("tcp")}
-              >
-                TCP
-              </Button>
-            </div>
-          </div>
-          {transportMsg ? (
-            <p className="mt-2 text-xs text-muted-foreground">{transportMsg}</p>
-          ) : null}
         </div>
 
         <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-6">

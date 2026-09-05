@@ -22,24 +22,35 @@ pub struct BrowserHistoryCollector;
 
 impl BrowserHistoryCollector {
     pub fn collect_all_history() -> Vec<BrowserHistory> {
+        Self::search("", 500, "desc")
+    }
+
+    pub fn search(query: &str, limit: usize, order: &str) -> Vec<BrowserHistory> {
+        let max_limit = limit.clamp(1, 500);
+        let order_asc = order.eq_ignore_ascii_case("asc");
         let mut all_history = Vec::new();
 
         for local_app_data in Self::local_app_data_roots() {
             let user = Self::username_from_path(&local_app_data);
-            all_history.extend(Self::collect_chrome_history_from(&local_app_data, &user));
-            all_history.extend(Self::collect_edge_history_from(&local_app_data, &user));
-            all_history.extend(Self::collect_brave_history_from(&local_app_data, &user));
-            all_history.extend(Self::collect_opera_history_from(&local_app_data, &user));
-            all_history.extend(Self::collect_vivaldi_history_from(&local_app_data, &user));
+            all_history.extend(Self::search_chrome_history_from(&local_app_data, &user, query, max_limit, order_asc));
+            all_history.extend(Self::search_edge_history_from(&local_app_data, &user, query, max_limit, order_asc));
+            all_history.extend(Self::search_brave_history_from(&local_app_data, &user, query, max_limit, order_asc));
+            all_history.extend(Self::search_opera_history_from(&local_app_data, &user, query, max_limit, order_asc));
+            all_history.extend(Self::search_vivaldi_history_from(&local_app_data, &user, query, max_limit, order_asc));
         }
 
         for app_data in Self::roaming_app_data_roots() {
             let user = Self::username_from_path(&app_data);
-            all_history.extend(Self::collect_firefox_history_from(&app_data, &user));
+            all_history.extend(Self::search_firefox_history_from(&app_data, &user, query, max_limit, order_asc));
         }
 
-        // Sort by visit time descending and de-dupe exact url+time pairs.
-        all_history.sort_by(|a, b| b.visit_time.cmp(&a.visit_time));
+        // Sort by visit time
+        if order_asc {
+            all_history.sort_by(|a, b| a.visit_time.cmp(&b.visit_time));
+        } else {
+            all_history.sort_by(|a, b| b.visit_time.cmp(&a.visit_time));
+        }
+
         all_history.dedup_by(|a, b| {
             a.url == b.url
                 && a.visit_time == b.visit_time
@@ -47,12 +58,14 @@ impl BrowserHistoryCollector {
                 && a.windows_user == b.windows_user
                 && a.browser_profile == b.browser_profile
         });
-        if all_history.len() > 4000 {
-            all_history.truncate(4000);
+
+        if all_history.len() > max_limit {
+            all_history.truncate(max_limit);
         }
 
         all_history
     }
+
 
     /// Incremental: only visits newer than the given Chromium / Firefox high-water marks.
     /// Returns (entries, max_chromium_time, max_firefox_time).
@@ -396,17 +409,20 @@ impl BrowserHistoryCollector {
         }
     }
 
-    fn collect_chromium_family(
+    fn search_chromium_family(
         local_app_data: &Path,
         windows_user: &str,
         browser_name: &str,
         relative_user_data: &str,
+        query: &str,
+        limit: usize,
+        order_asc: bool,
     ) -> Vec<BrowserHistory> {
         let mut history = Vec::new();
         let user_data = local_app_data.join(relative_user_data);
         for (profile, path) in Self::chromium_profile_history_paths(&user_data) {
             if let Ok(entries) =
-                Self::read_chromium_history(&path, browser_name, windows_user, &profile)
+                Self::read_chromium_history_search(&path, browser_name, windows_user, &profile, query, limit, order_asc)
             {
                 history.extend(entries);
             }
@@ -414,69 +430,95 @@ impl BrowserHistoryCollector {
         history
     }
 
-    fn collect_chrome_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
-        Self::collect_chromium_family(
+    fn search_chrome_history_from(local_app_data: &Path, windows_user: &str, query: &str, limit: usize, order_asc: bool) -> Vec<BrowserHistory> {
+        Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Chrome",
             r"Google\Chrome\User Data",
+            query,
+            limit,
+            order_asc,
         )
     }
 
-    fn collect_edge_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
-        Self::collect_chromium_family(
+    fn search_edge_history_from(local_app_data: &Path, windows_user: &str, query: &str, limit: usize, order_asc: bool) -> Vec<BrowserHistory> {
+        Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Edge",
             r"Microsoft\Edge\User Data",
+            query,
+            limit,
+            order_asc,
         )
     }
 
-    fn collect_brave_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
-        Self::collect_chromium_family(
+    fn search_brave_history_from(local_app_data: &Path, windows_user: &str, query: &str, limit: usize, order_asc: bool) -> Vec<BrowserHistory> {
+        Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Brave",
             r"BraveSoftware\Brave-Browser\User Data",
+            query,
+            limit,
+            order_asc,
         )
     }
 
-    fn collect_opera_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+    fn search_opera_history_from(local_app_data: &Path, windows_user: &str, query: &str, limit: usize, order_asc: bool) -> Vec<BrowserHistory> {
         let mut out = Vec::new();
-        out.extend(Self::collect_chromium_family(
+        out.extend(Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Opera",
             r"Opera Software\Opera Stable",
+            query,
+            limit,
+            order_asc,
         ));
-        out.extend(Self::collect_chromium_family(
+        out.extend(Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Opera GX",
             r"Opera Software\Opera GX Stable",
+            query,
+            limit,
+            order_asc,
         ));
-        // Some Opera builds nest User Data
-        out.extend(Self::collect_chromium_family(
+        out.extend(Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Opera",
             r"Opera Software\Opera Stable\User Data",
+            query,
+            limit,
+            order_asc,
         ));
         out
     }
 
-    fn collect_vivaldi_history_from(local_app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
-        Self::collect_chromium_family(
+    fn search_vivaldi_history_from(local_app_data: &Path, windows_user: &str, query: &str, limit: usize, order_asc: bool) -> Vec<BrowserHistory> {
+        Self::search_chromium_family(
             local_app_data,
             windows_user,
             "Vivaldi",
             r"Vivaldi\User Data",
+            query,
+            limit,
+            order_asc,
         )
     }
 
-    fn collect_firefox_history_from(app_data: &Path, windows_user: &str) -> Vec<BrowserHistory> {
+    fn search_firefox_history_from(
+        app_data: &Path,
+        windows_user: &str,
+        query: &str,
+        limit: usize,
+        order_asc: bool,
+    ) -> Vec<BrowserHistory> {
         let mut history = Vec::new();
-        let firefox_path = app_data.join(r"Mozilla\Firefox\Profiles");
+        let firefox_path = app_data.join("Mozilla").join("Firefox").join("Profiles");
         if !firefox_path.exists() {
             return history;
         }
@@ -486,7 +528,7 @@ impl BrowserHistoryCollector {
                 let profile_path = entry.path().join("places.sqlite");
                 if profile_path.exists() {
                     if let Ok(entries) =
-                        Self::read_firefox_history(&profile_path, windows_user, &profile_name)
+                        Self::read_firefox_history_search(&profile_path, windows_user, &profile_name, query, limit, order_asc)
                     {
                         history.extend(entries);
                     }
@@ -496,49 +538,135 @@ impl BrowserHistoryCollector {
         history
     }
 
+    fn read_chromium_history_search(
+        db_path: &Path,
+        browser_name: &str,
+        windows_user: &str,
+        browser_profile: &str,
+        query: &str,
+        limit: usize,
+        order_asc: bool,
+    ) -> SqliteResult<Vec<BrowserHistory>> {
+        let conn = Self::open_unlocked_sqlite(db_path, browser_name)?;
+        let order_clause = if order_asc { "ASC" } else { "DESC" };
+        let user = windows_user.to_string();
+        let profile = browser_profile.to_string();
+        let query_trimmed = query.trim();
+
+        let mapper = |row: &rusqlite::Row| {
+            let url: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let timestamp: i64 = row.get(2)?;
+            let visit_count: i32 = row.get(3)?;
+
+            let visit_time = if timestamp > 0 {
+                let secs = (timestamp / 1_000_000) - 11_644_473_600;
+                DateTime::from_timestamp(secs, 0)
+                    .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "Unknown".to_string())
+            } else {
+                "Unknown".to_string()
+            };
+
+            Ok(BrowserHistory {
+                browser: browser_name.to_string(),
+                url,
+                title,
+                visit_time,
+                visit_count,
+                windows_user: user.clone(),
+                browser_profile: profile.clone(),
+            })
+        };
+
+        let history: Vec<BrowserHistory> = if query_trimmed.is_empty() {
+            let sql = format!(
+                "SELECT url, title, last_visit_time, visit_count FROM urls ORDER BY last_visit_time {} LIMIT ?1",
+                order_clause
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([limit as i64], mapper)?;
+            rows.filter_map(|r| r.ok()).collect()
+        } else {
+            let sql = format!(
+                "SELECT url, title, last_visit_time, visit_count FROM urls WHERE (url LIKE '%' || ?1 || '%' OR title LIKE '%' || ?1 || '%') ORDER BY last_visit_time {} LIMIT ?2",
+                order_clause
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params![query_trimmed, limit as i64], mapper)?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        Ok(history)
+    }
+
+    fn read_firefox_history_search(
+        db_path: &Path,
+        windows_user: &str,
+        browser_profile: &str,
+        query: &str,
+        limit: usize,
+        order_asc: bool,
+    ) -> SqliteResult<Vec<BrowserHistory>> {
+        let conn = Self::open_unlocked_sqlite(db_path, "Firefox")?;
+        let order_clause = if order_asc { "ASC" } else { "DESC" };
+        let user = windows_user.to_string();
+        let profile = browser_profile.to_string();
+        let query_trimmed = query.trim();
+
+        let mapper = |row: &rusqlite::Row| {
+            let url: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let timestamp: i64 = row.get(2)?;
+
+            let visit_time = if timestamp > 0 {
+                let secs = timestamp / 1_000_000;
+                DateTime::from_timestamp(secs, 0)
+                    .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "Unknown".to_string())
+            } else {
+                "Unknown".to_string()
+            };
+
+            Ok(BrowserHistory {
+                browser: "Firefox".to_string(),
+                url,
+                title,
+                visit_time,
+                visit_count: 0,
+                windows_user: user.clone(),
+                browser_profile: profile.clone(),
+            })
+        };
+
+        let history: Vec<BrowserHistory> = if query_trimmed.is_empty() {
+            let sql = format!(
+                "SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date {} LIMIT ?1",
+                order_clause
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([limit as i64], mapper)?;
+            rows.filter_map(|r| r.ok()).collect()
+        } else {
+            let sql = format!(
+                "SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL AND (url LIKE '%' || ?1 || '%' OR title LIKE '%' || ?1 || '%') ORDER BY last_visit_date {} LIMIT ?2",
+                order_clause
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params![query_trimmed, limit as i64], mapper)?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        Ok(history)
+    }
+
     fn read_chromium_history(
         db_path: &Path,
         browser_name: &str,
         windows_user: &str,
         browser_profile: &str,
     ) -> SqliteResult<Vec<BrowserHistory>> {
-        let conn = Self::open_unlocked_sqlite(db_path, browser_name)?;
-        let mut stmt = conn.prepare(
-            "SELECT url, title, last_visit_time, visit_count FROM urls ORDER BY last_visit_time DESC LIMIT 500"
-        )?;
-
-        let user = windows_user.to_string();
-        let profile = browser_profile.to_string();
-        let history = stmt
-            .query_map([], |row| {
-                let url: String = row.get(0)?;
-                let title: String = row.get(1)?;
-                let timestamp: i64 = row.get(2)?;
-                let visit_count: i32 = row.get(3)?;
-
-                let visit_time = if timestamp > 0 {
-                    let secs = (timestamp / 1_000_000) - 11_644_473_600;
-                    DateTime::from_timestamp(secs, 0)
-                        .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
-                        .unwrap_or_else(|| "Unknown".to_string())
-                } else {
-                    "Unknown".to_string()
-                };
-
-                Ok(BrowserHistory {
-                    browser: browser_name.to_string(),
-                    url,
-                    title,
-                    visit_time,
-                    visit_count,
-                    windows_user: user.clone(),
-                    browser_profile: profile.clone(),
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(history)
+        Self::read_chromium_history_search(db_path, browser_name, windows_user, browser_profile, "", 500, false)
     }
 
     fn read_firefox_history(
@@ -546,43 +674,9 @@ impl BrowserHistoryCollector {
         windows_user: &str,
         browser_profile: &str,
     ) -> SqliteResult<Vec<BrowserHistory>> {
-        let conn = Self::open_unlocked_sqlite(db_path, "Firefox")?;
-        let mut stmt = conn.prepare(
-            "SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL ORDER BY last_visit_date DESC LIMIT 500"
-        )?;
-
-        let user = windows_user.to_string();
-        let profile = browser_profile.to_string();
-        let history = stmt
-            .query_map([], |row| {
-                let url: String = row.get(0)?;
-                let title: String = row.get(1)?;
-                let timestamp: i64 = row.get(2)?;
-
-                let visit_time = if timestamp > 0 {
-                    let secs = timestamp / 1_000_000;
-                    DateTime::from_timestamp(secs, 0)
-                        .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
-                        .unwrap_or_else(|| "Unknown".to_string())
-                } else {
-                    "Unknown".to_string()
-                };
-
-                Ok(BrowserHistory {
-                    browser: "Firefox".to_string(),
-                    url,
-                    title,
-                    visit_time,
-                    visit_count: 0,
-                    windows_user: user.clone(),
-                    browser_profile: profile.clone(),
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(history)
+        Self::read_firefox_history_search(db_path, windows_user, browser_profile, "", 500, false)
     }
+
 
     fn read_chromium_history_since(
         db_path: &Path,

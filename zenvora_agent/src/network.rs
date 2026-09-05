@@ -49,12 +49,12 @@ use crate::ui_notify;
 const SCREEN_FRAME_INTERVAL_MS: u64 = 8;
 const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
-const CONNECT_TIMEOUT_SECS: u64 = 45;
+const CONNECT_TIMEOUT_SECS: u64 = 60;
 const NETWORK_WAIT_SECS: u64 = 15;
 const HEARTBEAT_INTERVAL_SECS: u64 = 20;
 /// Long timeout — Railway/proxy stalls must not tear down a healthy session.
 const HEARTBEAT_TIMEOUT_SECS: u64 = 300;
-const MAX_BACKOFF_SECS: u64 = 30;
+const MAX_BACKOFF_SECS: u64 = 180;
 /// Only treat as sleep/resume when gap is extreme (laptop lid, etc.).
 const SLEEP_JUMP_SECS: u64 = 300;
 /// Only used for install UI "failed" status — agent keeps reconnecting forever.
@@ -63,14 +63,19 @@ const FINAL_FAIL_AFTER_ATTEMPTS: u32 = 8;
 const STABLE_SESSION_SECS: u64 = 45;
 
 fn next_reconnect_backoff(attempt: u32) -> u64 {
-    match attempt {
+    let base: u64 = match attempt {
         0 | 1 => 1,
-        2 => 2,
-        3 => 5,
-        4 => 10,
-        5 => 20,
+        2 => 3,
+        3 => 8,
+        4 => 20,
+        5 => 45,
+        6 => 90,
         _ => MAX_BACKOFF_SECS,
-    }
+    };
+    // Add ±20% jitter to prevent thundering herd
+    let jitter = (base / 5).max(1);
+    let rand_val: u64 = rand::random::<u64>() % jitter;
+    base + rand_val
 }
 
 fn report_transient_or_final(config: &AgentConfig, reconnect_attempt: u32, message: &str) {
@@ -289,35 +294,50 @@ fn get_architecture() -> String {
     std::env::consts::ARCH.to_string()
 }
 
-fn get_cpu() -> String {
-    let mut system = System::new_all();
-    system.refresh_cpu_all();
+static CPU_NAME_CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-    system
-        .cpus()
-        .first()
-        .map(|c| c.brand().to_string())
-        .unwrap_or_default()
+fn get_cpu() -> String {
+    CPU_NAME_CACHE
+        .get_or_init(|| {
+            let mut system = System::new();
+            system.refresh_cpu_all();
+            system
+                .cpus()
+                .first()
+                .map(|c| c.brand().to_string())
+                .unwrap_or_default()
+        })
+        .clone()
 }
 
-fn get_ram() -> u64 {
-    let mut system = System::new_all();
-    system.refresh_memory();
-    system.total_memory() / 1024 / 1024
+async fn get_ram() -> u64 {
+    tokio::task::spawn_blocking(|| {
+        let mut system = System::new();
+        system.refresh_memory();
+        system.total_memory() / 1024 / 1024
+    })
+    .await
+    .unwrap_or(0)
 }
 
 async fn get_geo_cached(cache: &mut Option<(Instant, Value)>) -> Value {
     if let Some((fetched_at, geo)) = cache {
-        if fetched_at.elapsed() < Duration::from_secs(300) {
+        if fetched_at.elapsed() < Duration::from_secs(600) {
             return geo.clone();
         }
     }
 
-    let geo = match reqwest::get("http://ip-api.com/json").await {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+    let geo = match client.get("http://ip-api.com/json").send().await {
         Ok(resp) => resp.json::<Value>().await.unwrap_or(json!({})),
         Err(_) => json!({}),
     };
-    *cache = Some((Instant::now(), geo.clone()));
+    if !geo.as_object().map_or(true, |o| o.is_empty()) {
+        *cache = Some((Instant::now(), geo.clone()));
+    }
     geo
 }
 
@@ -344,16 +364,22 @@ fn get_network() -> String {
 
 async fn get_public_ip_cached(cache: &mut Option<(Instant, String)>) -> String {
     if let Some((fetched_at, ip)) = cache {
-        if fetched_at.elapsed() < Duration::from_secs(120) {
+        if fetched_at.elapsed() < Duration::from_secs(600) && !ip.is_empty() {
             return ip.clone();
         }
     }
 
-    let ip = match reqwest::get("https://api.ipify.org").await {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+    let ip = match client.get("https://api.ipify.org").send().await {
         Ok(resp) => resp.text().await.unwrap_or_default(),
         Err(_) => String::new(),
     };
-    *cache = Some((Instant::now(), ip.clone()));
+    if !ip.is_empty() {
+        *cache = Some((Instant::now(), ip.clone()));
+    }
     ip
 }
 
@@ -366,11 +392,24 @@ async fn emit_response(write_tx: &mpsc::UnboundedSender<Message>, response: Comm
     }
 }
 
-async fn wait_for_network_ready(max_wait_secs: u64) -> bool {
+async fn wait_for_network_ready(max_wait_secs: u64, gateway_url: &str) -> bool {
     println!("--> [NETWORK] Waiting for network readiness...");
+    let host_port = Url::parse(gateway_url).ok().and_then(|u| {
+        let host = u.host_str()?.to_string();
+        let port = u.port().unwrap_or(if u.scheme() == "wss" || u.scheme() == "https" { 443 } else { 80 });
+        Some(format!("{}:{}", host, port))
+    });
+
     for attempt in 1..=max_wait_secs {
+        if let Some(ref target) = host_port {
+            if tokio::net::TcpStream::connect(target).await.is_ok() {
+                println!("--> [NETWORK] Network is ready via gateway host ({}s).", attempt);
+                return true;
+            }
+        }
         if tokio::net::TcpStream::connect("1.1.1.1:443").await.is_ok()
             || tokio::net::TcpStream::connect("8.8.8.8:53").await.is_ok()
+            || tokio::net::TcpStream::connect("208.67.222.222:53").await.is_ok()
         {
             println!("--> [NETWORK] Network is ready ({}s).", attempt);
             return true;
@@ -379,6 +418,7 @@ async fn wait_for_network_ready(max_wait_secs: u64) -> bool {
     }
     false
 }
+
 
 fn build_gateway_url(config: &AgentConfig) -> Result<Url, String> {
     // Allow runtime override without re-pairing (e.g. local testing).
@@ -491,7 +531,7 @@ pub async fn run_network_loop(
             break;
         }
 
-        if !wait_for_network_ready(NETWORK_WAIT_SECS).await {
+        if !wait_for_network_ready(NETWORK_WAIT_SECS, &config.gateway_url).await {
             let message = "Network not ready. Check internet connection.".to_string();
             report_transient_or_final(config, reconnect_attempt, &message);
             connection_status::log(&message);
@@ -630,20 +670,20 @@ pub async fn run_network_loop(
                 let status_write_tx = write_tx.clone();
                 let status_device_id = config.device_id.clone();
                 tokio::spawn(async move {
-                    let mut status_interval = interval(Duration::from_secs(60));
+                    let mut status_interval = interval(Duration::from_secs(120));
                     status_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
                     let mut local_ip_cache = get_local_ip();
                     let mut public_ip_cache: Option<(Instant, String)> = None;
                     let mut geo_cache: Option<(Instant, Value)> = None;
-                    let mut cpu_cache = get_cpu();
-                    let mut ram_cache = get_ram();
+                    let cpu_cache = get_cpu();
+                    let mut ram_cache = get_ram().await;
                     let mut tick: u64 = 0;
 
                     loop {
                         status_interval.tick().await;
                         tick = tick.wrapping_add(1);
-                        // Geo/public IP at most every ~5 minutes.
-                        let public_ip = if tick % 5 == 1 {
+                        // Geo/public IP at most every ~10 minutes.
+                        let public_ip = if tick % 5 == 1 || public_ip_cache.is_none() {
                             get_public_ip_cached(&mut public_ip_cache).await
                         } else {
                             public_ip_cache
@@ -651,7 +691,7 @@ pub async fn run_network_loop(
                                 .map(|(_, ip)| ip.clone())
                                 .unwrap_or_default()
                         };
-                        let geo = if tick % 5 == 1 {
+                        let geo = if tick % 5 == 1 || geo_cache.is_none() {
                             get_geo_cached(&mut geo_cache).await
                         } else {
                             geo_cache
@@ -664,9 +704,9 @@ pub async fn run_network_loop(
                             local_ip_cache = get_local_ip();
                         }
                         if tick % 3 == 1 {
-                            cpu_cache = get_cpu();
-                            ram_cache = get_ram();
+                            ram_cache = get_ram().await;
                         }
+
 
                         let status_packet = json!({
                             "type":"device_status_update",

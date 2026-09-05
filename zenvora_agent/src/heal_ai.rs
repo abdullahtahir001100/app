@@ -19,8 +19,9 @@ fn run_capture(program: &str, args: &[&str]) -> (bool, String) {
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    match cmd.output() {
-        Ok(out) => {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let res = cmd.output().map(|out| {
             let mut text = String::from_utf8_lossy(&out.stdout).to_string();
             if !out.stderr.is_empty() {
                 if !text.is_empty() {
@@ -29,11 +30,17 @@ fn run_capture(program: &str, args: &[&str]) -> (bool, String) {
                 text.push_str(&String::from_utf8_lossy(&out.stderr));
             }
             (out.status.success(), text.trim().to_string())
-        }
-        Err(e) => (false, e.to_string()),
+        });
+        let _ = tx.send(res);
+    });
+
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(pair)) => pair,
+        Ok(Err(e)) => (false, e.to_string()),
+        Err(_) => (false, "Execution timed out (5s)".to_string()),
     }
 }
-//aadd
+
 
 fn browser_profile_dirs() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
@@ -165,7 +172,7 @@ fn analyze_environment() -> Value {
 }
 
 fn fix_browser() -> Value {
-    let data = crate::history_commands::HistoryCommand::execute_fetch_browser_history();
+    let data = crate::history_commands::HistoryCommand::execute_fetch_browser_history(None);
     let entries = data.get("entries").and_then(|v| v.as_u64()).unwrap_or(0);
     json!({
         "topic": "browser",

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, useMemo } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,15 @@ import {
   AlertCircle,
   ExternalLink,
   Bot,
+  Activity,
+  Radio,
+  Server,
+  Zap,
+  ArrowRightLeft,
+  Check,
+  XCircle,
+  ShieldAlert,
+  Wifi,
 } from "lucide-react";
 import {
   useApiConfig,
@@ -27,6 +36,11 @@ import {
   type ProviderKey,
 } from "@/hooks/use-api-config";
 import { gatewayClient } from "@/lib/gateway-client";
+import {
+  getPreferredMediaTransport,
+  setPreferredMediaTransport,
+  type MediaTransport,
+} from "@/lib/media-transport";
 
 type PairingState = {
   pairingToken: string;
@@ -51,7 +65,20 @@ const DEFAULT_INTEGRATION_VARS: IntegrationVariables = {
   directLanPreferred: true,
 };
 
-type TabKey = "pairing" | "integrations" | "ai" | "network";
+type TabKey = "pairing" | "network" | "diagnostics" | "integrations" | "ai";
+
+function isWeakCode(code: string): boolean {
+  if (!/^\d{6}$/.test(code)) return true;
+  if (/^(\d)\1{5}$/.test(code)) return true;
+  const asc = "0123456789012345";
+  const desc = "9876543210987654";
+  if (asc.includes(code) || desc.includes(code)) return true;
+  if (/^(\d)\1\1(\d)\2\2$/.test(code)) return true;
+  if (/^(\d{3})\1$/.test(code)) return true;
+  if (/^(\d{2})\1\1$/.test(code)) return true;
+  const uniqueDigits = new Set(code.split("")).size;
+  return uniqueDigits < 4;
+}
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("pairing");
@@ -70,6 +97,14 @@ export default function SettingsPage() {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
 
+  // Media Transport mode (WSS vs TCP)
+  const [mediaTransport, setMediaTransportState] = useState<MediaTransport>(() => {
+    if (typeof window !== "undefined") {
+      return getPreferredMediaTransport();
+    }
+    return "wss";
+  });
+
   // Integrated Variables (MongoDB, Cloudinary, Network)
   const [vars, setVars] = useState<IntegrationVariables>(() => {
     if (typeof window !== "undefined") {
@@ -80,6 +115,33 @@ export default function SettingsPage() {
     }
     return DEFAULT_INTEGRATION_VARS;
   });
+
+  // Diagnostics state
+  const [testingApi, setTestingApi] = useState(false);
+  const [apiTestResult, setApiTestResult] = useState<{
+    success?: boolean;
+    allOk?: boolean;
+    durationMs?: number;
+    checks?: {
+      api?: { status: string; latencyMs: number; uptimeSeconds: number; memoryMb: number; nodeVersion: string };
+      database?: { status: string; pingMs: number; ok: boolean; dbName?: string; error?: string };
+      auth?: { status: string; ok: boolean; email?: string; hasPairingToken?: boolean; error?: string };
+    };
+  } | null>(null);
+
+  // Gateway Probe & Shift state
+  const [testingGateway, setTestingGateway] = useState(false);
+  const [gatewayProbeResult, setGatewayProbeResult] = useState<{
+    browserLive?: boolean;
+    browserRtt?: number;
+    agentLive?: boolean;
+    agentRtt?: number;
+    agentMsg?: string;
+    endpoint?: string;
+    error?: string;
+  } | null>(null);
+  const [shiftingGateway, setShiftingGateway] = useState(false);
+  const [shiftResultMsg, setShiftResultMsg] = useState("");
 
   // Centralized AI Multi-Provider Config
   const {
@@ -130,8 +192,16 @@ export default function SettingsPage() {
     }
   };
 
+  const isTokenWeak = useMemo(() => {
+    return pairing.pairingToken ? isWeakCode(pairing.pairingToken) : false;
+  }, [pairing.pairingToken]);
+
   const savePairing = async (event: FormEvent) => {
     event.preventDefault();
+    if (isTokenWeak) {
+      setError("Pairing token is too weak. Please use a high-entropy code or click Rotate.");
+      return;
+    }
     setSaving(true);
     setError("");
     setSuccessMsg("");
@@ -180,7 +250,7 @@ export default function SettingsPage() {
         pairingToken: String(data.user?.pairingToken || ""),
         pairingUserId: String(data.user?.pairingUserId || ""),
       });
-      setSuccessMsg("Pairing credentials rotated.");
+      setSuccessMsg("High-entropy pairing token generated successfully.");
       alertMsg(Z.PAIRING_ROTATED);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not rotate pairing credentials.");
@@ -201,6 +271,143 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const switchTransport = (next: MediaTransport) => {
+    setMediaTransportState(next);
+    setPreferredMediaTransport(next);
+    gatewayClient.broadcast({
+      action: "SET_PREFERRED_MEDIA_TRANSPORT",
+      transport: next,
+      preferredMediaTransport: next,
+    });
+    alertMsg("Transport Mode Updated", `Preferred media transport set to ${next.toUpperCase()}`);
+  };
+
+  const runApiTest = async () => {
+    setTestingApi(true);
+    setError("");
+    setApiTestResult(null);
+    try {
+      const res = await fetch("/api/diagnostics/api-test", { cache: "no-store", credentials: "include" });
+      const data = await res.json();
+      setApiTestResult(data);
+      if (data?.allOk) {
+        setSuccessMsg("API Diagnostics: All systems operational!");
+      } else {
+        setError("API Diagnostics: One or more checks failed. See details below.");
+      }
+    } catch (err) {
+      setApiTestResult({
+        success: false,
+        allOk: false,
+        durationMs: 0,
+        checks: {
+          api: { status: "offline", latencyMs: 0, uptimeSeconds: 0, memoryMb: 0, nodeVersion: "" },
+          database: { status: "unreachable", pingMs: 0, ok: false, error: err instanceof Error ? err.message : String(err) },
+          auth: { status: "error", ok: false },
+        },
+      });
+      setError("Failed to connect to API diagnostics route.");
+    } finally {
+      setTestingApi(false);
+    }
+  };
+
+  const testGateway = async () => {
+    const target = vars.gatewayUrl.trim();
+    if (!target) {
+      setError("Please enter a Gateway URL or Static IP to test.");
+      return;
+    }
+    setTestingGateway(true);
+    setError("");
+    setGatewayProbeResult(null);
+
+    // 1. Browser Probe
+    let browserLive = false;
+    let browserRtt = 0;
+    const start = performance.now();
+    try {
+      const httpTarget = target.replace(/^wss:\/\//i, "https://").replace(/^ws:\/\//i, "http://");
+      const res = await fetch(`${httpTarget.replace(/\/ws.*$/, "")}/api/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(3000),
+      });
+      browserLive = res.ok || res.status < 500;
+      browserRtt = Math.round(performance.now() - start);
+    } catch (_) {
+      try {
+        const ws = new WebSocket(target);
+        await new Promise<void>((resolve, reject) => {
+          ws.onopen = () => {
+            browserLive = true;
+            browserRtt = Math.round(performance.now() - start);
+            ws.close();
+            resolve();
+          };
+          ws.onerror = () => reject();
+          setTimeout(reject, 2500);
+        });
+      } catch (_) {
+        browserLive = false;
+      }
+    }
+
+    // 2. Dispatch Probe to Agent
+    let agentReported = false;
+    const unsubscribe = gatewayClient.subscribe((event) => {
+      if (event.type === "json" && event.packet) {
+        const p = event.packet as Record<string, unknown>;
+        if (p.action === "PROBE_GATEWAY_URL") {
+          agentReported = true;
+          setGatewayProbeResult({
+            browserLive,
+            browserRtt,
+            agentLive: Boolean(p.live),
+            agentRtt: Number(p.rttMs || 0),
+            endpoint: String(p.endpoint || target),
+            agentMsg: String(p.message || ""),
+          });
+        }
+      }
+    });
+
+    gatewayClient.broadcast({
+      action: "PROBE_GATEWAY_URL",
+      targetUrl: target,
+    });
+
+    setTimeout(() => {
+      unsubscribe();
+      if (!agentReported) {
+        setGatewayProbeResult((prev) => ({
+          browserLive,
+          browserRtt,
+          agentLive: false,
+          agentMsg: "No active agents reported connectivity. Ensure at least one agent is running.",
+          ...prev,
+        }));
+      }
+      setTestingGateway(false);
+    }, 4500);
+  };
+
+  const shiftGatewayConnection = () => {
+    const target = vars.gatewayUrl.trim();
+    if (!target) {
+      setError("Enter a target Gateway URL / Static IP first.");
+      return;
+    }
+    setShiftingGateway(true);
+    gatewayClient.broadcast({
+      action: "SWITCH_GATEWAY_URL",
+      targetUrl: target,
+    });
+    setShiftResultMsg(
+      `Shift command dispatched! The agent is persisting ${target} and reconnecting with automated 30s cloud fallback protection.`
+    );
+    setTimeout(() => setShiftingGateway(false), 3500);
   };
 
   const bindAiToAgents = async () => {
@@ -256,8 +463,8 @@ export default function SettingsPage() {
               </p>
               <h1 className="font-display text-4xl lg:text-5xl tracking-tight mb-3">Settings</h1>
               <p className="text-muted-foreground max-w-2xl">
-                Unified configuration center. All environment variables, MongoDB URI, Cloudinary,
-                direct connection modes, and AI API keys are managed here.
+                Unified configuration center. Manage agent pairing tokens, media transport modes (WSS vs TCP),
+                custom gateway static IPs, API connectivity diagnostics, and AI provider engines.
               </p>
             </div>
 
@@ -281,7 +488,7 @@ export default function SettingsPage() {
                 onClick={() => setActiveTab("pairing")}
                 className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
                   activeTab === "pairing"
-                    ? "bg-primary text-primary-foreground font-semibold"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
                     : "text-muted-foreground hover:bg-muted"
                 }`}
               >
@@ -290,10 +497,34 @@ export default function SettingsPage() {
               </button>
 
               <button
+                onClick={() => setActiveTab("network")}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
+                  activeTab === "network"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <Network className="w-4 h-4" />
+                Network & Transports
+              </button>
+
+              <button
+                onClick={() => setActiveTab("diagnostics")}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
+                  activeTab === "diagnostics"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <Activity className="w-4 h-4" />
+                API Diagnostics
+              </button>
+
+              <button
                 onClick={() => setActiveTab("integrations")}
                 className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
                   activeTab === "integrations"
-                    ? "bg-primary text-primary-foreground font-semibold"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
                     : "text-muted-foreground hover:bg-muted"
                 }`}
               >
@@ -302,22 +533,10 @@ export default function SettingsPage() {
               </button>
 
               <button
-                onClick={() => setActiveTab("network")}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
-                  activeTab === "network"
-                    ? "bg-primary text-primary-foreground font-semibold"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <Network className="w-4 h-4" />
-                Network & Direct Peer
-              </button>
-
-              <button
                 onClick={() => setActiveTab("ai")}
                 className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
                   activeTab === "ai"
-                    ? "bg-primary text-primary-foreground font-semibold"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
                     : "text-muted-foreground hover:bg-muted"
                 }`}
               >
@@ -354,7 +573,7 @@ export default function SettingsPage() {
                         <h2 className="text-xl font-display tracking-tight">Agent pairing</h2>
                       </div>
                       <p className="text-sm text-muted-foreground max-w-xl">
-                        These 6-digit codes bind new agents to your account across Windows, macOS, and Linux.
+                        High-entropy, cryptographically unique pairing codes. Weak patterns (e.g. 000000, 111999, 123456) are strictly prohibited.
                       </p>
                     </div>
                     <Button
@@ -365,7 +584,7 @@ export default function SettingsPage() {
                       className="gap-2"
                     >
                       <RefreshCw className={`w-4 h-4 ${rotating ? "animate-spin" : ""}`} />
-                      {rotating ? "Rotating…" : "Rotate codes"}
+                      {rotating ? "Generating Strong…" : "Generate New Codes"}
                     </Button>
                   </div>
 
@@ -404,9 +623,28 @@ export default function SettingsPage() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="pairingToken" className="text-xs font-mono uppercase tracking-wider">
-                          Pairing token
-                        </Label>
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="pairingToken" className="text-xs font-mono uppercase tracking-wider">
+                            Pairing token
+                          </Label>
+                          {pairing.pairingToken && (
+                            <span
+                              className={`text-[11px] font-mono flex items-center gap-1 ${
+                                isTokenWeak ? "text-amber-500" : "text-emerald-500"
+                              }`}
+                            >
+                              {isTokenWeak ? (
+                                <>
+                                  <ShieldAlert className="w-3 h-3" /> Weak / Low Entropy
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-3 h-3" /> Cryptographically Strong
+                                </>
+                              )}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex gap-2">
                           <Input
                             id="pairingToken"
@@ -419,7 +657,9 @@ export default function SettingsPage() {
                                 pairingToken: e.target.value.replace(/\D/g, "").slice(0, 6),
                               }))
                             }
-                            className="h-12 font-mono text-lg tracking-[0.2em]"
+                            className={`h-12 font-mono text-lg tracking-[0.2em] ${
+                              isTokenWeak ? "border-amber-500 focus-visible:ring-amber-500" : ""
+                            }`}
                             disabled={loading}
                             required
                           />
@@ -433,11 +673,16 @@ export default function SettingsPage() {
                             <Copy className="w-4 h-4" />
                           </Button>
                         </div>
+                        {isTokenWeak && (
+                          <p className="text-[11px] text-amber-500 font-mono mt-1">
+                            Warning: Avoid sequential or repeated digits. Click &quot;Generate New Codes&quot; to obtain a high-entropy token.
+                          </p>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 pt-2">
-                      <Button type="submit" disabled={loading || saving} className="gap-2 h-11 px-6">
+                      <Button type="submit" disabled={loading || saving || isTokenWeak} className="gap-2 h-11 px-6">
                         <Save className="w-4 h-4" />
                         {saving ? "Saving…" : "Save pairing codes"}
                       </Button>
@@ -447,7 +692,329 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* Tab 2: Variables & Storage */}
+            {/* Tab 2: Network & Transports (Relocated TCP/WSS shifter + Gateway IP Shift & Test) */}
+            {activeTab === "network" && (
+              <div className="space-y-8">
+                {/* 1. Preferred Media Transport Section (Moved from Screen/Console pages) */}
+                <section className="space-y-4 p-5 border border-border rounded-xl bg-card">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ArrowRightLeft className="w-5 h-5 text-indigo-500" />
+                      <div>
+                        <h2 className="text-base font-semibold">Preferred Media Transport Mode</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Controls whether remote screen and camera streams flow over Secure WebSocket or raw Binary TCP.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-mono uppercase bg-primary/10 text-primary px-2.5 py-1 rounded-md font-semibold">
+                      Current: {mediaTransport.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => switchTransport("wss")}
+                      className={`p-4 rounded-lg border text-left transition-all ${
+                        mediaTransport === "wss"
+                          ? "border-primary bg-primary/5 ring-1 ring-primary"
+                          : "border-border bg-background hover:bg-muted/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold text-sm">WSS (Secure WebSocket)</span>
+                        {mediaTransport === "wss" && <Check className="w-4 h-4 text-primary" />}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Universal proxy and firewall friendly. Best for cloud deployments, Railway, and corporate networks.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => switchTransport("tcp")}
+                      className={`p-4 rounded-lg border text-left transition-all ${
+                        mediaTransport === "tcp"
+                          ? "border-primary bg-primary/5 ring-1 ring-primary"
+                          : "border-border bg-background hover:bg-muted/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold text-sm">TCP (Raw Binary Stream)</span>
+                        {mediaTransport === "tcp" && <Check className="w-4 h-4 text-primary" />}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Lowest overhead, zero framing latency. Delivers maximum 60 FPS remote desktop responsiveness.
+                      </p>
+                    </button>
+                  </div>
+                </section>
+
+                {/* 2. Custom Gateway Static IP / Server Endpoint & Shift */}
+                <section className="space-y-4 p-5 border border-border rounded-xl bg-card">
+                  <div className="flex items-center gap-2">
+                    <Server className="w-5 h-5 text-sky-500" />
+                    <div>
+                      <h2 className="text-base font-semibold">Custom Gateway Static IP / Server Endpoint</h2>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Test and shift your agent&apos;s active communication channel to a dedicated Static IP or custom gateway URL.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-lg border border-sky-500/20 bg-sky-500/5 text-xs text-muted-foreground space-y-1.5">
+                    <p className="font-medium text-sky-600 dark:text-sky-400">
+                      ℹ️ Architecture Note: How Static IP Shift Works Across Different Deployments:
+                    </p>
+                    <p>
+                      • <strong>Cloud Deployment (Railway/VPS):</strong> When the server is in the cloud and you enter a static IP (e.g. an on-premise relay or dedicated gateway), the agent will test the IP directly from its host.
+                    </p>
+                    <p>
+                      • <strong>Safe Auto-Rollback:</strong> When shifted, the agent attempts to maintain communication with the new endpoint. If unreachable, it automatically rolls back to the primary cloud gateway within 30 seconds.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="gatewayUrl" className="text-xs font-mono uppercase tracking-wider">
+                      Gateway URL / Static IP
+                    </Label>
+                    <Input
+                      id="gatewayUrl"
+                      placeholder="wss://203.0.113.10:9443/ws/gateway or ws://192.168.1.50:9443"
+                      value={vars.gatewayUrl}
+                      onChange={(e) => setVars({ ...vars, gatewayUrl: e.target.value })}
+                      className="font-mono text-sm"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void testGateway()}
+                      disabled={testingGateway || !vars.gatewayUrl.trim()}
+                      className="gap-2 text-xs"
+                    >
+                      <Wifi className={`w-3.5 h-3.5 ${testingGateway ? "animate-pulse" : ""}`} />
+                      {testingGateway ? "Testing Endpoint…" : "Test IP & Endpoint (Browser + Agent Ping)"}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="default"
+                      onClick={shiftGatewayConnection}
+                      disabled={shiftingGateway || !vars.gatewayUrl.trim()}
+                      className="gap-2 text-xs bg-sky-600 hover:bg-sky-700 text-white"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      {shiftingGateway ? "Shifting Agent…" : "Shift Connection to this IP"}
+                    </Button>
+                  </div>
+
+                  {/* Probe Result Display */}
+                  {gatewayProbeResult && (
+                    <div className="mt-3 p-4 rounded-lg border border-border bg-background/60 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-muted-foreground">Browser Reachability:</span>
+                        <span
+                          className={`flex items-center gap-1 font-semibold ${
+                            gatewayProbeResult.browserLive ? "text-emerald-500" : "text-amber-500"
+                          }`}
+                        >
+                          {gatewayProbeResult.browserLive ? (
+                            <>
+                              <Check className="w-3.5 h-3.5" /> Reachable ({gatewayProbeResult.browserRtt}ms)
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5" /> Direct Browser Blocked / Cross-Origin
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-muted-foreground">Agent Probe (Direct TCP / WS):</span>
+                        <span
+                          className={`flex items-center gap-1 font-semibold ${
+                            gatewayProbeResult.agentLive ? "text-emerald-500" : "text-destructive"
+                          }`}
+                        >
+                          {gatewayProbeResult.agentLive ? (
+                            <>
+                              <Check className="w-3.5 h-3.5" /> Agent Connected ({gatewayProbeResult.agentRtt}ms)
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="w-3.5 h-3.5" /> Agent Probe Failed
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      {gatewayProbeResult.agentMsg && (
+                        <p className="text-[11px] font-mono text-muted-foreground border-t border-border/50 pt-2">
+                          Status: {gatewayProbeResult.agentMsg}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {shiftResultMsg && (
+                    <div className="p-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 text-xs text-emerald-600 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      {shiftResultMsg}
+                    </div>
+                  )}
+                </section>
+
+                {/* 3. Direct LAN Peer Connection */}
+                <section className="space-y-4 p-5 border border-border rounded-xl bg-card">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-semibold">Automatic Direct LAN Connection</h2>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Detect matching public IPs by default and stream screen/camera directly over local WiFi / router.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={vars.directLanPreferred}
+                      onChange={(e) => setVars({ ...vars, directLanPreferred: e.target.checked })}
+                      className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
+                    />
+                  </div>
+                </section>
+
+                <Button onClick={saveVariables} disabled={saving} className="gap-2 h-11 px-6">
+                  <Save className="w-4 h-4" />
+                  {saving ? "Saving…" : "Save Network Preferences"}
+                </Button>
+              </div>
+            )}
+
+            {/* Tab 3: Diagnostics & API Test */}
+            {activeTab === "diagnostics" && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-5 border border-border rounded-xl bg-card">
+                  <div>
+                    <h2 className="text-lg font-semibold">API Connectivity & Health Diagnostics</h2>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Verify end-to-end communication with the backend routes, database latency, and auth session.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={() => void runApiTest()}
+                    disabled={testingApi}
+                    className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <Activity className={`w-4 h-4 ${testingApi ? "animate-spin" : ""}`} />
+                    {testingApi ? "Testing API…" : "Test API Connection"}
+                  </Button>
+                </div>
+
+                {apiTestResult && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* API Server Card */}
+                      <div className="p-4 rounded-xl border border-border bg-card space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-mono text-muted-foreground uppercase">API Routes</span>
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                              apiTestResult.checks?.api?.status === "ok"
+                                ? "bg-emerald-500/10 text-emerald-500"
+                                : "bg-destructive/10 text-destructive"
+                            }`}
+                          >
+                            {apiTestResult.checks?.api?.status === "ok" ? "Healthy" : "Failed"}
+                          </span>
+                        </div>
+                        <p className="text-2xl font-bold font-mono">
+                          {apiTestResult.checks?.api?.latencyMs ?? apiTestResult.durationMs ?? 0}
+                          <span className="text-xs font-normal text-muted-foreground ml-1">ms latency</span>
+                        </p>
+                        <p className="text-[11px] text-muted-foreground font-mono">
+                          Uptime: {Math.floor((apiTestResult.checks?.api?.uptimeSeconds || 0) / 60)}m · Node:{" "}
+                          {apiTestResult.checks?.api?.nodeVersion || "v20"}
+                        </p>
+                      </div>
+
+                      {/* Database Card */}
+                      <div className="p-4 rounded-xl border border-border bg-card space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-mono text-muted-foreground uppercase">MongoDB</span>
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                              apiTestResult.checks?.database?.ok
+                                ? "bg-emerald-500/10 text-emerald-500"
+                                : "bg-destructive/10 text-destructive"
+                            }`}
+                          >
+                            {apiTestResult.checks?.database?.ok ? "Connected" : "Disconnected"}
+                          </span>
+                        </div>
+                        <p className="text-2xl font-bold font-mono">
+                          {apiTestResult.checks?.database?.pingMs ?? "—"}
+                          <span className="text-xs font-normal text-muted-foreground ml-1">ms ping</span>
+                        </p>
+                        <p className="text-[11px] text-muted-foreground font-mono truncate">
+                          DB: {apiTestResult.checks?.database?.dbName || "zenvora"}
+                        </p>
+                      </div>
+
+                      {/* Auth Session Card */}
+                      <div className="p-4 rounded-xl border border-border bg-card space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-mono text-muted-foreground uppercase">Auth Session</span>
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                              apiTestResult.checks?.auth?.ok
+                                ? "bg-emerald-500/10 text-emerald-500"
+                                : "bg-amber-500/10 text-amber-500"
+                            }`}
+                          >
+                            {apiTestResult.checks?.auth?.ok ? "Authenticated" : "Guest"}
+                          </span>
+                        </div>
+                        <p className="text-base font-semibold font-mono truncate">
+                          {apiTestResult.checks?.auth?.email || name || "Active Operator"}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground font-mono">
+                          Token: {apiTestResult.checks?.auth?.hasPairingToken ? "Configured" : "None"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Overall Summary */}
+                    <div
+                      className={`p-4 rounded-xl border flex items-center justify-between text-sm ${
+                        apiTestResult.allOk
+                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
+                          : "border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {apiTestResult.allOk ? (
+                          <CheckCircle2 className="w-5 h-5 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-5 h-5 shrink-0" />
+                        )}
+                        <span>
+                          {apiTestResult.allOk
+                            ? "All core services (API routing, database cluster, and token session) passed health verification."
+                            : "Some diagnostic checks encountered issues. Check MongoDB connection string and credentials."}
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono">{apiTestResult.durationMs}ms total</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab 4: Variables & Storage */}
             {activeTab === "integrations" && (
               <form onSubmit={saveVariables} className="space-y-8">
                 <section className="space-y-4">
@@ -526,65 +1093,7 @@ export default function SettingsPage() {
               </form>
             )}
 
-            {/* Tab 3: Network & Direct Peer */}
-            {activeTab === "network" && (
-              <form onSubmit={saveVariables} className="space-y-8">
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Network className="w-5 h-5 text-indigo-500" />
-                    <h2 className="text-lg font-display tracking-tight">Direct Peer Connection (Same Public IP)</h2>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    When this dashboard and an agent share the same public IP (same local router / Wi-Fi network),
-                    ZenVora can connect peer-to-peer over your LAN. This eliminates cloud bandwidth consumption and delivers ultra-low latency remote control.
-                  </p>
-
-                  <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card">
-                    <div>
-                      <h3 className="text-sm font-medium">Automatic Direct LAN Connection</h3>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Detect matching public IPs by default and stream screen/camera directly over LAN.
-                      </p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={vars.directLanPreferred}
-                      onChange={(e) => setVars({ ...vars, directLanPreferred: e.target.checked })}
-                      className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
-                    />
-                  </div>
-                </section>
-
-                <section className="space-y-4 border-t border-border pt-6">
-                  <div className="flex items-center gap-2">
-                    <Cloud className="w-5 h-5 text-slate-500" />
-                    <h2 className="text-lg font-display tracking-tight">Custom Gateway Static IP / Server Endpoint</h2>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Leave blank to use the default web origin gateway, or configure your dedicated static server IP.
-                  </p>
-                  <div className="space-y-2">
-                    <Label htmlFor="gatewayUrl" className="text-xs font-mono uppercase tracking-wider">
-                      Gateway URL (e.g. wss://gateway.example.com/ws/gateway)
-                    </Label>
-                    <Input
-                      id="gatewayUrl"
-                      placeholder="wss://<your-server-static-ip>/ws/gateway"
-                      value={vars.gatewayUrl}
-                      onChange={(e) => setVars({ ...vars, gatewayUrl: e.target.value })}
-                      className="font-mono text-sm"
-                    />
-                  </div>
-                </section>
-
-                <Button type="submit" disabled={saving} className="gap-2 h-11 px-6">
-                  <Save className="w-4 h-4" />
-                  {saving ? "Saving…" : "Save Network Preferences"}
-                </Button>
-              </form>
-            )}
-
-            {/* Tab 4: AI Providers & Agent AI Binding */}
+            {/* Tab 5: AI Providers & Agent AI Binding */}
             {activeTab === "ai" && (
               <div className="space-y-8">
                 <section className="space-y-4">

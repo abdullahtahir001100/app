@@ -5,19 +5,36 @@ use crate::app_history::AppHistoryCollector;
 pub struct HistoryCommand;
 
 impl HistoryCommand {
-    pub fn execute_fetch_browser_history() -> serde_json::Value {
-        // Manual refresh: newest slice only — never dump thousands of rows.
-        let history = BrowserHistoryCollector::collect_all_history();
-        let capped: Vec<_> = history.into_iter().take(150).collect();
+    pub fn execute_fetch_browser_history(limit: Option<usize>) -> serde_json::Value {
+        let max_limit = limit.unwrap_or(100).clamp(1, 500);
+        let history = BrowserHistoryCollector::search("", max_limit, "desc");
 
         json!({
             "success": true,
             "command": "FETCH_BROWSER_HISTORY",
-            "entries": capped.len(),
+            "entries": history.len(),
+            "limit": max_limit,
             "incremental": false,
-            "data": BrowserHistoryCollector::to_json_array(&capped)
+            "data": BrowserHistoryCollector::to_json_array(&history)
         })
     }
+
+    pub fn execute_search_browser_history(query: &str, limit: usize, order: &str) -> serde_json::Value {
+        let max_limit = limit.clamp(1, 500);
+        let history = BrowserHistoryCollector::search(query, max_limit, order);
+
+        json!({
+            "success": true,
+            "command": "SEARCH_BROWSER_HISTORY",
+            "query": query,
+            "limit": max_limit,
+            "order": order,
+            "entries": history.len(),
+            "total": history.len(),
+            "data": BrowserHistoryCollector::to_json_array(&history)
+        })
+    }
+
 
     pub fn execute_fetch_app_history() -> serde_json::Value {
         let history = AppHistoryCollector::collect_all_app_history();

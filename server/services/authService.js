@@ -147,13 +147,51 @@ function authCookieOptions() {
     };
 }
 
+function isWeakPairingCode(code) {
+    if (!/^\d{6}$/.test(code)) return true;
+
+    // Reject all identical digits: e.g. '000000', '111111', etc.
+    if (/^(\d)\1{5}$/.test(code)) return true;
+
+    // Reject sequential ascending or descending: e.g. '123456', '654321'
+    const asc = '0123456789012345';
+    const desc = '9876543210987654';
+    if (asc.includes(code) || desc.includes(code)) return true;
+
+    // Reject repeated triplets / blocks: e.g. '111999', '000111', '999111'
+    if (/^(\d)\1\1(\d)\2\2$/.test(code)) return true;
+    // Reject repeated 3-digit pattern: e.g. '123123', '456456'
+    if (/^(\d{3})\1$/.test(code)) return true;
+    // Reject repeated 2-digit pairs: e.g. '121212'
+    if (/^(\d{2})\1\1$/.test(code)) return true;
+
+    // Enforce entropy: require at least 4 unique digits
+    const uniqueDigits = new Set(code.split('')).size;
+    if (uniqueDigits < 4) return true;
+
+    return false;
+}
+
+function generateStrongSixDigitCode() {
+    for (let attempts = 0; attempts < 5000; attempts++) {
+        // Cryptographically secure 6-digit random integer
+        const num = crypto.randomInt(100000, 1000000);
+        const candidate = String(num);
+        if (!isWeakPairingCode(candidate)) {
+            return candidate;
+        }
+    }
+    // Fallback if needed
+    return String(crypto.randomInt(100000, 1000000));
+}
+
 function generateSixDigitCode() {
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return generateStrongSixDigitCode();
 }
 
 async function generateUniqueUserField(fieldName) {
     while (true) {
-        const candidate = generateSixDigitCode();
+        const candidate = generateStrongSixDigitCode();
         const existing = await User.findOne({ [fieldName]: candidate }).lean();
         if (!existing) {
             return candidate;
@@ -164,7 +202,7 @@ async function generateUniqueUserField(fieldName) {
 async function ensureUserPairingFields(user) {
     if (!user?._id) return user;
     const updates = {};
-    if (!user.pairingToken) {
+    if (!user.pairingToken || isWeakPairingCode(user.pairingToken)) {
         updates.pairingToken = await generateUniqueUserField('pairingToken');
     }
     if (!user.pairingUserId) {
@@ -208,6 +246,12 @@ async function updateUserPairingFields(userId, body = {}) {
     const pairingUserId = String(body.pairingUserId || '').trim();
     if (!/^\d{6}$/.test(pairingToken) || !/^\d{6}$/.test(pairingUserId)) {
         const error = new Error('Pairing token and user id must be 6-digit codes.');
+        error.status = 400;
+        throw error;
+    }
+
+    if (isWeakPairingCode(pairingToken)) {
+        const error = new Error('Pairing token is too weak. Avoid simple sequences (e.g. 123456), repeated digits (e.g. 000000, 111999), or low entropy codes.');
         error.status = 400;
         throw error;
     }
@@ -751,5 +795,7 @@ module.exports = {
     pairAgent,
     rotateUserPairingFields,
     updateUserPairingFields,
+    generateStrongSixDigitCode,
+    isWeakPairingCode,
     verifyAdminUnlockPin,
 };

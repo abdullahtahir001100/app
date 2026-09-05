@@ -24,10 +24,10 @@ use crate::protocol::{
 use crate::sync_cursor::SyncCursors;
 
 const HEARTBEAT_SECS: u64 = 25;
-const HISTORY_WATCH_SECS: u64 = 8;
+const HISTORY_WATCH_SECS: u64 = 30;
 const DEFAULT_CONTROL_PORT: u16 = 9443;
 const MAX_BACKOFF_SECS: u64 = 30;
-const HISTORY_BATCH_SIZE: usize = 300;
+const HISTORY_BATCH_SIZE: usize = 50;
 
 pub type ControlTx = mpsc::UnboundedSender<Vec<u8>>;
 

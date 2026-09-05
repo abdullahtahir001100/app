@@ -727,6 +727,78 @@ pub fn handle_file_command(packet: IncomingPacket, state: &mut FileState) -> Opt
             });
             Ok(())
         }
+        "FILE_CHUNK_UPLOAD" => {
+            let chunk_index = payload
+                .get("chunk_index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+            let total_chunks = payload
+                .get("total_chunks")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as usize;
+            let chunk_b64 = payload
+                .get("chunk_b64")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing chunk_b64.".to_string())?;
+
+            let bytes = STANDARD
+                .decode(chunk_b64)
+                .map_err(|e| format!("Invalid base64 chunk: {}", e))?;
+
+            let target_path = if let Some(fname) = payload.get("file_name").and_then(|v| v.as_str()) {
+                let dir = state.guard.resolve(path_raw)?;
+                if !dir.is_dir() {
+                    let _ = fs::create_dir_all(&dir);
+                }
+                dir.join(fname)
+            } else {
+                state.guard.resolve(path_raw)?
+            };
+
+            if let Some(parent) = target_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            use std::fs::OpenOptions;
+            let mut file = if chunk_index == 0 {
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&target_path)
+                    .map_err(|e| format!("Failed to create file: {}", e))?
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .open(&target_path)
+                    .map_err(|e| format!("Failed to open file for append: {}", e))?
+            };
+
+            file.write_all(&bytes)
+                .map_err(|e| format!("Failed to write chunk: {}", e))?;
+
+            let is_complete = chunk_index + 1 >= total_chunks;
+            let current_size = fs::metadata(&target_path).map(|m| m.len()).unwrap_or(0);
+
+            if is_complete {
+                message = Some(format!(
+                    "Completed upload: {} ({} bytes).",
+                    target_path.file_name().unwrap_or_default().to_string_lossy(),
+                    current_size
+                ));
+            }
+
+            response_data = json!({
+                "path": path_to_forward_slash(&target_path),
+                "chunk_index": chunk_index,
+                "total_chunks": total_chunks,
+                "bytes_written": bytes.len(),
+                "current_size": current_size,
+                "completed": is_complete,
+            });
+            Ok(())
+        }
         "FILE_DELETE" => {
             let resolved = state.guard.resolve(path_raw)?;
             if resolved.is_dir() {
