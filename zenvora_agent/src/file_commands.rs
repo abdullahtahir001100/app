@@ -46,16 +46,30 @@ struct PathGuard {
 
 impl PathGuard {
     fn new() -> Self {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("C:\\Users"));
+        let home = dirs::home_dir()
+            .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+            .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("/"));
 
         let mut allowed_roots = vec![home.clone()];
         for sub in ["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"] {
             allowed_roots.push(home.join(sub));
         }
 
+        #[cfg(not(windows))]
+        {
+            allowed_roots.push(PathBuf::from("/"));
+            let volumes = PathBuf::from("/Volumes");
+            if volumes.is_dir() {
+                if let Ok(entries) = fs::read_dir(&volumes) {
+                    for entry in entries.flatten() {
+                        allowed_roots.push(entry.path());
+                    }
+                }
+            }
+        }
+
+        #[cfg(windows)]
         for drive in enumerate_windows_drives() {
             if !allowed_roots.iter().any(|root| root == &drive) {
                 allowed_roots.push(drive);
@@ -75,6 +89,7 @@ impl PathGuard {
     fn quick_roots(&self) -> Vec<Value> {
         let mut roots = Vec::new();
 
+        #[cfg(windows)]
         for drive in enumerate_windows_drives() {
             let label = drive
                 .to_string_lossy()
@@ -86,6 +101,36 @@ impl PathGuard {
                 "kind": "drive"
             }));
         }
+
+        #[cfg(target_os = "macos")]
+        {
+            roots.push(json!({
+                "label": "Macintosh HD",
+                "path": "/",
+                "kind": "drive"
+            }));
+            let volumes = PathBuf::from("/Volumes");
+            if let Ok(entries) = fs::read_dir(&volumes) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    if !name.is_empty() && !name.starts_with('.') {
+                        roots.push(json!({
+                            "label": name,
+                            "path": path_to_forward_slash(&p),
+                            "kind": "drive"
+                        }));
+                    }
+                }
+            }
+        }
+
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        roots.push(json!({
+            "label": "Root",
+            "path": "/",
+            "kind": "drive"
+        }));
 
         let desktop = self.home.join("Desktop");
         let documents = self.home.join("Documents");
@@ -119,6 +164,7 @@ impl PathGuard {
             return Ok(self.home.clone());
         }
 
+        #[cfg(windows)]
         if let Some(drive) = parse_windows_drive_root(trimmed) {
             if drive.exists() {
                 return Ok(drive);
@@ -126,7 +172,17 @@ impl PathGuard {
             return Err(format!("Drive not found: {}", trimmed));
         }
 
+        #[cfg(windows)]
         let raw = PathBuf::from(trimmed.replace('/', "\\"));
+
+        #[cfg(not(windows))]
+        let raw = if let Some(stripped) = trimmed.strip_prefix("~/") {
+            self.home.join(stripped)
+        } else if trimmed == "~" {
+            self.home.clone()
+        } else {
+            PathBuf::from(trimmed)
+        };
         let candidate = if raw.is_absolute() {
             raw
         } else {
@@ -195,15 +251,39 @@ fn path_to_forward_slash(path: &Path) -> String {
 }
 
 fn enumerate_windows_drives() -> Vec<PathBuf> {
-    let mut drives = Vec::new();
-    for letter in b'A'..=b'Z' {
-        let drive = format!("{}:\\", letter as char);
-        let path = PathBuf::from(&drive);
-        if path.exists() {
-            drives.push(path);
+    #[cfg(windows)]
+    {
+        let mut drives = Vec::new();
+        for letter in b'A'..=b'Z' {
+            let drive = format!("{}:\\", letter as char);
+            let path = PathBuf::from(&drive);
+            if path.exists() {
+                drives.push(path);
+            }
         }
+        drives
     }
-    drives
+    #[cfg(target_os = "macos")]
+    {
+        let mut drives = vec![PathBuf::from("/")];
+        let volumes = PathBuf::from("/Volumes");
+        if volumes.is_dir() {
+            if let Ok(entries) = fs::read_dir(&volumes) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    if !name.is_empty() && !name.starts_with('.') {
+                        drives.push(p);
+                    }
+                }
+            }
+        }
+        drives
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        vec![PathBuf::from("/")]
+    }
 }
 
 fn parse_windows_drive_root(input: &str) -> Option<PathBuf> {

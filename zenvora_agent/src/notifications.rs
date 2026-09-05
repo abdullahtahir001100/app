@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Local;
 
+#[cfg(windows)]
 use windows::UI::Notifications::NotificationKinds;
+#[cfg(windows)]
 use windows::UI::Notifications::Management::{
     UserNotificationListener,
     UserNotificationListenerAccessStatus,
@@ -67,6 +69,7 @@ impl NotificationCapture {
         }
     }
 
+    #[cfg(windows)]
     pub fn sync_notifications(&self) {
         let listener = match UserNotificationListener::Current() {
             Ok(v) => v,
@@ -150,13 +153,6 @@ impl NotificationCapture {
         }
     }
 
-     // println!("==============================");
-     // println!("APP     = {}", app_name);
-     // println!("TITLE   = {}", title);
-     // println!("MESSAGE = {}", message);
-     // println!("ID      = {}", notif_id);
-     // println!("==============================");
-
      self.add_notification(SystemNotification {
         app: app_name,
         title,
@@ -170,6 +166,12 @@ impl NotificationCapture {
 }
     }
 
+    #[cfg(not(windows))]
+    pub fn sync_notifications(&self) {
+        // macOS / Linux: notification center capture or fallback
+    }
+
+    #[cfg(windows)]
     pub fn start_listening(self: Arc<Self>) {
         let capture = self.clone();
 
@@ -195,5 +197,10 @@ impl NotificationCapture {
                 std::thread::sleep(std::time::Duration::from_secs(5));
             }
         });
+    }
+
+    #[cfg(not(windows))]
+    pub fn start_listening(self: Arc<Self>) {
+        // Broadcast channel is live for on-demand notifications
     }
 }

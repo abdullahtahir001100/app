@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use winreg::RegKey;
 use chrono::Local;
 use serde_json::json;
@@ -43,27 +44,33 @@ impl AppHistoryCollector {
         }
 
         history.extend(Self::collect_running_processes());
+        #[cfg(windows)]
         history.extend(Self::collect_registry_recent_apps());
 
         history.sort_by(|a, b| b.last_opened.cmp(&a.last_opened));
         history.dedup_by(|a, b| {
             a.app_name == b.app_name
-                && a.executable_path == b.executable_path
-                && a.windows_user == b.windows_user
+            && a.executable_path == b.executable_path
+            && a.windows_user == b.windows_user
         });
         history
     }
 
     fn windows_user_homes() -> Vec<PathBuf> {
         let mut homes = Vec::new();
+        #[cfg(windows)]
         let users_dir = PathBuf::from(r"C:\Users");
+        #[cfg(target_os = "macos")]
+        let users_dir = PathBuf::from("/Users");
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        let users_dir = PathBuf::from("/home");
         if let Ok(entries) = std::fs::read_dir(&users_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if matches!(
                     name.as_str(),
-                    "Public" | "Default" | "Default User" | "All Users" | "desktop.ini"
-                ) {
+                    "Public" | "Default" | "Default User" | "All Users" | "desktop.ini" | "Shared"
+                ) || name.starts_with('.') {
                     continue;
                 }
                 let path = entry.path();
@@ -150,9 +157,29 @@ impl AppHistoryCollector {
             }
         }
 
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut s = sysinfo::System::new();
+            s.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            for (_pid, proc_) in s.processes() {
+                let name = proc_.name().to_string_lossy().to_string();
+                if !name.is_empty() && !processes.iter().any(|p: &AppHistory| p.app_name == name) {
+                    processes.push(AppHistory {
+                        app_name: name,
+                        executable_path: proc_.exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                        last_opened: now.clone(),
+                        app_type: "process".to_string(),
+                        windows_user: user.clone(),
+                        duration: 0,
+                    });
+                }
+            }
+        }
+
         processes
     }
 
+    #[cfg(windows)]
     fn collect_registry_recent_apps() -> Vec<AppHistory> {
         let mut apps = Vec::new();
         let user = whoami::username();
@@ -186,6 +213,11 @@ impl AppHistoryCollector {
         }
 
         apps
+    }
+
+    #[cfg(not(windows))]
+    fn collect_registry_recent_apps() -> Vec<AppHistory> {
+        Vec::new()
     }
 
     /// Incremental: entries with last_opened strictly after cursor (ISO / sortable string).

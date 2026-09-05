@@ -28,7 +28,10 @@ export default function DashboardPage() {
   const [showPairModal, setShowPairModal] = useState(false);
   const [openPlatformMenu, setOpenPlatformMenu] = useState(false);
   const [openWindowsMenu, setOpenWindowsMenu] = useState(false);
+  const [openMacMenu, setOpenMacMenu] = useState(false);
+  const [openLinuxMenu, setOpenLinuxMenu] = useState(false);
   const [openAndroidMenu, setOpenAndroidMenu] = useState(false);
+  const [activeCliPlatform, setActiveCliPlatform] = useState<"windows" | "mac" | "linux">("windows");
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [selectedAndroidVersion, setSelectedAndroidVersion] = useState<number | null>(null);
   const [windowsCliInlineOpen, setWindowsCliInlineOpen] = useState(false);
@@ -238,7 +241,11 @@ export default function DashboardPage() {
     process.env.NEXT_PUBLIC_PLAY_STORE_URL ||
     "";
 
-  const refreshBootstrapCommand = async (token: string, userId: string) => {
+  const refreshBootstrapCommand = async (
+    token: string,
+    userId: string,
+    platform: "windows" | "mac" | "linux" = activeCliPlatform
+  ) => {
     setBootstrapLoading(true);
     try {
       const sessionId = `web-${Date.now().toString(36)}`;
@@ -254,6 +261,7 @@ export default function DashboardPage() {
           apiBase,
           gatewayUrl,
           downloadUrl: agentDownloadUrl,
+          platform,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -274,9 +282,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if ((!showPairModal && !windowsCliInlineOpen) || !pairingToken || !pairingUserId) return;
-    void refreshBootstrapCommand(pairingToken, pairingUserId);
+    void refreshBootstrapCommand(pairingToken, pairingUserId, activeCliPlatform);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPairModal, windowsCliInlineOpen, pairingToken, pairingUserId]);
+  }, [showPairModal, windowsCliInlineOpen, pairingToken, pairingUserId, activeCliPlatform]);
 
   const copyInstallCommand = async () => {
     try {
@@ -402,25 +410,31 @@ export default function DashboardPage() {
                         className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
                         onClick={() => {
                           setOpenPlatformMenu(false);
-                          setSelectedPlatform("mac");
-                          setShowPairModal(true);
-                          void loadSession();
+                          setOpenWindowsMenu(true);
                         }}
                       >
-                        <span>macOS</span>
-                        <span className="text-xs text-muted-foreground">Open</span>
+                        <span>Windows</span>
+                        <span className="text-xs text-muted-foreground">CLI / GUI</span>
                       </button>
                       <button
                         className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
                         onClick={() => {
                           setOpenPlatformMenu(false);
-                          setSelectedPlatform("linux");
-                          setShowPairModal(true);
-                          void loadSession();
+                          setOpenMacMenu(true);
+                        }}
+                      >
+                        <span>macOS</span>
+                        <span className="text-xs text-muted-foreground">CLI / GUI</span>
+                      </button>
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center justify-between"
+                        onClick={() => {
+                          setOpenPlatformMenu(false);
+                          setOpenLinuxMenu(true);
                         }}
                       >
                         <span>Linux</span>
-                        <span className="text-xs text-muted-foreground">Open</span>
+                        <span className="text-xs text-muted-foreground">CLI / GUI</span>
                       </button>
                       <div className="border-t border-border" />
                       <div className="px-3 py-1 text-xs text-muted-foreground">Mobile</div>
@@ -456,6 +470,7 @@ export default function DashboardPage() {
                       className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-t-lg"
                       onClick={async () => {
                         setOpenWindowsMenu(false);
+                        setActiveCliPlatform("windows");
                         setCliPanelMode("command");
                         setWindowsCliInlineOpen(true);
                         const session = await loadSession();
@@ -474,6 +489,76 @@ export default function DashboardPage() {
                       onClick={() => {
                         setOpenWindowsMenu(false);
                         setSelectedPlatform("windows");
+                        setShowPairModal(true);
+                        void loadSession();
+                      }}
+                    >
+                      <Laptop className="w-4 h-4" />
+                      GUI
+                    </button>
+                  </div>
+                )}
+
+                {openMacMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-card border border-border rounded-lg shadow-lg z-50">
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-t-lg"
+                      onClick={async () => {
+                        setOpenMacMenu(false);
+                        setActiveCliPlatform("mac");
+                        setCliPanelMode("command");
+                        setWindowsCliInlineOpen(true);
+                        const session = await loadSession();
+                        const token = session?.token || pairingToken;
+                        const userId = session?.userId || pairingUserId;
+                        if (token && userId) {
+                          await refreshBootstrapCommand(token, userId, "mac");
+                        }
+                      }}
+                    >
+                      <Terminal className="w-4 h-4" />
+                      CLI
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-b-lg"
+                      onClick={() => {
+                        setOpenMacMenu(false);
+                        setSelectedPlatform("mac");
+                        setShowPairModal(true);
+                        void loadSession();
+                      }}
+                    >
+                      <Laptop className="w-4 h-4" />
+                      GUI
+                    </button>
+                  </div>
+                )}
+
+                {openLinuxMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-44 bg-card border border-border rounded-lg shadow-lg z-50">
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-t-lg"
+                      onClick={async () => {
+                        setOpenLinuxMenu(false);
+                        setActiveCliPlatform("linux");
+                        setCliPanelMode("command");
+                        setWindowsCliInlineOpen(true);
+                        const session = await loadSession();
+                        const token = session?.token || pairingToken;
+                        const userId = session?.userId || pairingUserId;
+                        if (token && userId) {
+                          await refreshBootstrapCommand(token, userId, "linux");
+                        }
+                      }}
+                    >
+                      <Terminal className="w-4 h-4" />
+                      CLI
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-accent/10 flex items-center gap-2 rounded-b-lg"
+                      onClick={() => {
+                        setOpenLinuxMenu(false);
+                        setSelectedPlatform("linux");
                         setShowPairModal(true);
                         void loadSession();
                       }}
@@ -515,9 +600,19 @@ export default function DashboardPage() {
                   <div className="absolute right-0 top-full mt-2 w-[min(92vw,28rem)] bg-card border border-border rounded-xl shadow-xl z-50 p-4">
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div>
-                        <div className="text-sm font-semibold">Windows — CLI</div>
+                        <div className="text-sm font-semibold">
+                          {activeCliPlatform === "mac"
+                            ? "macOS — CLI"
+                            : activeCliPlatform === "linux"
+                            ? "Linux — CLI"
+                            : "Windows — CLI"}
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Admin PowerShell · keep open for live logs
+                          {activeCliPlatform === "mac"
+                            ? "Terminal · Paste & run (auto launchd supervisor)"
+                            : activeCliPlatform === "linux"
+                            ? "Bash / Terminal · Paste & run (auto systemd supervisor)"
+                            : "Admin PowerShell · keep open for live logs"}
                         </p>
                       </div>
                       <button
@@ -545,7 +640,7 @@ export default function DashboardPage() {
                             disabled={bootstrapLoading || !pairingToken}
                             onClick={() => {
                               if (pairingToken && pairingUserId) {
-                                void refreshBootstrapCommand(pairingToken, pairingUserId);
+                                void refreshBootstrapCommand(pairingToken, pairingUserId, activeCliPlatform);
                               }
                             }}
                           >
@@ -554,7 +649,7 @@ export default function DashboardPage() {
                           <button
                             type="button"
                             className="px-3 py-1.5 text-xs bg-foreground text-background rounded-md disabled:opacity-50 inline-flex items-center gap-1.5"
-                            disabled={bootstrapLoading || !bootstrapCode}
+                            disabled={bootstrapLoading || (!bootstrapCode && !installCommand)}
                             onClick={async () => {
                               try {
                                 await navigator.clipboard.writeText(installCommand);
@@ -977,8 +1072,9 @@ export default function DashboardPage() {
             <DialogHeader className="px-8 pt-8 pb-4">
               <DialogTitle>Pair Device ON Zenvora Agent</DialogTitle>
               <DialogDescription className="mt-3 text-sm text-muted-foreground max-w-2xl">
-                Copy the short command, run it as Admin, and <strong className="text-foreground">keep this modal open</strong>.
-                Live install logs appear in the console area below.
+                {selectedPlatform === "android"
+                  ? "Download either Lite APK or Full APK, install on device and follow permissions onboarding."
+                  : "Download the agent app and open it to pair with your credentials, or use the CLI command in Terminal. Keep this modal open for live logs."}
               </DialogDescription>
             </DialogHeader>
 
@@ -1074,10 +1170,10 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
-            ) : ['mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
+            ) : selectedPlatform === "ios" ? (
               <div className="px-8 py-12 text-center">
                 <h3 className="text-2xl font-semibold mb-4">Coming soon</h3>
-                <p className="text-muted-foreground">Pairing for {selectedPlatform} is coming soon. Check back later or use the gateway installer.</p>
+                <p className="text-muted-foreground">Pairing for iOS is managed through TestFlight/App Store and gateway connector.</p>
               </div>
             ) : (
               <div className="flex flex-col ">
@@ -1137,11 +1233,41 @@ export default function DashboardPage() {
                       <div className="space-y-4 gap-8 flex flex-wrap">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair Token</p>
-                          <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <p className="break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
+                            {pairingToken && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={async () => {
+                                  await navigator.clipboard.writeText(pairingToken);
+                                  alertMsg(Z.TOKEN_COPIED || "Token copied");
+                                }}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Pair User ID</p>
-                          <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <p className="break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                            {pairingUserId && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={async () => {
+                                  await navigator.clipboard.writeText(pairingUserId);
+                                  alertMsg("User ID copied");
+                                }}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1245,6 +1371,10 @@ export default function DashboardPage() {
                 <p className="text-sm text-muted-foreground">
                   {selectedPlatform === "android"
                     ? "Lite = Protect soft · Full = all permissions + Device Admin"
+                    : selectedPlatform === "mac"
+                    ? "ZenvoraAgent (Mach-O) · launchd supervisor & native controls"
+                    : selectedPlatform === "linux"
+                    ? "ZenvoraAgent (ELF) · systemd supervisor & cross-distro support"
                     : "ZenvoraAgent.exe · headless provision + service install"}
                 </p>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1273,7 +1403,21 @@ export default function DashboardPage() {
                         Download exe
                       </Button>
                     </a>
-                  ) : ['mac', 'ios', 'linux'].includes(String(selectedPlatform)) ? (
+                  ) : selectedPlatform === "mac" ? (
+                    <a href={`${apiBase}/api/agent/download?platform=mac`} target="_blank" rel="noreferrer">
+                      <Button className="bg-foreground text-background hover:bg-foreground/90">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download macOS Agent
+                      </Button>
+                    </a>
+                  ) : selectedPlatform === "linux" ? (
+                    <a href={`${apiBase}/api/agent/download?platform=linux`} target="_blank" rel="noreferrer">
+                      <Button className="bg-foreground text-background hover:bg-foreground/90">
+                        <DownloadCloud className="w-4 h-4 mr-2" />
+                        Download Linux Agent
+                      </Button>
+                    </a>
+                  ) : selectedPlatform === "ios" ? (
                     <Button className="bg-foreground text-background hover:bg-foreground/90" disabled>
                       <DownloadCloud className="w-4 h-4 mr-2" />
                       Coming soon

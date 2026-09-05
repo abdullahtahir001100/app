@@ -1,18 +1,42 @@
 //! Agent install / data directories.
-//! Avoid System32 and fake "WIN_32" names — those patterns trigger Defender ML (Bearfoos).
+//! Cross-platform: macOS, Linux, and Windows.
 
 use std::fs;
 use std::path::PathBuf;
 
 pub const AGENT_DIR_NAME: &str = "Zenvora";
+
+#[cfg(windows)]
 pub const AGENT_EXE_NAME: &str = "ZenvoraAgent.exe";
+#[cfg(not(windows))]
+pub const AGENT_EXE_NAME: &str = "ZenvoraAgent";
+
 /// Legacy folder from older builds (migrate agent.dat from here).
 pub const LEGACY_DIR_NAME: &str = "WIN_32";
 
+#[cfg(windows)]
 pub fn program_data_root() -> PathBuf {
     std::env::var_os("PROGRAMDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+}
+
+#[cfg(target_os = "macos")]
+pub fn program_data_root() -> PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        home.join("Library").join("Application Support")
+    } else {
+        PathBuf::from("/Library/Application Support")
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+pub fn program_data_root() -> PathBuf {
+    if let Some(config) = dirs::config_dir() {
+        config
+    } else {
+        PathBuf::from("/etc")
+    }
 }
 
 pub fn agent_dir() -> PathBuf {
@@ -53,4 +77,22 @@ pub fn migrate_legacy_file(file_name: &str) {
     if legacy.is_file() {
         let _ = fs::copy(&legacy, &modern);
     }
+}
+
+pub const ZENVORA_LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+
+/// Ensures that the official Zenvora logo is available locally for native GUI dialogs and notifications.
+pub fn ensure_logo_file() -> PathBuf {
+    let logo_path = agent_dir().join("logo.png");
+    if !logo_path.exists() {
+        let _ = fs::write(&logo_path, ZENVORA_LOGO_PNG);
+    }
+    #[cfg(unix)]
+    {
+        let tmp_logo = PathBuf::from("/tmp/zenvora_logo.png");
+        if !tmp_logo.exists() {
+            let _ = fs::write(&tmp_logo, ZENVORA_LOGO_PNG);
+        }
+    }
+    logo_path
 }

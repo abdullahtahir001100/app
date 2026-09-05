@@ -28,6 +28,7 @@ import {
   Package,
   Volume2,
   Radio,
+  Layers,
 } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -377,6 +378,7 @@ function AppSidebarContent() {
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
     { icon: Settings, label: "Settings", href: "/settings", page: "settings" },
+    { icon: Layers, label: "Architecture", href: "/architecture", page: "architecture" },
   ].filter((item) => can(item.page));
 
   const premiumMenuItems = [

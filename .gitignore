@@ -39,7 +39,9 @@ android-agent-kotlin/**/*.keystore
 # Rust
 
 zenvora_agent/target/
+zenvora_agent/target.nosync/
 **/target/
+**/target.nosync/
 
 # Optional
 **/debug/
@@ -51,4 +53,6 @@ zenvora_agent/target/
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
+next-env.d.tszenvora_agent/target/
+zenvora_agent/target.nosync/
+*.nosync

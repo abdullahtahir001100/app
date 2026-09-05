@@ -8,6 +8,8 @@ const {
     buildBootstrapCommand,
     buildBootstrapCommandCurl,
     buildBootstrapCommandCmd,
+    buildBootstrapCommandMac,
+    buildBootstrapCommandLinux,
 } = require('../services/bootstrapTicketService');
 const liveLogBus = require('../services/liveLogBus');
 const { verifyUserTokenFast, AUTH_COOKIE } = require('../services/authService');
@@ -89,8 +91,51 @@ function androidApkCandidates(flavor = 'lite') {
     ].filter(Boolean);
 }
 
-function findAgentBinary() {
-    return candidatePaths().find((p) => {
+function macAgentCandidates(preferZip = false) {
+    const cwd = process.cwd();
+    if (preferZip) {
+        return [
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
+            process.env.AGENT_MACOS_BINARY_PATH,
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
+            path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
+            path.join(cwd, 'zenvora_agent', 'target', 'debug', 'ZenvoraAgent'),
+            path.join(cwd, 'zenvora_agent', 'target.nosync', 'release', 'ZenvoraAgent'),
+            path.join(cwd, 'zenvora_agent', 'target.nosync', 'debug', 'ZenvoraAgent'),
+        ].filter(Boolean);
+    }
+    return [
+        process.env.AGENT_MACOS_BINARY_PATH,
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
+        path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
+        path.join(cwd, 'zenvora_agent', 'target', 'debug', 'ZenvoraAgent'),
+        path.join(cwd, 'zenvora_agent', 'target.nosync', 'release', 'ZenvoraAgent'),
+        path.join(cwd, 'zenvora_agent', 'target.nosync', 'debug', 'ZenvoraAgent'),
+    ].filter(Boolean);
+}
+
+function linuxAgentCandidates() {
+    const cwd = process.cwd();
+    return [
+        process.env.AGENT_LINUX_BINARY_PATH,
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-linux'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
+        path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
+        path.join(cwd, 'zenvora_agent', 'target', 'x86_64-unknown-linux-gnu', 'release', 'ZenvoraAgent'),
+    ].filter(Boolean);
+}
+
+function findAgentBinary(platform = 'windows', preferZip = false) {
+    let list = candidatePaths();
+    if (platform === 'mac' || platform === 'macos' || platform === 'darwin') {
+        list = macAgentCandidates(preferZip);
+    } else if (platform === 'linux') {
+        list = linuxAgentCandidates();
+    }
+    return list.find((p) => {
         try {
             return fs.existsSync(p) && fs.statSync(p).isFile();
         } catch {
@@ -141,7 +186,13 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
         downloadUrl,
     });
 
-    const command = buildBootstrapCommand(apiBase, ticket.code);
+    const platform = String(req.body?.platform || 'windows').toLowerCase();
+    let command = buildBootstrapCommand(apiBase, ticket.code);
+    if (platform === 'mac' || platform === 'macos') {
+        command = buildBootstrapCommandMac(apiBase, ticket.code);
+    } else if (platform === 'linux') {
+        command = buildBootstrapCommandLinux(apiBase, ticket.code);
+    }
     const commandCurl = buildBootstrapCommandCurl(apiBase, ticket.code);
     const commandCmd = buildBootstrapCommandCmd(apiBase, ticket.code);
 
@@ -171,14 +222,24 @@ router.get('/download', (req, res) => {
     const platform = String(req.query?.platform || 'windows').toLowerCase();
     const isAndroid = platform === 'android' || platform === 'apk';
     const flavor = String(req.query?.flavor || (isAndroid ? 'lite' : '')).toLowerCase();
+    const format = String(req.query?.format || '').toLowerCase();
     const resolvedFlavor =
         flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'full' : 'lite';
-    const filePath = isAndroid ? findAndroidApk(resolvedFlavor) : findAgentBinary();
+    const isMac = platform === 'mac' || platform === 'macos' || platform === 'darwin';
+    const isLinux = platform === 'linux';
+    const preferZip = isMac && format !== 'binary';
+    const filePath = isAndroid ? findAndroidApk(resolvedFlavor) : findAgentBinary(platform, preferZip);
     if (!filePath) {
         liveLogBus.push({
             channel: 'http',
             level: 'error',
-            message: isAndroid ? 'Android APK missing' : msgText(Z.BINARY_MISSING),
+            message: isAndroid
+                ? 'Android APK missing'
+                : isMac
+                ? 'macOS binary missing'
+                : isLinux
+                ? 'Linux binary missing'
+                : msgText(Z.BINARY_MISSING),
             route: '/api/agent/download',
         });
         return jsonMsg(
@@ -187,13 +248,22 @@ router.get('/download', (req, res) => {
             Z.BINARY_MISSING,
             isAndroid
                 ? 'Build lite APK: cd android-agent-kotlin && gradlew assembleLiteRelease — copy to public/downloads/Zenvora-lite.apk'
+                : isMac
+                ? 'Place ZenvoraAgent-mac in public/downloads/ or build in zenvora_agent'
+                : isLinux
+                ? 'Place ZenvoraAgent-linux in public/downloads/ or build in zenvora_agent'
                 : 'Place ZenvoraAgent.exe in public/downloads/'
         );
     }
 
     const stat = fs.statSync(filePath);
+    const isZip = filePath.endsWith('.zip');
     const filename = isAndroid
         ? (flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'Zenvora-full.apk' : 'Zenvora-lite.apk')
+        : isZip
+        ? path.basename(filePath)
+        : isMac || isLinux
+        ? 'ZenvoraAgent'
         : 'ZenvoraAgent.exe';
     liveLogBus.push({
         channel: 'http',
@@ -205,7 +275,7 @@ router.get('/download', (req, res) => {
     res.status(200);
     res.setHeader(
         'Content-Type',
-        isAndroid ? 'application/vnd.android.package-archive' : 'application/octet-stream'
+        isAndroid ? 'application/vnd.android.package-archive' : isZip ? 'application/zip' : 'application/octet-stream'
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', String(stat.size));

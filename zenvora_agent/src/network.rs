@@ -109,16 +109,10 @@ fn to_pcwstr(input: &str) -> PCWSTR {
     PCWSTR(wide.as_ptr())
 }
 
-#[cfg(windows)]
 fn get_local_ip() -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("1.1.1.1:80").ok()?;
     socket.local_addr().ok().map(|addr| addr.ip().to_string())
-}
-
-#[cfg(not(windows))]
-fn get_local_ip() -> Option<String> {
-    None
 }
 
 #[cfg(windows)]
@@ -140,13 +134,13 @@ fn get_battery_percent() -> Option<u32> {
 
 #[cfg(not(windows))]
 fn get_battery_percent() -> Option<u32> {
-    None
+    crate::platform::get_battery_status().map(|(percent, _)| percent)
 }
 
 #[cfg(windows)]
 fn get_storage_used_percent() -> Option<u32> {
     unsafe {
-        let root = to_pcwstr("C:\\\\");
+        let root = to_pcwstr("C:\\");
         let mut free_bytes_available: u64 = 0;
         let mut total_bytes: u64 = 0;
         let mut total_free_bytes: u64 = 0;
@@ -170,7 +164,7 @@ fn get_storage_used_percent() -> Option<u32> {
 
 #[cfg(not(windows))]
 fn get_storage_used_percent() -> Option<u32> {
-    None
+    crate::platform::get_storage_used_percent()
 }
 
 fn schedule_screen_capture(

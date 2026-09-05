@@ -17,7 +17,7 @@ const installLogsRoutes = require('./server/routes/installLogs');
 const securityAuditRoutes = require('./server/routes/security-audit');
 const liveLogsRoutes = require('./server/routes/live-logs');
 const agentRoutes = require('./server/routes/agent');
-const { getTicket, buildInstallScript } = require('./server/services/bootstrapTicketService');
+const { getTicket, buildInstallScript, buildBashInstallScript } = require('./server/services/bootstrapTicketService');
 const { initWebSocketGateway } = require('./server/sockets/gateway');
 const { initTcpControlGateway } = require('./server/control/tcpGateway');
 const { lookupShareToken, serviceErrorResponse } = require('./server/services/virtualFileService');
@@ -144,7 +144,13 @@ nextApp.prepare().then(() => {
             userId: ticket.userId,
             meta: { code: ticket.code, sessionId: ticket.sessionId },
         });
-        const body = buildInstallScript(ticket);
+        const reqOs = String(req.query?.os || '').toLowerCase();
+        const isMac = reqOs === 'mac' || reqOs === 'macos' || reqOs === 'darwin' || ua.includes('darwin') || ua.includes('macintosh');
+        const isLinux = reqOs === 'linux' || ua.includes('linux');
+
+        const body = (isMac || isLinux)
+            ? buildBashInstallScript(ticket, isLinux ? 'linux' : 'mac')
+            : buildInstallScript(ticket);
         res.status(200)
             .type('text/plain; charset=utf-8')
             .set('Cache-Control', 'no-store, no-cache')

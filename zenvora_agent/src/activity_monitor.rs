@@ -11,18 +11,31 @@ use std::time::Instant;
 
 use serde_json::json;
 use tokio::time::{sleep, Duration};
+#[cfg(windows)]
 use windows::core::{PCWSTR, PWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HGLOBAL, HWND};
+#[cfg(windows)]
 use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard};
+#[cfg(windows)]
 use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+#[cfg(windows)]
 use windows::Win32::System::Memory::GlobalSize;
+#[cfg(windows)]
 use windows::Win32::System::Ole::CF_TEXT;
+#[cfg(windows)]
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::GetTickCount;
+#[cfg(windows)]
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+#[cfg(windows)]
 use windows::Win32::System::WindowsProgramming::DRIVE_REMOVABLE;
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId};
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::GetDriveTypeW;
 
 use crate::activity::ActivityLogger;
@@ -474,6 +487,7 @@ async fn screenshot_monitor() {
     }
 }
 
+#[cfg(windows)]
 fn get_active_window_info() -> Option<(String, String)> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -497,6 +511,12 @@ fn get_active_window_info() -> Option<(String, String)> {
     }
 }
 
+#[cfg(not(windows))]
+fn get_active_window_info() -> Option<(String, String)> {
+    crate::platform::get_active_window_info()
+}
+
+#[cfg(windows)]
 fn get_process_image_name(pid: u32) -> Option<String> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
@@ -515,6 +535,7 @@ fn get_process_image_name(pid: u32) -> Option<String> {
     }
 }
 
+#[cfg(windows)]
 fn current_removable_drives() -> HashSet<String> {
     let mut drives = HashSet::new();
     for letter in b'A'..=b'Z' {
@@ -530,12 +551,38 @@ fn current_removable_drives() -> HashSet<String> {
     drives
 }
 
+#[cfg(not(windows))]
+fn current_removable_drives() -> HashSet<String> {
+    let mut drives = HashSet::new();
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(entries) = std::fs::read_dir("/Volumes") {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name != "Macintosh HD" {
+                        drives.insert(entry.path().to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for p in ["/media", "/mnt"] {
+            if let Ok(entries) = std::fs::read_dir(p) {
+                for entry in entries.flatten() {
+                    drives.insert(entry.path().to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    drives
+}
+
+#[cfg(windows)]
 fn get_current_session_active() -> bool {
     let mut cmd = Command::new("query");
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     if let Ok(output) = cmd.arg("session").output() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout.contains("Active")
@@ -544,6 +591,12 @@ fn get_current_session_active() -> bool {
     }
 }
 
+#[cfg(not(windows))]
+fn get_current_session_active() -> bool {
+    true
+}
+
+#[cfg(windows)]
 fn get_idle_seconds() -> u32 {
     unsafe {
         let mut info = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
@@ -557,10 +610,39 @@ fn get_idle_seconds() -> u32 {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn get_idle_seconds() -> u32 {
+    if let Ok(output) = Command::new("ioreg").args(["-c", "IOHIDSystem"]).output() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        for line in s.lines() {
+            if line.contains("HIDIdleTime") {
+                if let Some(val_str) = line.split('=').nth(1) {
+                    if let Ok(val) = val_str.trim().parse::<u64>() {
+                        return (val / 1_000_000_000) as u32;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn get_idle_seconds() -> u32 {
+    0
+}
+
+#[cfg(windows)]
 fn get_clipboard_sequence_number() -> u32 {
     unsafe { GetClipboardSequenceNumber() }
 }
 
+#[cfg(not(windows))]
+fn get_clipboard_sequence_number() -> u32 {
+    0
+}
+
+#[cfg(windows)]
 fn get_clipboard_content_summary() -> Option<(String, usize)> {
     unsafe {
         if OpenClipboard(HWND(std::ptr::null_mut())).is_ok() {
@@ -575,6 +657,22 @@ fn get_clipboard_content_summary() -> Option<(String, usize)> {
     None
 }
 
+#[cfg(target_os = "macos")]
+fn get_clipboard_content_summary() -> Option<(String, usize)> {
+    if let Ok(output) = Command::new("pbpaste").output() {
+        if !output.stdout.is_empty() {
+            return Some(("text".to_string(), output.stdout.len()));
+        }
+    }
+    None
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn get_clipboard_content_summary() -> Option<(String, usize)> {
+    None
+}
+
+#[cfg(windows)]
 fn get_ac_power_status() -> bool {
     unsafe {
         let mut status = SYSTEM_POWER_STATUS::default();
@@ -586,12 +684,15 @@ fn get_ac_power_status() -> bool {
     }
 }
 
+#[cfg(not(windows))]
+fn get_ac_power_status() -> bool {
+    crate::platform::get_battery_status().map(|(_, ac)| ac).unwrap_or(true)
+}
+
+#[cfg(windows)]
 fn is_wifi_connected() -> bool {
     let mut cmd = Command::new("netsh");
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     if let Ok(output) = cmd.args(["wlan", "show", "interfaces"]).output() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
         stdout.contains("state") && stdout.contains("connected")
@@ -600,12 +701,30 @@ fn is_wifi_connected() -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn is_wifi_connected() -> bool {
+    if let Ok(output) = Command::new("networksetup").args(["-getairportnetwork", "en0"]).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.contains("Current Wi-Fi Network")
+    } else {
+        false
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn is_wifi_connected() -> bool {
+    if let Ok(output) = Command::new("nmcli").args(["dev", "status"]).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.contains("wifi") && stdout.contains("connected")
+    } else {
+        false
+    }
+}
+
+#[cfg(windows)]
 fn is_vpn_connected() -> bool {
     let mut cmd = Command::new("rasdial");
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     if let Ok(output) = cmd.output() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout.contains("No connections") == false && !stdout.trim().is_empty()
@@ -614,6 +733,17 @@ fn is_vpn_connected() -> bool {
     }
 }
 
+#[cfg(not(windows))]
+fn is_vpn_connected() -> bool {
+    if let Ok(output) = Command::new("ifconfig").output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.contains("utun") || stdout.contains("tun") || stdout.contains("ppp")
+    } else {
+        false
+    }
+}
+
+#[cfg(windows)]
 fn get_bluetooth_devices() -> HashSet<String> {
     let mut devices = HashSet::new();
     if let Ok(output) = Command::new("powershell")
@@ -634,6 +764,11 @@ fn get_bluetooth_devices() -> HashSet<String> {
         }
     }
     devices
+}
+
+#[cfg(not(windows))]
+fn get_bluetooth_devices() -> HashSet<String> {
+    HashSet::new()
 }
 
 fn get_camera_processes() -> HashSet<String> {
@@ -658,6 +793,7 @@ fn get_microphone_processes() -> HashSet<String> {
         .collect()
 }
 
+#[cfg(windows)]
 fn get_print_jobs() -> HashSet<String> {
     let mut jobs = HashSet::new();
     if let Ok(output) = Command::new("powershell")
@@ -680,10 +816,22 @@ fn get_print_jobs() -> HashSet<String> {
     jobs
 }
 
+#[cfg(not(windows))]
+fn get_print_jobs() -> HashSet<String> {
+    let mut jobs = HashSet::new();
+    if let Ok(output) = Command::new("lpstat").arg("-o").output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            jobs.insert(line.to_string());
+        }
+    }
+    jobs
+}
+
 fn get_screenshot_files() -> HashSet<String> {
     let mut files = HashSet::new();
     let candidates = [
-        dirs::home_dir().map(|h| h.join(r"Pictures\Screenshots")),
+        dirs::home_dir().map(|h| h.join("Pictures/Screenshots")),
         dirs::home_dir().map(|h| h.join("Desktop")),
         dirs::home_dir().map(|h| h.join("Pictures")),
     ];
@@ -708,6 +856,7 @@ fn get_screenshot_files() -> HashSet<String> {
     files
 }
 
+#[cfg(windows)]
 fn enumerate_process_names() -> Vec<String> {
     let mut names = Vec::new();
     unsafe {
@@ -728,6 +877,20 @@ fn enumerate_process_names() -> Vec<String> {
                 }
             }
             let _ = CloseHandle(snapshot);
+        }
+    }
+    names
+}
+
+#[cfg(not(windows))]
+fn enumerate_process_names() -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(output) = Command::new("ps").args(["-eo", "comm="]).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            if let Some(cmd) = line.rsplit('/').next() {
+                names.push(cmd.to_string());
+            }
         }
     }
     names

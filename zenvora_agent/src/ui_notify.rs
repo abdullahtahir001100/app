@@ -35,7 +35,49 @@ fn run_message_box(title: &str, message: &str, icon: &str, blocking: bool) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn run_message_box(title: &str, message: &str, _icon: &str, blocking: bool) {
+    let logo_path = crate::paths::ensure_logo_file();
+    let logo_str = logo_path.to_string_lossy();
+    let script = format!(
+        r#"display dialog "{}" with title "{}" with icon POSIX file "{}" buttons {{"OK"}} default button "OK""#,
+        message.replace('"', "\\\""),
+        title.replace('"', "\\\""),
+        logo_str.replace('"', "\\\"")
+    );
+    let mut cmd = std::process::Command::new("osascript");
+    cmd.arg("-e").arg(&script);
+    if blocking {
+        let _ = cmd.output();
+    } else {
+        let _ = cmd.spawn();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_message_box(title: &str, message: &str, icon: &str, blocking: bool) {
+    let logo_path = crate::paths::ensure_logo_file();
+    let logo_str = logo_path.to_string_lossy();
+    let flag = match icon {
+        "Error" => "--error",
+        "Warning" => "--warning",
+        _ => "--info",
+    };
+    let mut cmd = std::process::Command::new("zenity");
+    cmd.args([
+        flag,
+        &format!("--title={}", title),
+        &format!("--text={}", message),
+        &format!("--window-icon={}", logo_str),
+    ]);
+    if blocking {
+        let _ = cmd.output();
+    } else {
+        let _ = cmd.spawn();
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn run_message_box(title: &str, message: &str, _icon: &str, _blocking: bool) {
     println!("[{}] {}", title, message);
 }

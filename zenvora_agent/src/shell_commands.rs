@@ -385,7 +385,14 @@ fn build_cmd_command(command_text: &str) -> Command {
 
 #[cfg(not(windows))]
 fn build_cmd_command(command_text: &str) -> Command {
-    let mut command = Command::new("/bin/sh");
+    let shell = if std::path::Path::new("/bin/zsh").exists() {
+        "/bin/zsh"
+    } else if std::path::Path::new("/bin/bash").exists() {
+        "/bin/bash"
+    } else {
+        "/bin/sh"
+    };
+    let mut command = Command::new(shell);
     command.arg("-c").arg(command_text);
     command
 }
@@ -448,9 +455,13 @@ fn build_powershell_command(command_text: &str) -> Command {
 
 #[cfg(not(windows))]
 fn build_powershell_command(command_text: &str) -> Command {
-    let mut command = Command::new("pwsh");
-    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command_text]);
-    command
+    if Command::new("pwsh").arg("--version").output().is_ok() {
+        let mut command = Command::new("pwsh");
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command_text]);
+        command
+    } else {
+        build_cmd_command(command_text)
+    }
 }
 
 fn extract_cd_target(command_text: &str) -> Option<String> {

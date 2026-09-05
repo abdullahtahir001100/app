@@ -380,13 +380,13 @@ function OpsPageInner() {
               {/* CPU → API settings */}
               <button
                 type="button"
-                onClick={() => setShowApiModal(true)}
+                onClick={() => router.push("/settings")}
                 className={`rounded-xl p-1.5 transition-colors ${
                   activeProvider?.apiKey
                     ? "text-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
                     : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                 }`}
-                title="API Settings"
+                title="Configured in Settings (Click to manage API keys)"
               >
                 <Cpu className="h-4 w-4" />
               </button>
@@ -503,134 +503,6 @@ function OpsPageInner() {
           ))}
         </div>
       </main>
-
-      {/* ── API Settings Modal ──────────────────────────────── */}
-      {showApiModal && (
-  <div
-    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 backdrop-blur-sm"
-    onClick={() => {
-      setShowApiModal(false);
-      setDraftProvider(null); // Reset step on close
-    }}
-  >
-    <div
-      className="relative w-full max-w-md rounded-none border border-slate-300 bg-[#fafafa] p-6 shadow-none"
-      onClick={(e) => e.stopPropagation()}
-    >
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between border-b border-slate-200 pb-3">
-        <div>
-          <h2 className="text-sm font-semibold tracking-wide text-slate-800">
-            {draftProvider ? `Configure ${draftProvider.label}` : "Select Provider"}
-          </h2>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            {draftProvider 
-              ? "Enter your API details below" 
-              : "Choose an AI company to set up"}
-          </p>
-        </div>
-        <button
-          onClick={() => {
-            setShowApiModal(false);
-            setDraftProvider(null);
-          }}
-          className="rounded-none p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Step 1: Select Company */}
-      {!draftProvider ? (
-        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto pr-1">
-          {PROVIDER_OPTIONS.map((opt) => {
-            const isActive = apiConfig.activeProvider === opt.key;
-            const hasKey = (apiConfig.providers.find((p) => p.provider === opt.key)?.apiKey || "").trim().length > 0;
-
-            return (
-              <button
-                key={opt.key}
-                onClick={() => setDraftProvider(opt)}
-                className={`group flex h-24 flex-col items-start justify-between rounded-none border p-3 shadow-none transition-colors ${
-                  isActive
-                    ? "border-slate-800 bg-slate-100"
-                    : "border-slate-200 bg-white hover:border-slate-400"
-                }`}
-              >
-                <div className="flex w-full items-center justify-between">
-                  <span className={`text-xs font-semibold ${isActive ? "text-slate-800" : "text-slate-600 group-hover:text-slate-800"}`}>
-                    {opt.label}
-                  </span>
-                  <div className={`h-2 w-2 rounded-none ${isActive ? "bg-slate-800" : "bg-transparent"}`} />
-                </div>
-                
-                {hasKey ? (
-                  <span className="inline-flex rounded-none bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-100">
-                    Key Configured
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-slate-400">Not configured</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        /* Step 2: Add API Configuration */
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
-              API Key
-            </label>
-            <input
-              type="password"
-              placeholder={`Paste ${draftProvider.label} API Key`}
-              value={apiConfig.providers.find((p) => p.provider === draftProvider.key)?.apiKey || ""}
-              onChange={(e) => setProviderApiKey(draftProvider.key, e.target.value)}
-              className="w-full rounded-none border border-slate-300 bg-white px-3 py-2.5 text-xs font-mono text-slate-800 placeholder-slate-400 shadow-none outline-none transition-colors focus:border-slate-800"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
-              Default Model
-            </label>
-            <select
-              value={apiConfig.providers.find((p) => p.provider === draftProvider.key)?.model || draftProvider.defaultModel}
-              onChange={(e) => setProviderModel(draftProvider.key, e.target.value)}
-              className="w-full rounded-none border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-800 shadow-none outline-none transition-colors focus:border-slate-800"
-            >
-              {draftProvider.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="mt-6 flex items-center gap-2 pt-2 border-t border-slate-200">
-            <button
-              onClick={() => setDraftProvider(null)}
-              className="flex-1 rounded-none border border-slate-300 bg-white py-2.5 text-xs font-semibold text-slate-600 shadow-none transition-colors hover:bg-slate-50 hover:text-slate-800"
-            >
-              Back
-            </button>
-            <button
-              onClick={() => {
-                setActiveProvider(draftProvider.key);
-                setDraftProvider(null);
-                setShowApiModal(false);
-              }}
-              className="flex-1 rounded-none bg-slate-800 py-2.5 text-xs font-semibold text-white shadow-none transition-colors hover:bg-slate-700"
-            >
-              Save & Activate
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  </div>
-)}
 
       {/* Close model picker on outside click */}
       {showModelPicker && (

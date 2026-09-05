@@ -1,7 +1,9 @@
+#[cfg(target_os = "windows")]
 extern crate winres;
 
 fn main() {
-    if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    {
         let mut res = winres::WindowsResource::new();
         // Legitimate version info reduces generic ML false positives vs blank PE metadata.
         res.set("FileDescription", "Zenvora Agent");

@@ -213,22 +213,14 @@ pub fn handle_screen_command(
             }
         }
         "LOCK_SCREEN" => {
-            match std::process::Command::new("rundll32.exe")
-                .creation_flags(0x08000000)
-                .args(["user32.dll,LockWorkStation"])
-                .spawn()
-            {
+            match crate::platform::lock_screen() {
                 Ok(_) => action_message = Some("Workstation locked.".into()),
                 Err(err) => action_message = Some(format!("Lock screen failed: {}", err)),
             }
         }
         "OPEN_SETTINGS" => {
-            match std::process::Command::new("explorer.exe")
-                .creation_flags(0x08000000)
-                .args(["ms-settings:"])
-                .spawn()
-            {
-                Ok(_) => action_message = Some("Opened Windows Settings.".into()),
+            match crate::platform::open_settings() {
+                Ok(_) => action_message = Some("Opened Settings.".into()),
                 Err(err) => action_message = Some(format!("Open settings failed: {}", err)),
             }
         }
@@ -467,11 +459,15 @@ static LAST_CURSOR_HANDLE: AtomicIsize = AtomicIsize::new(0);
 #[cfg(windows)]
 static CURSOR_SPRITE: Mutex<Option<CursorSprite>> = Mutex::new(None);
 
-/// Overlay the real OS cursor onto the (already downscaled) RGB frame. `dst_w`/
-/// `dst_h` are the frame dimensions; the cursor is scaled from the monitor's
-/// physical size down to the frame size so it lands pixel-exact on the pointer
-/// and stays correctly sized regardless of source resolution. Fail-safe: any
-/// GDI hiccup just leaves the frame cursor-less rather than breaking the stream.
+#[cfg(not(windows))]
+fn overlay_real_cursor(
+    _img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    _monitor: &Monitor,
+    _dst_w: u32,
+    _dst_h: u32,
+) {}
+
+/// Overlay the real OS cursor onto the (already downscaled) RGB frame.
 #[cfg(windows)]
 fn overlay_real_cursor(
     img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
@@ -583,15 +579,6 @@ fn overlay_real_cursor(
             ];
         }
     }
-}
-
-#[cfg(not(windows))]
-fn overlay_real_cursor(
-    _img: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
-    _monitor: &Monitor,
-    _dst_w: u32,
-    _dst_h: u32,
-) {
 }
 
 /// Read a GDI bitmap as top-down 32bpp BGRA via `GetDIBits`.

@@ -121,16 +121,21 @@ impl ScreenState {
                     .into_iter()
                     .enumerate()
                     .map(|(index, monitor)| {
+                        let id = monitor.id().unwrap_or(index as u32);
+                        let name = monitor.name().unwrap_or_else(|_| format!("Display {}", index + 1));
+                        let width = monitor.width().unwrap_or(1920);
+                        let height = monitor.height().unwrap_or(1080);
+                        let is_primary = monitor.is_primary().unwrap_or(index == 0);
                         let info = DisplayInfo {
-                            id: monitor.id(),
-                            name: if monitor.name().is_empty() {
+                            id,
+                            name: if name.is_empty() {
                                 format!("Display {}", index + 1)
                             } else {
-                                monitor.name().to_string()
+                                name
                             },
-                            width: monitor.width(),
-                            height: monitor.height(),
-                            is_primary: monitor.is_primary(),
+                            width,
+                            height,
+                            is_primary,
                         };
                         println!(
                             "--> [FOUND] Display {}: {} ({}x{}){}",

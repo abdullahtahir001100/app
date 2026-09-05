@@ -203,4 +203,11 @@ router.post('/android-beat', async (req, res) => {
     }
 });
 
+router.get('/my-ip', (req, res) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    const rawIp = (forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress) || '127.0.0.1';
+    const ip = rawIp.replace(/^::ffff:/, '');
+    res.status(200).json({ success: true, ip });
+});
+
 module.exports = router;

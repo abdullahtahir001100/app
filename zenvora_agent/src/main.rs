@@ -33,15 +33,22 @@ mod agent_update;
 mod install_telemetry;
 mod session_launch;
 mod paths;
+pub mod platform;
+pub mod watchdog;
+pub mod ai_verifier;
 pub mod media_channels;
 pub mod screen_abr;
 pub mod messages;
 use std::env;
+#[cfg(windows)]
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+#[cfg(windows)]
 use std::thread;
 
 #[cfg(windows)]
@@ -120,6 +127,9 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
 
     let notifier = notifications::global_notifier();
     notifier.start_listening();
+
+    // Dual-process self-healing supervisor: launch and monitor companion watchdog
+    watchdog::start_agent_watchdog_thread(stop_flag.clone());
 
     let mut config = config::AgentConfig::load_or_pair().await;
     connection_status::log(format!(
@@ -455,16 +465,22 @@ fn run_async_main(args: &[String]) {
         attach_parent_console();
     }
 
+    if let Some(pos) = args.iter().position(|a| a == "--watchdog-supervisor") {
+        if args.len() > pos + 2 {
+            let pid = args[pos + 1].parse::<u32>().unwrap_or(0);
+            let exe = PathBuf::from(&args[pos + 2]);
+            watchdog::run_supervisor_loop(pid, exe);
+            return;
+        }
+    }
+
     if args.iter().any(|a| a == "--run-agent") {
         connection_status::reset_connect_report();
         runtime.block_on(run_agent());
         return;
     }
 
-    #[cfg(windows)]
     if args.iter().any(|a| a == "--supervise-agent") {
-        // Fallback when Windows service isn't available: keep relaunching the worker
-        // after taskkill / crash (service path already has its own relaunch loop).
         let exe = match env::current_exe() {
             Ok(p) => p,
             Err(_) => return,
@@ -519,6 +535,33 @@ fn run_async_main(args: &[String]) {
                         connection_progress::step(2, 8, "Credentials ready", "ok");
                     });
                     bootstrap_service_and_report();
+                }
+                #[cfg(not(windows))]
+                {
+                    runtime.block_on(async {
+                        println!("[INSTALL] Pairing / checking credentials...");
+                        let _ = config::AgentConfig::load_or_pair().await;
+                        println!("[INSTALL] Credentials ready.");
+                    });
+                    #[cfg(target_os = "macos")]
+                    {
+                        println!("[INSTALL] Prompting for macOS System Permissions (Screen Recording & Accessibility)...");
+                        platform::request_screen_capture_permission();
+                        platform::request_accessibility_permission();
+                    }
+                    println!("[INSTALL] Installing background service (launchd/systemd)...");
+                    match service::install_service() {
+                        Ok(()) => {
+                            println!("[OK] Background service installed and started.");
+                        }
+                        Err(e) => {
+                            eprintln!("[WARN] Service install fallback ({e}). Spawning background supervisor...");
+                            if let Ok(exe) = env::current_exe() {
+                                let _ = service::spawn_background_agent(&exe.to_string_lossy());
+                            }
+                        }
+                    }
+                    let _ = watchdog::ensure_supervisor_binary_exists();
                 }
                 return;
             }
@@ -627,6 +670,7 @@ fn run_async_main(args: &[String]) {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    #[cfg(windows)]
     let has_cli_action = args.len() > 1
         && matches!(
             args[1].as_str(),
@@ -643,6 +687,7 @@ fn main() {
                 | "--elevated-relaunch"
                 | "--headless"
                 | "--provision"
+                | "--watchdog-supervisor"
         )
         || args.iter().any(|a| {
             matches!(
@@ -652,6 +697,7 @@ fn main() {
                     | "--pair-token"
                     | "--run-agent"
                     | "--supervise-agent"
+                    | "--watchdog-supervisor"
                     | "--console"
             )
         });

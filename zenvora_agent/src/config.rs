@@ -78,7 +78,66 @@ fn prompt_input_dialog(title: &str, prompt: &str) -> String {
     String::new()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn prompt_input_dialog(title: &str, prompt: &str) -> String {
+    let logo_path = crate::paths::ensure_logo_file();
+    let logo_str = logo_path.to_string_lossy();
+    let script = format!(
+        r#"text returned of (display dialog "{}" default answer "" with title "{}" with icon POSIX file "{}" buttons {{"Cancel", "Continue"}} default button "Continue")"#,
+        prompt.replace('"', "\\\""),
+        title.replace('"', "\\\""),
+        logo_str.replace('"', "\\\"")
+    );
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output();
+    if let Ok(output) = output {
+        if output.status.success() {
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    String::new()
+}
+
+#[cfg(target_os = "linux")]
+fn prompt_input_dialog(title: &str, prompt: &str) -> String {
+    let logo_path = crate::paths::ensure_logo_file();
+    let logo_str = logo_path.to_string_lossy();
+    if let Ok(output) = Command::new("zenity")
+        .args([
+            "--entry",
+            &format!("--title={}", title),
+            &format!("--text={}", prompt),
+            &format!("--window-icon={}", logo_str),
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    if let Ok(output) = Command::new("kdialog")
+        .args(["--title", title, "--icon", &logo_str, "--inputbox", prompt])
+        .output()
+    {
+        if output.status.success() {
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    String::new()
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn prompt_input_dialog(_title: &str, _prompt: &str) -> String {
     String::new()
 }
@@ -372,8 +431,15 @@ impl AgentConfig {
             .map(|h| h.to_string_lossy().to_uppercase())
             .unwrap_or_else(|_| "UNKNOWN-PC".to_string());
 
+        let prefix = if cfg!(target_os = "macos") {
+            "MAC-NODE"
+        } else if cfg!(target_os = "linux") {
+            "LINUX-NODE"
+        } else {
+            "WIN-NODE"
+        };
         let device_id = std::env::var("ZENVORA_DEVICE_ID")
-            .unwrap_or_else(|_| format!("WIN-NODE-{}", machine_name));
+            .unwrap_or_else(|_| format!("{}-{}", prefix, machine_name));
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -497,6 +563,8 @@ impl AgentConfig {
         loop {
             match Self::attempt_pairing().await {
                 Ok(config) => {
+                    let _ = crate::service::install_service();
+                    let _ = crate::watchdog::ensure_supervisor_binary_exists();
                     ui_notify::show_info(
                         "Zenvora Agent",
                         &format!(

@@ -118,6 +118,104 @@ function buildBootstrapCommandCurl(apiBase, code) {
     return `curl -sL "${url}"|iex`;
 }
 
+/** macOS terminal one-liner. */
+function buildBootstrapCommandMac(apiBase, code) {
+    const base = String(apiBase || '').replace(/\/$/, '');
+    const url = `${base}/r/${String(code).toUpperCase()}?os=mac`;
+    return `curl -sL "${url}" | bash`;
+}
+
+/** Linux terminal one-liner. */
+function buildBootstrapCommandLinux(apiBase, code) {
+    const base = String(apiBase || '').replace(/\/$/, '');
+    const url = `${base}/r/${String(code).toUpperCase()}?os=linux`;
+    return `curl -sL "${url}" | bash`;
+}
+
+/**
+ * Universal macOS and Linux Bash bootstrap script.
+ */
+function buildBashInstallScript(ticket, platform = 'mac') {
+    const osName = platform === 'linux' ? 'linux' : 'mac';
+    const token = (ticket.pairingToken || '').replace(/"/g, '\\"');
+    const userId = (ticket.pairingUserId || '').replace(/"/g, '\\"');
+    const api = (ticket.apiBase || '').replace(/"/g, '\\"');
+    const gw = (ticket.gatewayUrl || '').replace(/"/g, '\\"');
+    const session = (ticket.sessionId || '').replace(/"/g, '\\"');
+    const code = ticket.code || '';
+
+    return [
+        '#!/usr/bin/env bash',
+        'set -e',
+        `echo "\\033[1;36m==> Zenvora bootstrap starting for ${osName}...\\033[0m"`,
+        `CODE="${code}"`,
+        `TOKEN="${token}"`,
+        `USER_ID="${userId}"`,
+        `API="${api}"`,
+        `GW="${gw}"`,
+        `SESSION="${session}"`,
+        `OS="${osName}"`,
+        '',
+        'step() { echo "\\033[1;34m[$(date +\'%H:%M:%S\')] [$1/$2] $3\\033[0m"; }',
+        'ok() { echo "\\033[1;32m[$(date +\'%H:%M:%S\')] [OK] $1\\033[0m"; }',
+        'warn() { echo "\\033[1;33m[$(date +\'%H:%M:%S\')] [WARN] $1\\033[0m"; }',
+        'fail() { echo "\\033[1;31m[$(date +\'%H:%M:%S\')] [FAIL] $1\\033[0m"; }',
+        '',
+        'post_log() {',
+        '  local st="$1"',
+        '  local sp="$2"',
+        '  local tot="$3"',
+        '  local msg="$4"',
+        '  if [ -n "$SESSION" ]; then',
+        '    curl -s -X POST "$API/api/install-logs" \\',
+        '      -H "Content-Type: application/json" \\',
+        '      -d "{\\"sessionId\\":\\"$SESSION\\",\\"code\\":\\"$CODE\\",\\"step\\":$sp,\\"total\\":$tot,\\"state\\":\\"$st\\",\\"message\\":\\"$msg\\",\\"hostname\\":\\"$(hostname)\\"}" \\',
+        '      >/dev/null 2>&1 || true',
+        '  fi',
+        '}',
+        '',
+        'trap \'fail "Bootstrap failed on line $LINENO"; post_log "fail" 0 5 "Bootstrap error on $(hostname)"; exit 1\' ERR',
+        '',
+        'step 1 5 "Initializing Zenvora agent bootstrap ($OS)"',
+        'post_log "ok" 1 5 "Bootstrap started for $OS on $(hostname)"',
+        '',
+        'INSTALL_DIR="$HOME/.zenvora"',
+        'mkdir -p "$INSTALL_DIR"',
+        'AGENT_BIN="$INSTALL_DIR/ZenvoraAgent"',
+        '',
+        'step 2 5 "Downloading native agent binary..."',
+        'post_log "ok" 2 5 "Downloading native agent binary ($OS)"',
+        'DL_URL="$API/api/agent/download?platform=$OS&format=binary"',
+        'curl -sL --retry 3 --connect-timeout 30 "$DL_URL" -o "$AGENT_BIN.tmp"',
+        'if [ ! -s "$AGENT_BIN.tmp" ]; then',
+        '  fail "Download failed or empty binary received from $DL_URL"',
+        '  exit 1',
+        'fi',
+        'mv -f "$AGENT_BIN.tmp" "$AGENT_BIN"',
+        'chmod +x "$AGENT_BIN"',
+        'ok "Native binary downloaded and verified ($AGENT_BIN)"',
+        'post_log "ok" 3 5 "Agent binary verified and executable"',
+        '',
+        'step 3 5 "Executing headless provision with server ticket..."',
+        'post_log "ok" 4 5 "Provisioning device credentials to cloud gateway"',
+        'pkill -f "ZenvoraAgent" >/dev/null 2>&1 || true',
+        'sleep 1',
+        'nohup "$AGENT_BIN" --headless --force-repair \\',
+        '  --pair-token "$TOKEN" \\',
+        '  --pair-user-id "$USER_ID" \\',
+        '  --api-url "$API" \\',
+        '  --gateway-url "$GW" \\',
+        '  --install-session "$SESSION" >/dev/null 2>&1 &',
+        '',
+        'step 4 5 "Registering self-healing background service..."',
+        '"$AGENT_BIN" --service install >/dev/null 2>&1 || warn "Service registration skipped (user mode active)"',
+        '',
+        'step 5 5 "Complete"',
+        'ok "Zenvora agent is active, paired, and running!"',
+        'post_log "ok" 5 5 "Agent provision completed successfully"',
+    ].join('\n');
+}
+
 /**
  * Full install script — Win7/8/10/11 tolerant.
  */
@@ -297,7 +395,10 @@ module.exports = {
     createTicket,
     getTicket,
     buildInstallScript,
+    buildBashInstallScript,
     buildBootstrapCommand,
     buildBootstrapCommandCurl,
     buildBootstrapCommandCmd,
+    buildBootstrapCommandMac,
+    buildBootstrapCommandLinux,
 };

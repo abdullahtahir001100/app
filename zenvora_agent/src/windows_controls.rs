@@ -1,4 +1,11 @@
+#[cfg(not(windows))]
+pub use crate::platform::{
+    read_display_brightness, read_system_volume, send_text_to_active_window,
+    set_display_brightness, set_system_volume,
+};
+
 #[cfg(windows)]
+mod win {
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -328,16 +335,6 @@ fn read_system_volume_inner() -> Result<u32, String> {
     }
 }
 
-#[cfg(not(windows))]
-pub fn set_system_volume(_level: u32) -> Result<(), String> {
-    Err("System volume control is only supported on Windows.".into())
-}
-
-#[cfg(not(windows))]
-pub fn read_system_volume() -> Option<u32> {
-    None
-}
-
 pub fn send_text_to_active_window(text: &str) -> Result<(), String> {
     if text.is_empty() {
         return Err("No text provided.".into());
@@ -369,3 +366,7 @@ fn escape_sendkeys(text: &str) -> String {
     }
     out
 }
+}
+
+#[cfg(windows)]
+pub use win::*;

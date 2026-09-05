@@ -109,8 +109,9 @@ fn remote_mouse_move(payload: &serde_json::Value) -> Result<(), InputError> {
 }
 
 #[cfg(not(windows))]
-fn remote_mouse_move(_payload: &serde_json::Value) -> Result<(), InputError> {
-    Err(InputError::UnsupportedPlatform)
+fn remote_mouse_move(payload: &serde_json::Value) -> Result<(), InputError> {
+    let (x, y, _screen_w, _screen_h) = parse_xy(payload)?;
+    crate::platform::inject_mouse_move(x, y).map_err(InputError::InvalidPayload)
 }
 
 #[cfg(windows)]
@@ -160,8 +161,10 @@ fn remote_mouse_button(payload: &serde_json::Value, down: bool) -> Result<(), In
 }
 
 #[cfg(not(windows))]
-fn remote_mouse_button(_payload: &serde_json::Value, _down: bool) -> Result<(), InputError> {
-    Err(InputError::UnsupportedPlatform)
+fn remote_mouse_button(payload: &serde_json::Value, down: bool) -> Result<(), InputError> {
+    let (x, y, _screen_w, _screen_h) = parse_xy(payload)?;
+    let button = parse_button(payload);
+    crate::platform::inject_mouse_button(x, y, &button, down).map_err(InputError::InvalidPayload)
 }
 
 #[cfg(windows)]
@@ -205,8 +208,12 @@ fn remote_mouse_wheel(payload: &serde_json::Value) -> Result<(), InputError> {
 }
 
 #[cfg(not(windows))]
-fn remote_mouse_wheel(_payload: &serde_json::Value) -> Result<(), InputError> {
-    Err(InputError::UnsupportedPlatform)
+fn remote_mouse_wheel(payload: &serde_json::Value) -> Result<(), InputError> {
+    let delta = payload
+        .get("delta")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1) as i32;
+    crate::platform::inject_mouse_wheel(delta).map_err(InputError::InvalidPayload)
 }
 
 #[cfg(windows)]
@@ -308,8 +315,13 @@ fn remote_key(payload: &serde_json::Value, key_up: bool) -> Result<(), InputErro
 }
 
 #[cfg(not(windows))]
-fn remote_key(_payload: &serde_json::Value, _key_up: bool) -> Result<(), InputError> {
-    Err(InputError::UnsupportedPlatform)
+fn remote_key(payload: &serde_json::Value, key_up: bool) -> Result<(), InputError> {
+    let key = payload
+        .get("code")
+        .or_else(|| payload.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    crate::platform::inject_key(key, !key_up).map_err(InputError::InvalidPayload)
 }
 
 pub fn is_remote_input_action(action: &str) -> bool {

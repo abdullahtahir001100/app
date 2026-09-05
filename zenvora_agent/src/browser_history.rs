@@ -192,57 +192,116 @@ impl BrowserHistoryCollector {
         whoami::username()
     }
 
-    /// Current-user env vars plus every Windows profile under C:\Users.
+    /// Current-user env vars plus profiles for Windows, macOS, and Linux.
     fn local_app_data_roots() -> Vec<PathBuf> {
         let mut roots = Vec::new();
-        if let Ok(path) = std::env::var("LOCALAPPDATA") {
-            let p = PathBuf::from(path);
-            if p.is_dir() {
-                roots.push(p);
+        #[cfg(windows)]
+        {
+            if let Ok(path) = std::env::var("LOCALAPPDATA") {
+                let p = PathBuf::from(path);
+                if p.is_dir() {
+                    roots.push(p);
+                }
+            }
+            for user_home in Self::windows_user_homes() {
+                let candidate = user_home.join(r"AppData\Local");
+                if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
+                    roots.push(candidate);
+                }
             }
         }
-        for user_home in Self::windows_user_homes() {
-            let candidate = user_home.join(r"AppData\Local");
-            if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
-                roots.push(candidate);
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(home) = dirs::home_dir() {
+                let candidate = home.join("Library").join("Application Support");
+                if candidate.is_dir() {
+                    roots.push(candidate);
+                }
+            }
+            if let Ok(entries) = fs::read_dir("/Users") {
+                for entry in entries.flatten() {
+                    let candidate = entry.path().join("Library").join("Application Support");
+                    if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
+                        roots.push(candidate);
+                    }
+                }
+            }
+        }
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        {
+            if let Some(home) = dirs::home_dir() {
+                let candidate = home.join(".config");
+                if candidate.is_dir() {
+                    roots.push(candidate);
+                }
             }
         }
         roots
     }
 
     fn roaming_app_data_roots() -> Vec<PathBuf> {
-        let mut roots = Vec::new();
-        if let Ok(path) = std::env::var("APPDATA") {
-            let p = PathBuf::from(path);
-            if p.is_dir() {
-                roots.push(p);
+        #[cfg(windows)]
+        {
+            let mut roots = Vec::new();
+            if let Ok(path) = std::env::var("APPDATA") {
+                let p = PathBuf::from(path);
+                if p.is_dir() {
+                    roots.push(p);
+                }
             }
-        }
-        for user_home in Self::windows_user_homes() {
-            let candidate = user_home.join(r"AppData\Roaming");
-            if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
-                roots.push(candidate);
+            for user_home in Self::windows_user_homes() {
+                let candidate = user_home.join(r"AppData\Roaming");
+                if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
+                    roots.push(candidate);
+                }
             }
+            roots
         }
-        roots
+        #[cfg(not(windows))]
+        {
+            Self::local_app_data_roots()
+        }
     }
 
     fn windows_user_homes() -> Vec<PathBuf> {
         let mut homes = Vec::new();
-        let users_dir = PathBuf::from(r"C:\Users");
-        if let Ok(entries) = fs::read_dir(&users_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if matches!(
-                    name.as_str(),
-                    "Public" | "Default" | "Default User" | "All Users" | "desktop.ini"
-                ) {
-                    continue;
+        #[cfg(windows)]
+        {
+            let users_dir = PathBuf::from(r"C:\Users");
+            if let Ok(entries) = fs::read_dir(&users_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if matches!(
+                        name.as_str(),
+                        "Public" | "Default" | "Default User" | "All Users" | "desktop.ini"
+                    ) {
+                        continue;
+                    }
+                    let path = entry.path();
+                    if path.is_dir() {
+                        homes.push(path);
+                    }
                 }
-                let path = entry.path();
-                if path.is_dir() {
-                    homes.push(path);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(entries) = fs::read_dir("/Users") {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') && name != "Shared" {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            homes.push(path);
+                        }
+                    }
                 }
+            }
+        }
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        {
+            if let Some(home) = dirs::home_dir() {
+                homes.push(home);
             }
         }
         homes
