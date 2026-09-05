@@ -8,6 +8,7 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 import Select from "react-select";
+import { BrowserLogo } from "@/components/icons/browser-logos";
 
 interface ActivityLog {
   _id: string;
@@ -509,13 +510,14 @@ export default function LogsPage() {
                       <button
                         key={browser}
                         onClick={() => setBrowserFilter(browser)}
-                        className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${
+                        className={`px-3 py-1 rounded-full text-xs font-mono transition-colors flex items-center gap-1.5 ${
                           browserFilter === browser
                             ? "bg-blue-600 text-white font-medium shadow-sm"
                             : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
                         }`}
                       >
-                        {browser}
+                        <BrowserLogo browser={browser} className="w-3.5 h-3.5 shrink-0" />
+                        <span>{browser}</span>
                       </button>
                     ))}
                   </div>
@@ -612,20 +614,29 @@ export default function LogsPage() {
                 filteredBrowserHistory.map((entry, idx) => (
                   <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
                     <div className="flex items-start gap-4">
-                      <div className="mt-1 p-2 rounded-lg bg-muted"><Globe className="w-5 h-5" /></div>
+                      <div className="mt-1 p-2.5 rounded-xl bg-card border border-border/80 flex items-center justify-center shrink-0 shadow-sm">
+                        <BrowserLogo browser={entry.browser} className="w-6 h-6 shrink-0" />
+                      </div>
                       <div className="flex-1 min-w-0">
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{entry.browser}</span>
-                        {entry.browserProfile ? (
-                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded ml-2">
-                            Profile: {entry.browserProfile}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1.5 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium px-2.5 py-0.5 rounded-md border border-blue-500/20">
+                            <BrowserLogo browser={entry.browser} className="w-3.5 h-3.5" />
+                            <span>{entry.browser}</span>
                           </span>
-                        ) : null}
-                        {entry.windowsUser ? (
-                          <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded ml-2">User: {entry.windowsUser}</span>
-                        ) : null}
-                        <h4 className="font-semibold mt-2 truncate">{entry.title || "Untitled"}</h4>
-                        <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline truncate block mt-1">{entry.url}</a>
-                        <p className="text-xs text-muted-foreground mt-2">Visited {formatTime(entry.visitTime)} • {entry.visitCount} times</p>
+                          {entry.browserProfile ? (
+                            <span className="text-xs bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-md">
+                              Profile: {entry.browserProfile}
+                            </span>
+                          ) : null}
+                          {entry.windowsUser ? (
+                            <span className="text-xs bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 px-2 py-0.5 rounded-md">
+                              User: {entry.windowsUser}
+                            </span>
+                          ) : null}
+                        </div>
+                        <h4 className="font-semibold mt-2 truncate text-foreground">{entry.title || "Untitled"}</h4>
+                        <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate block mt-1">{entry.url}</a>
+                        <p className="text-xs text-muted-foreground mt-2 font-mono">Visited {formatTime(entry.visitTime)} • {entry.visitCount} times</p>
                       </div>
                     </div>
                   </Card>
