@@ -65,7 +65,7 @@ const DEFAULT_INTEGRATION_VARS: IntegrationVariables = {
   directLanPreferred: true,
 };
 
-type TabKey = "pairing" | "network" | "diagnostics" | "integrations" | "ai";
+type TabKey = "pairing" | "network" | "integrations" | "ai";
 
 function isWeakCode(code: string): boolean {
   if (!/^\d{6}$/.test(code)) return true;
@@ -116,17 +116,32 @@ export default function SettingsPage() {
     return DEFAULT_INTEGRATION_VARS;
   });
 
-  // Diagnostics state
-  const [testingApi, setTestingApi] = useState(false);
-  const [apiTestResult, setApiTestResult] = useState<{
-    success?: boolean;
-    allOk?: boolean;
-    durationMs?: number;
-    checks?: {
-      api?: { status: string; latencyMs: number; uptimeSeconds: number; memoryMb: number; nodeVersion: string };
-      database?: { status: string; pingMs: number; ok: boolean; dbName?: string; error?: string };
-      auth?: { status: string; ok: boolean; email?: string; hasPairingToken?: boolean; error?: string };
-    };
+  // Inline Test States (AI, MongoDB, Cloudinary)
+  const [testingAiKey, setTestingAiKey] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{
+    success: boolean;
+    provider?: string;
+    message?: string;
+    error?: string;
+    latencyMs?: number;
+    model?: string;
+  } | null>(null);
+
+  const [testingMongo, setTestingMongo] = useState(false);
+  const [mongoTestResult, setMongoTestResult] = useState<{
+    success: boolean;
+    message?: string;
+    error?: string;
+    latencyMs?: number;
+    dbName?: string;
+  } | null>(null);
+
+  const [testingCloudinary, setTestingCloudinary] = useState(false);
+  const [cloudinaryTestResult, setCloudinaryTestResult] = useState<{
+    success: boolean;
+    message?: string;
+    error?: string;
+    latencyMs?: number;
   } | null>(null);
 
   // Gateway Probe & Shift state
@@ -284,33 +299,101 @@ export default function SettingsPage() {
     alertMsg("Transport Mode Updated", `Preferred media transport set to ${next.toUpperCase()}`);
   };
 
-  const runApiTest = async () => {
-    setTestingApi(true);
+  const runAiTest = async () => {
+    if (!activeProviderConfig?.apiKey?.trim()) {
+      setError("Please enter an API key for " + activeProviderConfig?.label + " before testing.");
+      return;
+    }
+    setTestingAiKey(true);
+    setAiTestResult(null);
     setError("");
-    setApiTestResult(null);
     try {
-      const res = await fetch("/api/diagnostics/api-test", { cache: "no-store", credentials: "include" });
-      const data = await res.json();
-      setApiTestResult(data);
-      if (data?.allOk) {
-        setSuccessMsg("API Diagnostics: All systems operational!");
-      } else {
-        setError("API Diagnostics: One or more checks failed. See details below.");
-      }
-    } catch (err) {
-      setApiTestResult({
-        success: false,
-        allOk: false,
-        durationMs: 0,
-        checks: {
-          api: { status: "offline", latencyMs: 0, uptimeSeconds: 0, memoryMb: 0, nodeVersion: "" },
-          database: { status: "unreachable", pingMs: 0, ok: false, error: err instanceof Error ? err.message : String(err) },
-          auth: { status: "error", ok: false },
-        },
+      const res = await fetch("/api/integrations/test-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: selectedAiProvider,
+          apiKey: activeProviderConfig.apiKey.trim(),
+          model: activeProviderConfig.model,
+        }),
       });
-      setError("Failed to connect to API diagnostics route.");
+      const data = await res.json();
+      setAiTestResult(data);
+      if (data.success) {
+        setSuccessMsg(data.message || "AI API Key verified successfully!");
+      } else {
+        setError(data.error || "AI API Key verification failed.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiTestResult({ success: false, error: msg });
+      setError("Network error testing AI API key: " + msg);
     } finally {
-      setTestingApi(false);
+      setTestingAiKey(false);
+    }
+  };
+
+  const runMongoTest = async () => {
+    if (!vars.mongodbUri?.trim()) {
+      setError("Please enter a MongoDB Connection URI before testing.");
+      return;
+    }
+    setTestingMongo(true);
+    setMongoTestResult(null);
+    setError("");
+    try {
+      const res = await fetch("/api/integrations/test-mongo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mongodbUri: vars.mongodbUri.trim() }),
+      });
+      const data = await res.json();
+      setMongoTestResult(data);
+      if (data.success) {
+        setSuccessMsg(data.message || "MongoDB connection succeeded!");
+      } else {
+        setError(data.error || "MongoDB connection test failed.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMongoTestResult({ success: false, error: msg });
+      setError("Network error testing MongoDB connection: " + msg);
+    } finally {
+      setTestingMongo(false);
+    }
+  };
+
+  const runCloudinaryTest = async () => {
+    if (!vars.cloudinaryCloudName?.trim() || !vars.cloudinaryApiKey?.trim() || !vars.cloudinaryApiSecret?.trim()) {
+      setError("Please enter Cloud Name, API Key, and API Secret before testing.");
+      return;
+    }
+    setTestingCloudinary(true);
+    setCloudinaryTestResult(null);
+    setError("");
+    try {
+      const res = await fetch("/api/integrations/test-cloudinary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cloudName: vars.cloudinaryCloudName.trim(),
+          apiKey: vars.cloudinaryApiKey.trim(),
+          apiSecret: vars.cloudinaryApiSecret.trim(),
+        }),
+      });
+      const data = await res.json();
+      setCloudinaryTestResult(data);
+      if (data.success) {
+        setSuccessMsg(data.message || "Cloudinary credentials verified!");
+      } else {
+        setError(data.error || "Cloudinary verification failed.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloudinaryTestResult({ success: false, error: msg });
+      setError("Network error testing Cloudinary credentials: " + msg);
+    } finally {
+      setTestingCloudinary(false);
     }
   };
 
@@ -509,18 +592,6 @@ export default function SettingsPage() {
               </button>
 
               <button
-                onClick={() => setActiveTab("diagnostics")}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
-                  activeTab === "diagnostics"
-                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <Activity className="w-4 h-4" />
-                API Diagnostics
-              </button>
-
-              <button
                 onClick={() => setActiveTab("integrations")}
                 className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
                   activeTab === "integrations"
@@ -695,88 +766,118 @@ export default function SettingsPage() {
             {/* Tab 2: Network & Transports (Relocated TCP/WSS shifter + Gateway IP Shift & Test) */}
             {activeTab === "network" && (
               <div className="space-y-8">
-                {/* 1. Preferred Media Transport Section (Moved from Screen/Console pages) */}
-                <section className="space-y-4 p-5 border border-border rounded-xl bg-card">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ArrowRightLeft className="w-5 h-5 text-indigo-500" />
+                {/* 1. Preferred Media Transport Section */}
+                <section className="space-y-5 p-6 border border-border/80 rounded-2xl bg-gradient-to-b from-card via-card to-card/60 shadow-sm backdrop-blur-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start sm:items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                        <ArrowRightLeft className="w-5 h-5" />
+                      </div>
                       <div>
-                        <h2 className="text-base font-semibold">Preferred Media Transport Mode</h2>
+                        <h2 className="text-base font-bold text-foreground tracking-tight">Preferred Media Transport Mode</h2>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           Controls whether remote screen and camera streams flow over Secure WebSocket or raw Binary TCP.
                         </p>
                       </div>
                     </div>
-                    <span className="text-xs font-mono uppercase bg-primary/10 text-primary px-2.5 py-1 rounded-md font-semibold">
-                      Current: {mediaTransport.toUpperCase()}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Active:</span>
+                      <span className="text-xs font-mono font-bold uppercase bg-indigo-500/10 text-indigo-500 border border-indigo-500/30 px-3 py-1 rounded-full shadow-sm">
+                        {mediaTransport.toUpperCase()}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                     <button
                       type="button"
                       onClick={() => switchTransport("wss")}
-                      className={`p-4 rounded-lg border text-left transition-all ${
+                      className={`group relative p-5 rounded-xl border text-left transition-all duration-200 ${
                         mediaTransport === "wss"
-                          ? "border-primary bg-primary/5 ring-1 ring-primary"
-                          : "border-border bg-background hover:bg-muted/50"
+                          ? "border-indigo-500/80 bg-indigo-500/[0.07] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/5"
+                          : "border-border bg-card/40 hover:bg-muted/40 hover:border-border/80"
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-semibold text-sm">WSS (Secure WebSocket)</span>
-                        {mediaTransport === "wss" && <Check className="w-4 h-4 text-primary" />}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm tracking-wide text-foreground">WSS (Secure WebSocket)</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                            Universal
+                          </span>
+                        </div>
+                        {mediaTransport === "wss" ? (
+                          <div className="h-5 w-5 rounded-full bg-indigo-500 text-white flex items-center justify-center">
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="h-5 w-5 rounded-full border border-border group-hover:border-muted-foreground/50" />
+                        )}
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Universal proxy and firewall friendly. Best for cloud deployments, Railway, and corporate networks.
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Universal proxy and firewall friendly. Operates smoothly over cloud deployments, Railway, Nginx, Cloudflare, and corporate firewalls.
                       </p>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => switchTransport("tcp")}
-                      className={`p-4 rounded-lg border text-left transition-all ${
+                      className={`group relative p-5 rounded-xl border text-left transition-all duration-200 ${
                         mediaTransport === "tcp"
-                          ? "border-primary bg-primary/5 ring-1 ring-primary"
-                          : "border-border bg-background hover:bg-muted/50"
+                          ? "border-indigo-500/80 bg-indigo-500/[0.07] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/5"
+                          : "border-border bg-card/40 hover:bg-muted/40 hover:border-border/80"
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-semibold text-sm">TCP (Raw Binary Stream)</span>
-                        {mediaTransport === "tcp" && <Check className="w-4 h-4 text-primary" />}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm tracking-wide text-foreground">TCP (Raw Binary Stream)</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                            60 FPS Direct
+                          </span>
+                        </div>
+                        {mediaTransport === "tcp" ? (
+                          <div className="h-5 w-5 rounded-full bg-indigo-500 text-white flex items-center justify-center">
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="h-5 w-5 rounded-full border border-border group-hover:border-muted-foreground/50" />
+                        )}
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Lowest overhead, zero framing latency. Delivers maximum 60 FPS remote desktop responsiveness.
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Zero WebSocket framing overhead, direct socket pipeline. Delivers lowest latency and maximum 60 FPS remote desktop responsiveness.
                       </p>
                     </button>
                   </div>
                 </section>
 
                 {/* 2. Custom Gateway Static IP / Server Endpoint & Shift */}
-                <section className="space-y-4 p-5 border border-border rounded-xl bg-card">
-                  <div className="flex items-center gap-2">
-                    <Server className="w-5 h-5 text-sky-500" />
+                <section className="space-y-5 p-6 border border-border/80 rounded-2xl bg-gradient-to-b from-card via-card to-card/60 shadow-sm backdrop-blur-sm">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-sky-500/10 text-sky-500 border border-sky-500/20">
+                      <Server className="w-5 h-5" />
+                    </div>
                     <div>
-                      <h2 className="text-base font-semibold">Custom Gateway Static IP / Server Endpoint</h2>
+                      <h2 className="text-base font-bold text-foreground tracking-tight">Custom Gateway Static IP / Server Endpoint</h2>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Test and shift your agent&apos;s active communication channel to a dedicated Static IP or custom gateway URL.
+                        Test and shift your agent&apos;s active communication channel to a dedicated Static IP or on-premise gateway URL.
                       </p>
                     </div>
                   </div>
 
-                  <div className="p-3.5 rounded-lg border border-sky-500/20 bg-sky-500/5 text-xs text-muted-foreground space-y-1.5">
-                    <p className="font-medium text-sky-600 dark:text-sky-400">
-                      ℹ️ Architecture Note: How Static IP Shift Works Across Different Deployments:
+                  <div className="p-4 rounded-xl border border-sky-500/25 bg-sky-500/5 text-xs text-muted-foreground space-y-2">
+                    <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 font-semibold">
+                      <Zap className="w-4 h-4" />
+                      <span>Architecture Note: How Static IP Shift Works Across Remote Clouds</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      • <strong>Cloud Deployment (Railway/VPS):</strong> When the server is hosted remotely in the cloud and you enter a static IP (e.g. an on-premise relay or dedicated gateway), the agent executes an isolated ping/probe test directly from its host.
                     </p>
-                    <p>
-                      • <strong>Cloud Deployment (Railway/VPS):</strong> When the server is in the cloud and you enter a static IP (e.g. an on-premise relay or dedicated gateway), the agent will test the IP directly from its host.
-                    </p>
-                    <p>
-                      • <strong>Safe Auto-Rollback:</strong> When shifted, the agent attempts to maintain communication with the new endpoint. If unreachable, it automatically rolls back to the primary cloud gateway within 30 seconds.
+                    <p className="leading-relaxed">
+                      • <strong>Safe Auto-Rollback:</strong> When shifted, the agent maintains an active heartbeat. If unreachable after 30 seconds, it automatically rolls back to the primary cloud gateway.
                     </p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="gatewayUrl" className="text-xs font-mono uppercase tracking-wider">
+                  <div className="space-y-2 pt-1">
+                    <Label htmlFor="gatewayUrl" className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
                       Gateway URL / Static IP
                     </Label>
                     <Input
@@ -784,7 +885,7 @@ export default function SettingsPage() {
                       placeholder="wss://203.0.113.10:9443/ws/gateway or ws://192.168.1.50:9443"
                       value={vars.gatewayUrl}
                       onChange={(e) => setVars({ ...vars, gatewayUrl: e.target.value })}
-                      className="font-mono text-sm"
+                      className="font-mono text-sm h-11 bg-background/50 border-border focus-visible:ring-sky-500"
                     />
                   </div>
 
@@ -794,9 +895,9 @@ export default function SettingsPage() {
                       variant="outline"
                       onClick={() => void testGateway()}
                       disabled={testingGateway || !vars.gatewayUrl.trim()}
-                      className="gap-2 text-xs"
+                      className="gap-2 text-xs h-10 px-4 border-border hover:bg-muted font-medium"
                     >
-                      <Wifi className={`w-3.5 h-3.5 ${testingGateway ? "animate-pulse" : ""}`} />
+                      <Wifi className={`w-3.5 h-3.5 text-sky-500 ${testingGateway ? "animate-pulse" : ""}`} />
                       {testingGateway ? "Testing Endpoint…" : "Test IP & Endpoint (Browser + Agent Ping)"}
                     </Button>
 
@@ -805,7 +906,7 @@ export default function SettingsPage() {
                       variant="default"
                       onClick={shiftGatewayConnection}
                       disabled={shiftingGateway || !vars.gatewayUrl.trim()}
-                      className="gap-2 text-xs bg-sky-600 hover:bg-sky-700 text-white"
+                      className="gap-2 text-xs h-10 px-4 bg-sky-600 hover:bg-sky-700 text-white shadow-sm font-medium"
                     >
                       <Zap className="w-3.5 h-3.5" />
                       {shiftingGateway ? "Shifting Agent…" : "Shift Connection to this IP"}
@@ -814,9 +915,12 @@ export default function SettingsPage() {
 
                   {/* Probe Result Display */}
                   {gatewayProbeResult && (
-                    <div className="mt-3 p-4 rounded-lg border border-border bg-background/60 space-y-2.5">
+                    <div className="p-4 rounded-xl border border-border bg-background/80 space-y-3 shadow-sm">
                       <div className="flex items-center justify-between text-xs font-mono">
-                        <span className="text-muted-foreground">Browser Reachability:</span>
+                        <span className="text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-sky-500" />
+                          Browser Reachability:
+                        </span>
                         <span
                           className={`flex items-center gap-1 font-semibold ${
                             gatewayProbeResult.browserLive ? "text-emerald-500" : "text-amber-500"
@@ -824,7 +928,7 @@ export default function SettingsPage() {
                         >
                           {gatewayProbeResult.browserLive ? (
                             <>
-                              <Check className="w-3.5 h-3.5" /> Reachable ({gatewayProbeResult.browserRtt}ms)
+                              <Check className="w-3.5 h-3.5" /> Reachable ({gatewayProbeResult.browserRtt}ms RTT)
                             </>
                           ) : (
                             <>
@@ -834,8 +938,11 @@ export default function SettingsPage() {
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs font-mono">
-                        <span className="text-muted-foreground">Agent Probe (Direct TCP / WS):</span>
+                      <div className="flex items-center justify-between text-xs font-mono border-t border-border/50 pt-2">
+                        <span className="text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                          Agent Probe (Direct TCP / WS):
+                        </span>
                         <span
                           className={`flex items-center gap-1 font-semibold ${
                             gatewayProbeResult.agentLive ? "text-emerald-500" : "text-destructive"
@@ -843,7 +950,7 @@ export default function SettingsPage() {
                         >
                           {gatewayProbeResult.agentLive ? (
                             <>
-                              <Check className="w-3.5 h-3.5" /> Agent Connected ({gatewayProbeResult.agentRtt}ms)
+                              <Check className="w-3.5 h-3.5" /> Agent Connected ({gatewayProbeResult.agentRtt}ms RTT)
                             </>
                           ) : (
                             <>
@@ -862,7 +969,7 @@ export default function SettingsPage() {
                   )}
 
                   {shiftResultMsg && (
-                    <div className="p-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 text-xs text-emerald-600 flex items-center gap-2">
+                    <div className="p-3.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
                       {shiftResultMsg}
                     </div>
@@ -870,185 +977,136 @@ export default function SettingsPage() {
                 </section>
 
                 {/* 3. Direct LAN Peer Connection */}
-                <section className="space-y-4 p-5 border border-border rounded-xl bg-card">
+                <section className="space-y-4 p-6 border border-border/80 rounded-2xl bg-gradient-to-b from-card via-card to-card/60 shadow-sm backdrop-blur-sm">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h2 className="text-base font-semibold">Automatic Direct LAN Connection</h2>
+                      <h2 className="text-base font-bold text-foreground tracking-tight">Automatic Direct LAN Connection</h2>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Detect matching public IPs by default and stream screen/camera directly over local WiFi / router.
+                        Detect matching public IPs by default and stream screen/camera directly over local WiFi / subnet without cloud relay.
                       </p>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={vars.directLanPreferred}
-                      onChange={(e) => setVars({ ...vars, directLanPreferred: e.target.checked })}
-                      className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary"
-                    />
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={vars.directLanPreferred}
+                        onChange={(e) => setVars({ ...vars, directLanPreferred: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                    </label>
                   </div>
                 </section>
 
-                <Button onClick={saveVariables} disabled={saving} className="gap-2 h-11 px-6">
+                <Button onClick={saveVariables} disabled={saving} className="gap-2 h-11 px-6 shadow-sm">
                   <Save className="w-4 h-4" />
                   {saving ? "Saving…" : "Save Network Preferences"}
                 </Button>
               </div>
             )}
 
-            {/* Tab 3: Diagnostics & API Test */}
-            {activeTab === "diagnostics" && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-5 border border-border rounded-xl bg-card">
-                  <div>
-                    <h2 className="text-lg font-semibold">API Connectivity & Health Diagnostics</h2>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Verify end-to-end communication with the backend routes, database latency, and auth session.
-                    </p>
-                  </div>
-                  <Button
-                    onClick={() => void runApiTest()}
-                    disabled={testingApi}
-                    className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                  >
-                    <Activity className={`w-4 h-4 ${testingApi ? "animate-spin" : ""}`} />
-                    {testingApi ? "Testing API…" : "Test API Connection"}
-                  </Button>
-                </div>
-
-                {apiTestResult && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      {/* API Server Card */}
-                      <div className="p-4 rounded-xl border border-border bg-card space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono text-muted-foreground uppercase">API Routes</span>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                              apiTestResult.checks?.api?.status === "ok"
-                                ? "bg-emerald-500/10 text-emerald-500"
-                                : "bg-destructive/10 text-destructive"
-                            }`}
-                          >
-                            {apiTestResult.checks?.api?.status === "ok" ? "Healthy" : "Failed"}
-                          </span>
-                        </div>
-                        <p className="text-2xl font-bold font-mono">
-                          {apiTestResult.checks?.api?.latencyMs ?? apiTestResult.durationMs ?? 0}
-                          <span className="text-xs font-normal text-muted-foreground ml-1">ms latency</span>
-                        </p>
-                        <p className="text-[11px] text-muted-foreground font-mono">
-                          Uptime: {Math.floor((apiTestResult.checks?.api?.uptimeSeconds || 0) / 60)}m · Node:{" "}
-                          {apiTestResult.checks?.api?.nodeVersion || "v20"}
-                        </p>
-                      </div>
-
-                      {/* Database Card */}
-                      <div className="p-4 rounded-xl border border-border bg-card space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono text-muted-foreground uppercase">MongoDB</span>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                              apiTestResult.checks?.database?.ok
-                                ? "bg-emerald-500/10 text-emerald-500"
-                                : "bg-destructive/10 text-destructive"
-                            }`}
-                          >
-                            {apiTestResult.checks?.database?.ok ? "Connected" : "Disconnected"}
-                          </span>
-                        </div>
-                        <p className="text-2xl font-bold font-mono">
-                          {apiTestResult.checks?.database?.pingMs ?? "—"}
-                          <span className="text-xs font-normal text-muted-foreground ml-1">ms ping</span>
-                        </p>
-                        <p className="text-[11px] text-muted-foreground font-mono truncate">
-                          DB: {apiTestResult.checks?.database?.dbName || "zenvora"}
-                        </p>
-                      </div>
-
-                      {/* Auth Session Card */}
-                      <div className="p-4 rounded-xl border border-border bg-card space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-mono text-muted-foreground uppercase">Auth Session</span>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                              apiTestResult.checks?.auth?.ok
-                                ? "bg-emerald-500/10 text-emerald-500"
-                                : "bg-amber-500/10 text-amber-500"
-                            }`}
-                          >
-                            {apiTestResult.checks?.auth?.ok ? "Authenticated" : "Guest"}
-                          </span>
-                        </div>
-                        <p className="text-base font-semibold font-mono truncate">
-                          {apiTestResult.checks?.auth?.email || name || "Active Operator"}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground font-mono">
-                          Token: {apiTestResult.checks?.auth?.hasPairingToken ? "Configured" : "None"}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Overall Summary */}
-                    <div
-                      className={`p-4 rounded-xl border flex items-center justify-between text-sm ${
-                        apiTestResult.allOk
-                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
-                          : "border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {apiTestResult.allOk ? (
-                          <CheckCircle2 className="w-5 h-5 shrink-0" />
-                        ) : (
-                          <AlertCircle className="w-5 h-5 shrink-0" />
-                        )}
-                        <span>
-                          {apiTestResult.allOk
-                            ? "All core services (API routing, database cluster, and token session) passed health verification."
-                            : "Some diagnostic checks encountered issues. Check MongoDB connection string and credentials."}
-                        </span>
-                      </div>
-                      <span className="text-xs font-mono">{apiTestResult.durationMs}ms total</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Tab 4: Variables & Storage */}
+            {/* Tab 3: Variables & Storage */}
             {activeTab === "integrations" && (
               <form onSubmit={saveVariables} className="space-y-8">
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Database className="w-5 h-5 text-emerald-500" />
-                    <h2 className="text-lg font-display tracking-tight">Database Connection (MongoDB)</h2>
+                {/* MongoDB Section */}
+                <section className="space-y-4 p-5 border border-border rounded-xl bg-card shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-5 h-5 text-emerald-500" />
+                      <div>
+                        <h2 className="text-base font-semibold">Database Connection (MongoDB)</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Connect your MongoDB cluster for fleet telemetry, app history, device logs, and configuration.
+                        </p>
+                      </div>
+                    </div>
+                    {mongoTestResult && (
+                      <span
+                        className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
+                          mongoTestResult.success
+                            ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                            : "bg-destructive/10 text-destructive border border-destructive/20"
+                        }`}
+                      >
+                        {mongoTestResult.success ? `Connected (${mongoTestResult.latencyMs}ms)` : "Failed"}
+                      </span>
+                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Connect your own MongoDB instance for fleet telemetry, app history, and logs.
-                  </p>
-                  <div className="space-y-2">
+
+                  <div className="space-y-2 pt-1">
                     <Label htmlFor="mongodbUri" className="text-xs font-mono uppercase tracking-wider">
                       MongoDB Connection URI
                     </Label>
-                    <Input
-                      id="mongodbUri"
-                      type="password"
-                      placeholder="mongodb+srv://username:password@cluster.mongodb.net/zenvora?retryWrites=true&w=majority"
-                      value={vars.mongodbUri}
-                      onChange={(e) => setVars({ ...vars, mongodbUri: e.target.value })}
-                      className="font-mono text-sm"
-                    />
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Input
+                        id="mongodbUri"
+                        type="password"
+                        placeholder="mongodb+srv://username:password@cluster.mongodb.net/zenvora?retryWrites=true&w=majority"
+                        value={vars.mongodbUri}
+                        onChange={(e) => setVars({ ...vars, mongodbUri: e.target.value })}
+                        className="font-mono text-sm flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void runMongoTest()}
+                        disabled={testingMongo || !vars.mongodbUri?.trim()}
+                        className="gap-2 shrink-0 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-500 text-xs"
+                      >
+                        <Activity className={`w-3.5 h-3.5 text-emerald-500 ${testingMongo ? "animate-spin" : ""}`} />
+                        {testingMongo ? "Testing…" : "Test Connection"}
+                      </Button>
+                    </div>
                   </div>
+
+                  {mongoTestResult && (
+                    <div
+                      className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
+                        mongoTestResult.success
+                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
+                          : "border-destructive/30 bg-destructive/5 text-destructive"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {mongoTestResult.success ? (
+                          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                        )}
+                        <span className="truncate">{mongoTestResult.message || mongoTestResult.error}</span>
+                      </div>
+                      {mongoTestResult.latencyMs !== undefined && (
+                        <span className="text-[10px] opacity-75 shrink-0 ml-2">{mongoTestResult.latencyMs}ms ping</span>
+                      )}
+                    </div>
+                  )}
                 </section>
 
-                <section className="space-y-4 border-t border-border pt-6">
-                  <div className="flex items-center gap-2">
-                    <Cloud className="w-5 h-5 text-blue-500" />
-                    <h2 className="text-lg font-display tracking-tight">Media Storage (Cloudinary)</h2>
+                {/* Cloudinary Section */}
+                <section className="space-y-4 p-5 border border-border rounded-xl bg-card shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Cloud className="w-5 h-5 text-blue-500" />
+                      <div>
+                        <h2 className="text-base font-semibold">Media Storage (Cloudinary)</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          High-resolution remote screen captures, camera recordings, and media telemetry storage.
+                        </p>
+                      </div>
+                    </div>
+                    {cloudinaryTestResult && (
+                      <span
+                        className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
+                          cloudinaryTestResult.success
+                            ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
+                            : "bg-destructive/10 text-destructive border border-destructive/20"
+                        }`}
+                      >
+                        {cloudinaryTestResult.success ? `Verified (${cloudinaryTestResult.latencyMs}ms)` : "Failed"}
+                      </span>
+                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Optional cloud storage for high-resolution device screenshot archives and camera captures.
-                  </p>
-                  <div className="grid gap-4 sm:grid-cols-3">
+
+                  <div className="grid gap-4 sm:grid-cols-3 pt-1">
                     <div className="space-y-2">
                       <Label htmlFor="cloudName" className="text-xs font-mono uppercase tracking-wider">
                         Cloud Name
@@ -1084,29 +1142,66 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
-                </section>
 
-                <Button type="submit" disabled={saving} className="gap-2 h-11 px-6">
-                  <Save className="w-4 h-4" />
-                  {saving ? "Saving…" : "Save Variables"}
-                </Button>
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void runCloudinaryTest()}
+                      disabled={testingCloudinary || !vars.cloudinaryCloudName?.trim() || !vars.cloudinaryApiKey?.trim()}
+                      className="gap-2 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
+                    >
+                      <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingCloudinary ? "animate-spin" : ""}`} />
+                      {testingCloudinary ? "Testing Cloudinary…" : "Test Cloudinary Credentials"}
+                    </Button>
+
+                    <Button type="submit" disabled={saving} className="gap-2 h-9 px-5">
+                      <Save className="w-4 h-4" />
+                      {saving ? "Saving…" : "Save Variables"}
+                    </Button>
+                  </div>
+
+                  {cloudinaryTestResult && (
+                    <div
+                      className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
+                        cloudinaryTestResult.success
+                          ? "border-blue-500/30 bg-blue-500/5 text-blue-600 dark:text-blue-400"
+                          : "border-destructive/30 bg-destructive/5 text-destructive"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {cloudinaryTestResult.success ? (
+                          <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-500" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                        )}
+                        <span className="truncate">{cloudinaryTestResult.message || cloudinaryTestResult.error}</span>
+                      </div>
+                      {cloudinaryTestResult.latencyMs !== undefined && (
+                        <span className="text-[10px] opacity-75 shrink-0 ml-2">{cloudinaryTestResult.latencyMs}ms</span>
+                      )}
+                    </div>
+                  )}
+                </section>
               </form>
             )}
 
-            {/* Tab 5: AI Providers & Agent AI Binding */}
+            {/* Tab 4: AI Providers & Agent AI Binding */}
             {activeTab === "ai" && (
               <div className="space-y-8">
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Cpu className="w-5 h-5 text-purple-500" />
-                    <h2 className="text-lg font-display tracking-tight">AI Engines & Telemetry Auditor</h2>
+                    <div>
+                      <h2 className="text-lg font-display tracking-tight">AI Engines & Telemetry Auditor</h2>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Configure your AI keys in one central location. All chatbot, AI Ops, and agent automated
+                        self-healing use the keys configured here.
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Configure your AI keys in one central location. All chatbot, AI Ops, and agent automated
-                    self-healing use the keys configured here.
-                  </p>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2">
                     {PROVIDER_OPTIONS.map((p) => {
                       const isSelected = selectedAiProvider === p.key;
                       const hasKey = Boolean(apiConfig.providers.find((item) => item.provider === p.key)?.apiKey?.trim());
@@ -1117,16 +1212,17 @@ export default function SettingsPage() {
                           onClick={() => {
                             setSelectedAiProvider(p.key);
                             setActiveProvider(p.key);
+                            setAiTestResult(null);
                           }}
-                          className={`flex flex-col items-center justify-center p-3 border rounded-lg transition-all ${
+                          className={`flex flex-col items-center justify-center p-3 border rounded-xl transition-all ${
                             isSelected
-                              ? "border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400 font-semibold"
+                              ? "border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400 font-semibold ring-1 ring-purple-500/50 shadow-sm"
                               : "border-border bg-card text-muted-foreground hover:bg-muted"
                           }`}
                         >
                           <span className="text-xs">{p.label}</span>
-                          <span className={`text-[10px] mt-1 font-mono ${hasKey ? "text-emerald-500" : "text-muted-foreground"}`}>
-                            {hasKey ? "Key Set" : "No Key"}
+                          <span className={`text-[10px] mt-1 font-mono ${hasKey ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>
+                            {hasKey ? "Key Configured" : "No Key"}
                           </span>
                         </button>
                       );
@@ -1134,9 +1230,16 @@ export default function SettingsPage() {
                   </div>
 
                   {activeProviderConfig && (
-                    <div className="space-y-4 p-5 border border-border rounded-lg bg-card">
+                    <div className="space-y-4 p-5 border border-border rounded-xl bg-card shadow-sm">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold">{activeProviderConfig.label} Configuration</h3>
+                        <h3 className="text-sm font-semibold flex items-center gap-2">
+                          <span>{activeProviderConfig.label} Configuration</span>
+                          {selectedAiProvider === "gemini" && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
+                              Recommended
+                            </span>
+                          )}
+                        </h3>
                         <span className="text-xs font-mono uppercase text-muted-foreground bg-muted px-2 py-0.5 rounded">
                           Active Provider
                         </span>
@@ -1150,7 +1253,10 @@ export default function SettingsPage() {
                           type="password"
                           placeholder={`Enter ${activeProviderConfig.label} API Key`}
                           value={activeProviderConfig.apiKey}
-                          onChange={(e) => setProviderApiKey(selectedAiProvider, e.target.value)}
+                          onChange={(e) => {
+                            setProviderApiKey(selectedAiProvider, e.target.value);
+                            setAiTestResult(null);
+                          }}
                           className="font-mono text-sm"
                         />
                       </div>
@@ -1171,11 +1277,50 @@ export default function SettingsPage() {
                           ))}
                         </select>
                       </div>
+
+                      {/* Test API Key Button */}
+                      <div className="pt-2 flex flex-wrap items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void runAiTest()}
+                          disabled={testingAiKey || !activeProviderConfig.apiKey?.trim()}
+                          className="gap-2 border-purple-500/30 hover:bg-purple-500/10 hover:text-purple-400 text-xs h-9 px-4"
+                        >
+                          <Activity className={`w-3.5 h-3.5 text-purple-500 ${testingAiKey ? "animate-spin" : ""}`} />
+                          {testingAiKey ? `Verifying ${activeProviderConfig.label} Key…` : `Test ${activeProviderConfig.label} API Key`}
+                        </Button>
+                      </div>
+
+                      {/* Test API Key Result Banner */}
+                      {aiTestResult && (
+                        <div
+                          className={`p-3.5 rounded-lg border text-xs font-mono flex items-center justify-between ${
+                            aiTestResult.success
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
+                              : "border-destructive/30 bg-destructive/5 text-destructive"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            {aiTestResult.success ? (
+                              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                            ) : (
+                              <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                            )}
+                            <span className="truncate">{aiTestResult.message || aiTestResult.error}</span>
+                          </div>
+                          {aiTestResult.latencyMs !== undefined && (
+                            <span className="text-[10px] opacity-75 shrink-0 ml-2 font-mono">
+                              {aiTestResult.latencyMs}ms RTT
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Bind AI to Agents button */}
-                  <div className="p-5 border border-purple-500/30 rounded-lg bg-purple-500/5 space-y-3">
+                  <div className="p-5 border border-purple-500/30 rounded-xl bg-purple-500/5 space-y-3 shadow-sm">
                     <div className="flex items-center gap-2">
                       <Bot className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                       <h3 className="text-sm font-semibold">Bind AI Key Directly to Agents</h3>

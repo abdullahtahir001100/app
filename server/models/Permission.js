@@ -21,6 +21,7 @@ const PAGE_KEYS = [
     'notifications',
     'console',
     'settings',
+    'architecture',
     'admin',
     'devices.any',
 ];
@@ -42,6 +43,7 @@ const PAGE_LABELS = {
     notifications: 'Notifications',
     console: 'Live Console',
     settings: 'Settings',
+    architecture: 'Architecture & Diagrams',
     admin: 'Admin',
     'devices.any': 'All devices (cross-user)',
 };

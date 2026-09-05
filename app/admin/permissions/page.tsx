@@ -162,18 +162,43 @@ export default function AdminPermissionsPage() {
           <Card className="p-5">
             {selected ? (
               <>
-                <div className="mb-4">
-                  <p className="font-medium">{selected.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {selected.email} · role: {selected.role}
-                  </p>
+                <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-base">{selected.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {selected.email} · role: <span className="font-mono font-semibold uppercase">{selected.role}</span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                      {pages.length} / {pageKeys.length} granted
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPages([...pageKeys])}
+                      className="text-xs h-7 px-2.5"
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPages([])}
+                      className="text-xs h-7 px-2.5"
+                    >
+                      Clear
+                    </Button>
+                  </div>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {pageKeys.map((key) => (
-                    <label key={key} className="flex items-center gap-2 text-sm border border-border rounded-md px-3 py-2">
+                    <label key={key} className="flex items-center gap-2 text-sm border border-border rounded-lg px-3 py-2.5 hover:bg-muted/40 transition-colors cursor-pointer">
                       <Checkbox checked={pages.includes(key)} onCheckedChange={() => toggle(key)} />
                       <span className="flex flex-col min-w-0">
-                        <span className="text-sm">{pageLabels[key] || key}</span>
+                        <span className="text-sm font-medium">{pageLabels[key] || key}</span>
                         <span className="font-mono text-[10px] text-muted-foreground">{key}</span>
                       </span>
                     </label>

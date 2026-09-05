@@ -37,17 +37,28 @@ router.get('/activity', attachUser, requirePagePermission('logs'), requireUserId
 // Get browser history with filters
 router.get('/browser-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
-        const { deviceId, browser, domain, limit = 100, offset = 0 } = req.query;
+        const { deviceId, browser, domain, search, q, order = 'desc', limit = 100, offset = 0 } = req.query;
 
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         if (browser) query.browser = browser;
         if (domain) query.domain = domain;
 
+        const term = String(search || q || '').trim();
+        if (term) {
+            query.$or = [
+                { title: { $regex: term, $options: 'i' } },
+                { url: { $regex: term, $options: 'i' } },
+            ];
+        }
+
+        const sortDirection = String(order).toLowerCase() === 'asc' ? 1 : -1;
+        const cappedLimit = Math.min(500, Math.max(1, parseInt(limit) || 100));
+
         const history = await BrowserHistory.find(query)
-            .sort({ visitTime: -1 })
-            .limit(parseInt(limit))
-            .skip(parseInt(offset))
+            .sort({ visitTime: sortDirection })
+            .limit(cappedLimit)
+            .skip(parseInt(offset) || 0)
             .exec();
 
         const total = await BrowserHistory.countDocuments(query);

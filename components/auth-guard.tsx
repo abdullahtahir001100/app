@@ -41,6 +41,7 @@ export function pathToPageKey(pathname: string): string | null {
   if (pathname.startsWith("/logs")) return "logs";
   if (pathname.startsWith("/notifications")) return "notifications";
   if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/architecture")) return "architecture";
   if (pathname.startsWith("/devices")) return "devices";
   if (pathname.startsWith("/dashboard")) return "dashboard";
   return null;
