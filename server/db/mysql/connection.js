@@ -1,4 +1,5 @@
 const mysql = require('mysql2/promise');
+const dns = require('dns').promises;
 
 let pool = null;
 let tablesInitialized = false;
@@ -122,6 +123,22 @@ function cleanHostString(host) {
     return clean;
 }
 
+async function resolveHostIp(hostname) {
+    if (!hostname || hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+        return hostname;
+    }
+    try {
+        const res = await dns.lookup(hostname);
+        if (res?.address) return res.address;
+    } catch (_) {
+        try {
+            const addrs = await dns.resolve4(hostname);
+            if (addrs && addrs.length > 0) return addrs[0];
+        } catch (_) {}
+    }
+    return hostname;
+}
+
 function parseMysqlConnectionString(uri) {
     if (!uri || typeof uri !== 'string') return null;
     const raw = uri.trim();
@@ -156,19 +173,23 @@ function parseMysqlConnectionString(uri) {
             database: kv['initial catalog'] || kv['database'] || '',
             user: kv['user id'] || kv['uid'] || kv['user'] || 'root',
             password: kv['password'] || kv['pwd'] || '',
+            ssl: true,
         };
     }
 
-    // 2. Standard URI format
+    // 2. Standard URI format (e.g. mysql://user:pass@host:port/db?useSSL=true)
     try {
         const normalized = raw.startsWith('mysql://') ? raw : `mysql://${raw}`;
         const parsed = new URL(normalized);
+        const sslParam = parsed.searchParams.get('useSSL') || parsed.searchParams.get('ssl') || parsed.searchParams.get('requireSSL');
+        const ssl = sslParam ? /^(true|1|yes|require)$/i.test(sslParam) : undefined;
         return {
             host: cleanHostString(parsed.hostname || '127.0.0.1'),
             port: parsed.port ? Number(parsed.port) : 3306,
             user: parsed.username ? decodeURIComponent(parsed.username) : 'root',
             password: parsed.password ? decodeURIComponent(parsed.password) : '',
             database: parsed.pathname ? decodeURIComponent(parsed.pathname.replace(/^\//, '')) : '',
+            ssl,
         };
     } catch {
         return null;
@@ -268,31 +289,46 @@ async function connectMysql(customConfig) {
         throw new Error('MYSQL configuration is missing. Configure MySQL Host/Port/User/Password or Connection URI in Settings.');
     }
 
-    let poolOptions;
-    if (config.mode === 'params' && config.options.host) {
-        poolOptions = {
-            host: config.options.host,
-            port: config.options.port,
-            user: config.options.user,
-            password: config.options.password,
-            database: config.options.database || undefined,
-            ...POOL_OPTIONS,
-            multipleStatements: true,
-        };
-    } else {
-        poolOptions = {
-            uri: config.uri,
-            ...POOL_OPTIONS,
-            multipleStatements: true,
+    const targetHost = cleanHostString(config.options?.host || '');
+    const targetPort = Number(config.options?.port || 3306);
+    const ip = await resolveHostIp(targetHost);
+    const isRemote = ip !== '127.0.0.1' && ip !== 'localhost' && !ip.startsWith('192.168.') && !ip.startsWith('10.');
+
+    let poolOptions = {
+        host: ip || '127.0.0.1',
+        port: targetPort,
+        user: config.options?.user || 'root',
+        password: config.options?.password ?? '',
+        database: config.options?.database || undefined,
+        ...POOL_OPTIONS,
+        multipleStatements: true,
+    };
+
+    if (isRemote || config.options?.ssl) {
+        poolOptions.ssl = {
+            servername: targetHost,
+            rejectUnauthorized: false,
         };
     }
 
-    const newPool = mysql.createPool(poolOptions);
-
-    // Verify connectivity
-    const [rows] = await newPool.query('SELECT 1 AS ok');
-    if (!rows || rows[0]?.ok !== 1) {
-        throw new Error('MySQL connection verification failed.');
+    let newPool;
+    try {
+        newPool = mysql.createPool(poolOptions);
+        const [rows] = await newPool.query('SELECT 1 AS ok');
+        if (!rows || rows[0]?.ok !== 1) {
+            throw new Error('MySQL connection verification failed.');
+        }
+    } catch (err) {
+        if (poolOptions.ssl && (err.code === 'HANDSHAKE_NO_SSL_SUPPORT' || err.message?.includes('SSL'))) {
+            delete poolOptions.ssl;
+            newPool = mysql.createPool(poolOptions);
+            const [rows] = await newPool.query('SELECT 1 AS ok');
+            if (!rows || rows[0]?.ok !== 1) {
+                throw new Error('MySQL connection verification failed.');
+            }
+        } else {
+            throw err;
+        }
     }
 
     if (!customConfig) {
@@ -360,37 +396,47 @@ async function testMysqlConnection(targetConfig) {
             };
         }
 
-        let connOptions;
-        if (config.mode === 'params' && targetHost) {
-            connOptions = {
-                host: targetHost,
-                port: targetPort,
-                user: config.options.user,
-                password: config.options.password,
-                database: config.options.database || undefined,
-                connectTimeout: 3500,
-            };
-        } else {
-            connOptions = {
-                uri: config.uri,
-                connectTimeout: 3500,
+        const ip = await resolveHostIp(targetHost);
+        const isRemote = ip !== '127.0.0.1' && ip !== 'localhost' && !ip.startsWith('192.168.') && !ip.startsWith('10.');
+
+        let connOptions = {
+            host: ip || '127.0.0.1',
+            port: targetPort,
+            user: config.options?.user || 'root',
+            password: config.options?.password ?? '',
+            database: config.options?.database || undefined,
+            connectTimeout: 6000,
+        };
+
+        if (isRemote || config.options?.ssl) {
+            connOptions.ssl = {
+                servername: targetHost,
+                rejectUnauthorized: false,
             };
         }
 
-        const connectPromise = mysql.createConnection(connOptions);
-
         const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error('Connection timed out connecting to MySQL host (3500ms).')), 4000);
+            timer = setTimeout(() => reject(new Error(`Connection timed out connecting to MySQL host (${targetHost}:${targetPort}). Check host, port, firewall or SSL.`)), 7000);
         });
 
-        conn = await Promise.race([connectPromise, timeoutPromise]);
+        try {
+            conn = await Promise.race([mysql.createConnection(connOptions), timeoutPromise]);
+        } catch (connErr) {
+            // If server rejects SSL with NO_SSL_SUPPORT, retry without SSL
+            if (connOptions.ssl && (connErr.code === 'HANDSHAKE_NO_SSL_SUPPORT' || connErr.message?.includes('SSL'))) {
+                delete connOptions.ssl;
+                conn = await Promise.race([mysql.createConnection(connOptions), timeoutPromise]);
+            } else {
+                throw connErr;
+            }
+        }
         if (timer) clearTimeout(timer);
 
         const [rows] = await conn.query('SELECT VERSION() AS version, DATABASE() AS current_db');
         const latencyMs = Date.now() - start;
         const version = rows[0]?.version || 'Unknown';
         const dbName = rows[0]?.current_db || config.options?.database || 'default';
-        const hostDisplay = config.options?.host || 'server';
+        const hostDisplay = targetHost || 'server';
 
         try {
             await conn.end();
@@ -405,7 +451,9 @@ async function testMysqlConnection(targetConfig) {
             version,
             dbName,
             host: hostDisplay,
-            message: `✓ Connected to MySQL host "${hostDisplay}" (DB: "${dbName}") v${version} (${latencyMs}ms ping)!`,
+            port: targetPort,
+            ssl: Boolean(connOptions.ssl),
+            message: `✓ Connected to MySQL host "${hostDisplay}:${targetPort}" (DB: "${dbName}") v${version}${connOptions.ssl ? ' [SSL Encrypted]' : ''} (${latencyMs}ms ping)!`,
         };
     } catch (err) {
         if (timer) clearTimeout(timer);
