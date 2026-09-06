@@ -152,6 +152,14 @@ async function userHasFeatureAccess(userId, featureKey) {
     }
 }
 
+function invalidateAdminCache(email) {
+    if (email) {
+        adminEmailCache.delete(String(email).trim().toLowerCase());
+    } else {
+        adminEmailCache.clear();
+    }
+}
+
 module.exports = {
     isUserMasterAdmin,
     enforceAdminRoleIsolation,
