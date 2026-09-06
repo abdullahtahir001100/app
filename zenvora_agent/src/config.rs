@@ -175,34 +175,89 @@ fn is_service_session() -> bool {
 
 #[cfg(not(windows))]
 fn is_service_session() -> bool {
-    false
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| {
+        a == "--run-agent"
+            || a == "--supervise-agent"
+            || a == "--watchdog-supervisor"
+            || a == "--service"
+            || a == "install"
+            || a == "--headless"
+    }) {
+        return true;
+    }
+    std::env::var("ZENVORA_SERVICE").is_ok() || std::env::var("LAUNCHD_SOCKET").is_ok()
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var("HOME").ok().map(PathBuf::from)
 }
 
 impl AgentConfig {
     pub fn load_existing() -> Option<Self> {
-        let path = get_config_path();
-        if !path.exists() {
-            return None;
+        let mut candidates = vec![get_config_path()];
+        #[cfg(not(windows))]
+        {
+            if let Some(home) = dirs_home() {
+                candidates.push(home.join(".zenvora").join(CONFIG_FILE));
+                #[cfg(target_os = "macos")]
+                candidates.push(home.join("Library/Application Support/Zenvora").join(CONFIG_FILE));
+            }
         }
 
-        let mut file = File::open(&path).ok()?;
-        let mut encrypted_data = Vec::new();
-        file.read_to_end(&mut encrypted_data).ok()?;
-        let decrypted_data = simple_crypt(&encrypted_data);
-        serde_json::from_slice::<AgentConfig>(&decrypted_data).ok()
+        for path in candidates {
+            if !path.exists() {
+                continue;
+            }
+            if let Ok(mut file) = File::open(&path) {
+                let mut encrypted_data = Vec::new();
+                if file.read_to_end(&mut encrypted_data).is_ok() {
+                    let decrypted_data = simple_crypt(&encrypted_data);
+                    if let Ok(cfg) = serde_json::from_slice::<AgentConfig>(&decrypted_data) {
+                        return Some(cfg);
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn save(&self) -> bool {
-        let path = get_config_path();
         let serialized = match serde_json::to_vec(self) {
             Ok(data) => data,
             Err(_) => return false,
         };
         let encrypted = simple_crypt(&serialized);
-        if let Ok(mut file) = File::create(&path) {
-            return file.write_all(&encrypted).is_ok();
+
+        let mut paths = vec![get_config_path()];
+        #[cfg(not(windows))]
+        {
+            if let Some(home) = dirs_home() {
+                let dot_dir = home.join(".zenvora");
+                let _ = fs::create_dir_all(&dot_dir);
+                paths.push(dot_dir.join(CONFIG_FILE));
+
+                #[cfg(target_os = "macos")]
+                {
+                    let app_support = home.join("Library/Application Support/Zenvora");
+                    let _ = fs::create_dir_all(&app_support);
+                    paths.push(app_support.join(CONFIG_FILE));
+                }
+            }
         }
-        false
+
+        let mut ok = false;
+        for path in paths {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Ok(mut file) = File::create(&path) {
+                if file.write_all(&encrypted).is_ok() {
+                    ok = true;
+                }
+            }
+        }
+        ok
     }
 
     pub fn clear_stored() {
@@ -225,11 +280,13 @@ impl AgentConfig {
         let cli_api = get_flag("--api-url")
             .or_else(|| std::env::var("ZENVORA_API_URL").ok());
         let has_cli_pair = get_flag("--pair-token")
+            .or_else(|| get_flag("--token"))
+            .or_else(|| get_flag("-t"))
+            .or_else(|| get_flag("--key"))
+            .or_else(|| get_flag("--pairing-token"))
             .or_else(|| std::env::var("ZENVORA_PAIR_TOKEN").ok())
-            .is_some()
-            && get_flag("--pair-user-id")
-                .or_else(|| std::env::var("ZENVORA_PAIR_USER_ID").ok())
-                .is_some();
+            .or_else(|| std::env::var("ZENVORA_TOKEN").ok())
+            .is_some();
 
         // Headless install: re-pair only when forced OR no agent.dat yet.
         // Re-launch from install dir must NOT hammer /pair again (that wedged Railway).
@@ -369,13 +426,18 @@ impl AgentConfig {
         };
 
         let pairing_token = get_flag("--pair-token")
+            .or_else(|| get_flag("--token"))
+            .or_else(|| get_flag("-t"))
+            .or_else(|| get_flag("--key"))
+            .or_else(|| get_flag("--pairing-token"))
             .or_else(|| std::env::var("ZENVORA_PAIR_TOKEN").ok())
+            .or_else(|| std::env::var("ZENVORA_TOKEN").ok())
             .unwrap_or_default();
         let pairing_user_id = get_flag("--pair-user-id")
             .or_else(|| std::env::var("ZENVORA_PAIR_USER_ID").ok())
             .unwrap_or_default();
 
-        if pairing_token.is_empty() || pairing_user_id.is_empty() {
+        if pairing_token.is_empty() {
             return Err("pair credentials missing".into());
         }
 

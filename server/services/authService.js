@@ -732,31 +732,58 @@ async function verifyAgentToken(deviceId, agentToken) {
     return cred;
 }
 async function pairAgent(body, req) {
-    const pairingToken = String(body.pairingToken || '').trim();
-    const pairingUserId = String(body.pairingUserId || '').trim();
+    let pairingToken = String(body.pairingToken || body.token || body.key || '').trim();
+    let pairingUserId = String(body.pairingUserId || '').trim();
     const deviceId = String(body.deviceId || body.hostname || '').trim();
     const hostname = String(body.hostname || 'Rust Agent').trim();
 
-    if (!pairingToken || !pairingUserId || !deviceId) {
-        const error = new Error('Missing pairing token, user ID, or device configuration.');
+    if (!pairingToken || !deviceId) {
+        const error = new Error('Missing pairing token or device configuration.');
         error.status = 400;
         throw error;
     }
 
     let user;
-    if (isMysql()) {
-        user = await getMysqlAdapter().findUserByPairing(pairingToken, pairingUserId);
-    } else {
-        user = await User.findOne({ pairingToken, pairingUserId }).lean();
-        if (!user) {
-            // Legacy numeric pairing fields
-            const asNumToken = Number(pairingToken);
-            const asNumUser = Number(pairingUserId);
-            if (Number.isFinite(asNumToken) && Number.isFinite(asNumUser)) {
-                user = await User.findOne({
-                    pairingToken: asNumToken,
-                    pairingUserId: asNumUser
-                }).lean();
+
+    // Check if pairingToken is a 6-character bootstrap ticket code (alphanumeric, e.g. /r/:ticketCode)
+    if (pairingToken.length === 6 && !/^\d{6}$/.test(pairingToken)) {
+        try {
+            const { getTicket } = require('./bootstrapTicketService');
+            const ticket = getTicket(pairingToken);
+            if (ticket && ticket.userId) {
+                if (isMysql()) {
+                    user = await getMysqlAdapter().findUserById(ticket.userId);
+                } else {
+                    user = await User.findById(ticket.userId).lean();
+                }
+            }
+        } catch (_) {}
+    }
+
+    if (!user) {
+        if (isMysql()) {
+            if (pairingUserId) {
+                user = await getMysqlAdapter().findUserByPairing(pairingToken, pairingUserId);
+            } else {
+                user = await getMysqlAdapter().findUserByPairing(pairingToken);
+            }
+        } else {
+            if (pairingUserId) {
+                user = await User.findOne({ pairingToken, pairingUserId }).lean();
+            } else {
+                user = await User.findOne({ pairingToken }).lean();
+            }
+            if (!user) {
+                // Legacy numeric pairing fields
+                const asNumToken = Number(pairingToken);
+                const asNumUser = Number(pairingUserId);
+                if (Number.isFinite(asNumToken)) {
+                    const query = { pairingToken: asNumToken };
+                    if (Number.isFinite(asNumUser) && pairingUserId) {
+                        query.pairingUserId = asNumUser;
+                    }
+                    user = await User.findOne(query).lean();
+                }
             }
         }
     }

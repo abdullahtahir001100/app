@@ -460,6 +460,28 @@ fn run_async_main(args: &[String]) {
     connection_progress::set_headless(headless);
     install_telemetry::configure_from_args(args);
 
+    if args.iter().any(|a| a == "--help" || a == "-h" || a == "help") {
+        println!("Zenvora Agent CLI");
+        println!();
+        println!("Commands:");
+        println!("  install [--headless] [--pair-token <token>] [--pair-user-id <user_id>] [--server-url <url>]");
+        println!("  start");
+        println!("  stop");
+        println!("  restart");
+        println!("  uninstall");
+        println!("  status");
+        println!("  pair [--pair-token <token>] [--pair-user-id <user_id>] [--server-url <url>]");
+        println!();
+        println!("Options:");
+        println!("  --headless               Run without GUI notifications / input prompts");
+        println!("  --pair-token <token>     Pairing token / bootstrap ticket");
+        println!("  --pair-user-id <id>      Owner user ID (optional)");
+        println!("  --server-url <url>       Backend server URL");
+        println!("  --console                Run attached to console (debug logs)");
+        println!("  --help, -h               Show this help message");
+        return;
+    }
+
     #[cfg(windows)]
     if headless || args.iter().any(|a| a == "--console") {
         attach_parent_console();
@@ -475,6 +497,7 @@ fn run_async_main(args: &[String]) {
     }
 
     if args.iter().any(|a| a == "--run-agent") {
+        connection_progress::set_headless(true);
         connection_status::reset_connect_report();
         runtime.block_on(run_agent());
         return;
@@ -538,11 +561,16 @@ fn run_async_main(args: &[String]) {
                 }
                 #[cfg(not(windows))]
                 {
-                    runtime.block_on(async {
+                    let paired = runtime.block_on(async {
                         println!("[INSTALL] Pairing / checking credentials...");
-                        let _ = config::AgentConfig::load_or_pair().await;
-                        println!("[INSTALL] Credentials ready.");
+                        let cfg = config::AgentConfig::load_or_pair().await;
+                        println!("[INSTALL] Paired as device: {}", cfg.device_id);
+                        config::AgentConfig::load_existing().is_some()
                     });
+                    if !paired {
+                        eprintln!("[ERROR] Pairing was not completed. Service not installed.");
+                        std::process::exit(1);
+                    }
                     #[cfg(target_os = "macos")]
                     {
                         println!("[INSTALL] Prompting for macOS System Permissions (Screen Recording & Accessibility)...");

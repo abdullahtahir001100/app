@@ -58,6 +58,5 @@ zenvora_agent/target/
 zenvora_agent/target.nosync/
 *.nosync
 
-public/downloads/
 *.app/
 .next/
