@@ -1415,10 +1415,23 @@ function handleSocketClose(ws) {
             }
             const filter = ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId };
             console.log(`[GW-DEBUG] mark offline device=${deviceId}`);
-            void Device.updateOne(
-                filter,
-                { $set: { status: 'offline', lastSeen: new Date() } }
-            ).catch(() => {});
+            const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+            const syncManager = require('../services/syncManager');
+            if (isMysql()) {
+                void getMysqlAdapter().upsertDevice(deviceId, {
+                    status: 'offline',
+                    userId: ownerUserId || undefined,
+                }).catch(() => {});
+            } else {
+                void Device.updateOne(
+                    filter,
+                    { $set: { status: 'offline', lastSeen: new Date() } }
+                ).catch(() => {});
+            }
+            void syncManager.syncDevice(deviceId, {
+                status: 'offline',
+                userId: ownerUserId || undefined,
+            }).catch(() => {});
             if (ownerUserId) pushLiveDeviceSnapshot(ownerUserId);
         }, graceMs);
         return;

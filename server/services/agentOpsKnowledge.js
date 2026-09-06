@@ -67,23 +67,44 @@ When user says monitor screen / camera, emit START_* + SHOW_MONITOR + OPEN_WINDO
 When user says install/open/run/background, emit SHELL_EXECUTE + OPEN_WINDOW type shell.
 `.trim();
 
+const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+
 async function buildDeviceFacts(userId, deviceId) {
     if (!userId || !deviceId) return { summary: 'No device selected.' };
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const scope = { userId, deviceId };
 
-    const [usageClosed, apps, browser, notifs, activity] = await Promise.all([
-        ActivityLog.find({ ...scope, createdAt: { $gte: since }, action: 'app_closed' })
-            .sort({ createdAt: -1 }).limit(40).lean().catch(() => []),
-        AppHistory.find({ ...scope, lastOpened: { $gte: since }, duration: { $gt: 0 } })
-            .sort({ lastOpened: -1 }).limit(40).lean().catch(() => []),
-        BrowserHistory.find({ ...scope, visitTime: { $gte: since } })
-            .sort({ visitTime: -1 }).limit(40).lean().catch(() => []),
-        Notification.find({ ...scope, isDeleted: { $ne: true } })
-            .sort({ createdAt: -1 }).limit(25).lean().catch(() => []),
-        ActivityLog.find({ ...scope, createdAt: { $gte: since } })
-            .sort({ createdAt: -1 }).limit(40).lean().catch(() => []),
-    ]);
+    let usageClosed = [];
+    let apps = [];
+    let browser = [];
+    let notifs = [];
+    let activity = [];
+
+    if (isMysql()) {
+        try {
+            const adapter = getMysqlAdapter();
+            [usageClosed, apps, browser, notifs, activity] = await Promise.all([
+                adapter.findActivityLogs({ ...scope, action: 'app_closed' }, { limit: 40 }).catch(() => []),
+                adapter.findAppHistories(scope, { limit: 40 }).catch(() => []),
+                adapter.findBrowserHistories(scope, { limit: 40 }).catch(() => []),
+                adapter.findNotifications(scope, { limit: 25 }).catch(() => []),
+                adapter.findActivityLogs(scope, { limit: 40 }).catch(() => []),
+            ]);
+        } catch (_) {}
+    } else {
+        [usageClosed, apps, browser, notifs, activity] = await Promise.all([
+            ActivityLog.find({ ...scope, createdAt: { $gte: since }, action: 'app_closed' })
+                .sort({ createdAt: -1 }).limit(40).lean().catch(() => []),
+            AppHistory.find({ ...scope, lastOpened: { $gte: since }, duration: { $gt: 0 } })
+                .sort({ lastOpened: -1 }).limit(40).lean().catch(() => []),
+            BrowserHistory.find({ ...scope, visitTime: { $gte: since } })
+                .sort({ visitTime: -1 }).limit(40).lean().catch(() => []),
+            Notification.find({ ...scope, isDeleted: { $ne: true } })
+                .sort({ createdAt: -1 }).limit(25).lean().catch(() => []),
+            ActivityLog.find({ ...scope, createdAt: { $gte: since } })
+                .sort({ createdAt: -1 }).limit(40).lean().catch(() => []),
+        ]);
+    }
 
     const byApp = new Map();
     for (const row of usageClosed) {

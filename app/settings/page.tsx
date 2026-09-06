@@ -342,6 +342,18 @@ export default function SettingsPage() {
           }));
         }
       } catch (_) {}
+
+      // Load server cloudinary-config
+      try {
+        const cloudData = await safeFetchJson("/api/integrations/cloudinary-config");
+        if (cloudData?.success && cloudData.cloudName) {
+          setVars((prev) => ({
+            ...prev,
+            cloudinaryCloudName: prev.cloudinaryCloudName || cloudData.cloudName || "",
+            cloudinaryApiKey: prev.cloudinaryApiKey || cloudData.apiKey || "",
+          }));
+        }
+      } catch (_) {}
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
     } finally {
@@ -448,6 +460,20 @@ export default function SettingsPage() {
           mysqlPassword: vars.mysqlPassword,
         }),
       });
+
+      // Persist Cloudinary credentials to server if provided
+      if (vars.cloudinaryCloudName) {
+        await safeFetchJson("/api/integrations/cloudinary-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cloudName: vars.cloudinaryCloudName,
+            apiKey: vars.cloudinaryApiKey,
+            apiSecret: vars.cloudinaryApiSecret,
+          }),
+        });
+      }
+
       setSuccessMsg(`Database provider (${vars.activeDbProvider.toUpperCase()}) & integration variables saved.`);
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err) {

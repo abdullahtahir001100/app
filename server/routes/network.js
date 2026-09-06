@@ -13,6 +13,7 @@ const {
     userCanAccessAnyDevice,
 } = require('../middleware/auth');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+const syncManager = require('../services/syncManager');
 
 router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
@@ -100,7 +101,13 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
         const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
         const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
         const query = seeAll ? {} : { userId: req.user.id };
-        const deviceRecords = await Device.find(query).sort({ lastSeen: -1 }).lean();
+
+        let deviceRecords;
+        if (isMysql()) {
+            deviceRecords = await getMysqlAdapter().listDevices(query);
+        } else {
+            deviceRecords = await Device.find(query).sort({ lastSeen: -1 }).lean();
+        }
 
         const metricPercent = (value) => {
             if (typeof value === 'number' && Number.isFinite(value)) {
@@ -141,7 +148,7 @@ router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) 
                 architecture: record.architecture || '',
                 cpu: record.cpu || '',
                 ram: record.ram,
-                lastSeen: record.lastSeen ? record.lastSeen.toISOString() : null,
+                lastSeen: record.lastSeen ? (record.lastSeen instanceof Date ? record.lastSeen.toISOString() : record.lastSeen) : null,
             };
         });
 
@@ -158,20 +165,41 @@ router.post('/heartbeat', attachUser, requireUserIdOwnership, requireDeviceAcces
 
         if (!deviceId || !localIp) return res.status(400).json({ success: false });
 
-        const updatedDevice = await Device.findOneAndUpdate(
-            { deviceId },
-            {
-                $set: {
-                    platform, localIp, publicIp, clientPort,
-                    status: 'online', lastSeen: new Date(),
+        let updatedDevice;
+        if (isMysql()) {
+            updatedDevice = await getMysqlAdapter().upsertDevice(deviceId, {
+                platform,
+                localIp,
+                publicIp,
+                clientPort,
+                status: 'online',
+                userId: req.user.id
+            });
+        } else {
+            updatedDevice = await Device.findOneAndUpdate(
+                { deviceId },
+                {
+                    $set: {
+                        platform, localIp, publicIp, clientPort,
+                        status: 'online', lastSeen: new Date(),
+                    },
+                    $setOnInsert: {
+                        userId: req.user.id,
+                        deviceId,
+                    },
                 },
-                $setOnInsert: {
-                    userId: req.user.id,
-                    deviceId,
-                },
-            },
-            { new: true, upsert: true }
-        );
+                { new: true, upsert: true }
+            );
+        }
+
+        void syncManager.syncDevice(deviceId, {
+            platform,
+            localIp,
+            publicIp,
+            clientPort,
+            status: 'online',
+            userId: req.user.id
+        }).catch(() => {});
 
         res.status(200).json({ success: true, data: updatedDevice });
     } catch (error) { res.status(500).json({ error: error.message }); }

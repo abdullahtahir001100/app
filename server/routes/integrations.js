@@ -474,6 +474,76 @@ router.post('/test-cloudinary', async (req, res) => {
     }
 });
 
+// 4.1 Cloudinary Config GET & POST
+router.get('/cloudinary-config', (req, res) => {
+    try {
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME || '';
+        const apiKey = process.env.CLOUDINARY_API_KEY || '';
+        const apiSecret = process.env.CLOUDINARY_API_SECRET || '';
+        return res.status(200).json({
+            success: true,
+            cloudName,
+            apiKey,
+            hasApiKey: Boolean(apiKey),
+            hasApiSecret: Boolean(apiSecret),
+        });
+    } catch (err) {
+        return res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+router.post('/cloudinary-config', async (req, res) => {
+    try {
+        const { cloudName = '', apiKey = '', apiSecret = '' } = req.body || {};
+        const trimmedCloud = String(cloudName || '').trim();
+        const trimmedKey = String(apiKey || '').trim();
+        const trimmedSecret = String(apiSecret || '').trim();
+
+        if (trimmedCloud) process.env.CLOUDINARY_CLOUD_NAME = trimmedCloud;
+        if (trimmedKey) process.env.CLOUDINARY_API_KEY = trimmedKey;
+        if (trimmedSecret) process.env.CLOUDINARY_API_SECRET = trimmedSecret;
+
+        // Re-configure Cloudinary runtime SDK
+        const cloudinary = require('../config/cloudinary');
+        cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET,
+            secure: true,
+        });
+
+        // Persist to .env
+        try {
+            const envPath = path.resolve(process.cwd(), '.env');
+            if (fs.existsSync(envPath)) {
+                let envContent = fs.readFileSync(envPath, 'utf-8');
+                const updateOrAppend = (key, val) => {
+                    const regex = new RegExp(`^${key}=.*$`, 'm');
+                    if (regex.test(envContent)) {
+                        envContent = envContent.replace(regex, `${key}=${val}`);
+                    } else {
+                        envContent += `\n${key}=${val}`;
+                    }
+                };
+                if (trimmedCloud) updateOrAppend('CLOUDINARY_CLOUD_NAME', trimmedCloud);
+                if (trimmedKey) updateOrAppend('CLOUDINARY_API_KEY', trimmedKey);
+                if (trimmedSecret) updateOrAppend('CLOUDINARY_API_SECRET', trimmedSecret);
+                fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf-8');
+            }
+        } catch (fsErr) {
+            console.warn('[CLOUDINARY-CONFIG] Could not update .env:', fsErr.message);
+        }
+
+        return res.status(200).json({
+            success: true,
+            cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+            message: `Cloudinary configuration updated for "${process.env.CLOUDINARY_CLOUD_NAME}".`,
+        });
+    } catch (err) {
+        return res.status(400).json({ success: false, error: err.message });
+    }
+});
+
 // 5. Database Config GET & POST
 router.get('/db-config', (req, res) => {
     try {

@@ -519,6 +519,603 @@ class MysqlModelAdapter {
         );
         return value;
     }
+
+    // ================= ACTIVITY LOG OPERATIONS ================= //
+    async createActivityLog(data) {
+        const pool = await this.getPool();
+        const userId = String(data.userId || '');
+        const deviceId = String(data.deviceId || '');
+        const action = String(data.action || 'system');
+        const status = String(data.status || 'info');
+        const details = JSON.stringify(data.details || data.metadata || {});
+
+        const [result] = await pool.query(
+            `INSERT INTO activity_logs (user_id, device_id, action, status, details, created_at)
+             VALUES (?, ?, ?, ?, ?, NOW())`,
+            [userId, deviceId, action, status, details]
+        );
+        return { id: result.insertId, userId, deviceId, action, status, createdAt: new Date() };
+    }
+
+    async findActivityLogs(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+        if (filter.status) {
+            conditions.push('status = ?');
+            values.push(String(filter.status));
+        }
+        if (filter.action) {
+            conditions.push('action = ?');
+            values.push(String(filter.action));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 50));
+        const offset = Math.max(0, Number(options.offset || 0));
+
+        const [rows] = await pool.query(
+            `SELECT * FROM activity_logs ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => {
+            let details = {};
+            try {
+                details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+            } catch (_) {}
+            return {
+                _id: String(r.id),
+                id: String(r.id),
+                userId: r.user_id,
+                deviceId: r.device_id,
+                action: r.action,
+                status: r.status,
+                details,
+                createdAt: r.created_at,
+            };
+        });
+    }
+
+    async countActivityLogs(filter = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+        if (filter.status) {
+            conditions.push('status = ?');
+            values.push(String(filter.status));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const [rows] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM activity_logs ${whereClause}`,
+            values
+        );
+        return Number(rows[0]?.cnt || 0);
+    }
+
+    // ================= BROWSER HISTORY OPERATIONS ================= //
+    async upsertBrowserHistories(deviceId, entries, userId = '') {
+        if (!deviceId || !Array.isArray(entries) || entries.length === 0) return { count: 0 };
+        const pool = await this.getPool();
+        let inserted = 0;
+
+        for (const e of entries) {
+            const browser = String(e.browser || 'Edge');
+            const url = String(e.url || '');
+            if (!url) continue;
+            const title = String(e.title || url);
+            const domain = String(e.domain || '');
+            const windowsUser = String(e.windowsUser || e.windows_user || '');
+            const browserProfile = String(e.browserProfile || e.browser_profile || '');
+            const visitTime = e.visitTime ? new Date(e.visitTime) : new Date();
+            const visitCount = Number(e.visitCount) || 1;
+
+            await pool.query(
+                `INSERT INTO browser_histories 
+                 (device_id, user_id, browser, url, title, visit_time, visit_count, domain, windows_user, browser_profile)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [deviceId, String(userId || ''), browser, url, title, visitTime, visitCount, domain, windowsUser, browserProfile]
+            );
+            inserted++;
+        }
+        return { count: inserted };
+    }
+
+    async findBrowserHistories(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+        if (filter.browser) {
+            conditions.push('browser = ?');
+            values.push(String(filter.browser));
+        }
+        if (filter.domain) {
+            conditions.push('domain = ?');
+            values.push(String(filter.domain));
+        }
+        if (filter.search) {
+            conditions.push('(title LIKE ? OR url LIKE ?)');
+            values.push(`%${filter.search}%`, `%${filter.search}%`);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 100));
+        const offset = Math.max(0, Number(options.offset || 0));
+        const order = String(options.order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+        const [rows] = await pool.query(
+            `SELECT * FROM browser_histories ${whereClause} ORDER BY visit_time ${order} LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => ({
+            _id: String(r.id),
+            id: String(r.id),
+            deviceId: r.device_id,
+            userId: r.user_id,
+            browser: r.browser,
+            url: r.url,
+            title: r.title,
+            visitTime: r.visit_time,
+            visitCount: r.visit_count,
+            domain: r.domain,
+            windowsUser: r.windows_user,
+            browserProfile: r.browser_profile,
+            createdAt: r.created_at,
+        }));
+    }
+
+    async countBrowserHistories(filter = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const [rows] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM browser_histories ${whereClause}`,
+            values
+        );
+        return Number(rows[0]?.cnt || 0);
+    }
+
+    // ================= APP HISTORY OPERATIONS ================= //
+    async upsertAppHistories(deviceId, entries, userId = '') {
+        if (!deviceId || !Array.isArray(entries) || entries.length === 0) return { count: 0 };
+        const pool = await this.getPool();
+        let inserted = 0;
+
+        for (const e of entries) {
+            const appName = String(e.appName || e.app_name || 'Unknown');
+            const execPath = String(e.executablePath || e.executable_path || '');
+            const lastOpened = e.lastOpened ? new Date(e.lastOpened) : new Date();
+            const appType = String(e.appType || e.app_type || 'app');
+            const duration = Math.max(0, Number(e.duration) || 0);
+            const category = String(e.category || '');
+            const windowsUser = String(e.windowsUser || e.windows_user || '');
+
+            await pool.query(
+                `INSERT INTO app_histories 
+                 (device_id, user_id, app_name, executable_path, last_opened, app_type, duration, category, windows_user)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [deviceId, String(userId || ''), appName, execPath, lastOpened, appType, duration, category, windowsUser]
+            );
+            inserted++;
+        }
+        return { count: inserted };
+    }
+
+    async findAppHistories(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+        if (filter.appType) {
+            conditions.push('app_type = ?');
+            values.push(String(filter.appType));
+        }
+        if (filter.search) {
+            conditions.push('app_name LIKE ?');
+            values.push(`%${filter.search}%`);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 100));
+        const offset = Math.max(0, Number(options.offset || 0));
+
+        const [rows] = await pool.query(
+            `SELECT * FROM app_histories ${whereClause} ORDER BY last_opened DESC LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => ({
+            _id: String(r.id),
+            id: String(r.id),
+            deviceId: r.device_id,
+            userId: r.user_id,
+            appName: r.app_name,
+            executablePath: r.executable_path,
+            lastOpened: r.last_opened,
+            appType: r.app_type,
+            duration: r.duration,
+            category: r.category,
+            windowsUser: r.windows_user,
+            createdAt: r.created_at,
+        }));
+    }
+
+    async countAppHistories(filter = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const [rows] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM app_histories ${whereClause}`,
+            values
+        );
+        return Number(rows[0]?.cnt || 0);
+    }
+
+    // ================= NOTIFICATION OPERATIONS ================= //
+    async createNotification(data) {
+        const pool = await this.getPool();
+        const userId = String(data.userId || '');
+        const title = String(data.title || 'Notification');
+        const message = String(data.message || '');
+        const type = String(data.type || data.category || 'info');
+        const isRead = data.isRead || data.read ? 1 : 0;
+
+        const [result] = await pool.query(
+            `INSERT INTO notifications (user_id, title, message, type, is_read, created_at)
+             VALUES (?, ?, ?, ?, ?, NOW())`,
+            [userId, title, message, type, isRead]
+        );
+        return { id: result.insertId, _id: String(result.insertId), userId, title, message, type, isRead: Boolean(isRead), createdAt: new Date() };
+    }
+
+    async findNotifications(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.type) {
+            conditions.push('type = ?');
+            values.push(String(filter.type));
+        }
+        if (filter.isRead !== undefined) {
+            conditions.push('is_read = ?');
+            values.push(filter.isRead ? 1 : 0);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 50));
+        const offset = Math.max(0, Number(options.offset || 0));
+
+        const [rows] = await pool.query(
+            `SELECT * FROM notifications ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => ({
+            _id: String(r.id),
+            id: String(r.id),
+            userId: r.user_id,
+            title: r.title,
+            message: r.message,
+            type: r.type,
+            category: r.type,
+            read: Boolean(r.is_read),
+            isRead: Boolean(r.is_read),
+            createdAt: r.created_at,
+        }));
+    }
+
+    async countNotifications(filter = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.isRead !== undefined) {
+            conditions.push('is_read = ?');
+            values.push(filter.isRead ? 1 : 0);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const [rows] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM notifications ${whereClause}`,
+            values
+        );
+        return Number(rows[0]?.cnt || 0);
+    }
+
+    async markNotificationRead(id, userId = null) {
+        const pool = await this.getPool();
+        const conditions = ['id = ?'];
+        const values = [Number(id) || id];
+        if (userId) {
+            conditions.push('user_id = ?');
+            values.push(String(userId));
+        }
+        await pool.query(
+            `UPDATE notifications SET is_read = 1 WHERE ${conditions.join(' AND ')}`,
+            values
+        );
+        return { success: true };
+    }
+
+    async markAllNotificationsRead(userId = null) {
+        const pool = await this.getPool();
+        if (userId) {
+            const [res] = await pool.query('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [String(userId)]);
+            return { modifiedCount: res.affectedRows };
+        }
+        const [res] = await pool.query('UPDATE notifications SET is_read = 1');
+        return { modifiedCount: res.affectedRows };
+    }
+
+    async deleteNotification(id, userId = null) {
+        const pool = await this.getPool();
+        const conditions = ['id = ?'];
+        const values = [Number(id) || id];
+        if (userId) {
+            conditions.push('user_id = ?');
+            values.push(String(userId));
+        }
+        await pool.query(
+            `DELETE FROM notifications WHERE ${conditions.join(' AND ')}`,
+            values
+        );
+        return { success: true };
+    }
+
+    async clearAllNotifications(userId = null) {
+        const pool = await this.getPool();
+        if (userId) {
+            await pool.query('DELETE FROM notifications WHERE user_id = ?', [String(userId)]);
+        } else {
+            await pool.query('DELETE FROM notifications');
+        }
+        return { success: true };
+    }
+
+    // ================= CALL LOGS OPERATIONS ================= //
+    async upsertCallLogs(deviceId, entries, userId = '') {
+        if (!deviceId || !Array.isArray(entries) || entries.length === 0) return { count: 0 };
+        const pool = await this.getPool();
+        let inserted = 0;
+
+        for (const e of entries) {
+            const number = String(e.number || '');
+            const name = String(e.name || '');
+            if (!number && !name) continue;
+            const type = Number(e.type) || 0;
+            const duration = Number(e.duration) || 0;
+            const timestamp = e.timestamp ? new Date(e.timestamp) : new Date();
+
+            await pool.query(
+                `INSERT INTO call_logs (device_id, user_id, number, name, type, duration, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [deviceId, String(userId || ''), number, name, type, duration, timestamp]
+            );
+            inserted++;
+        }
+        return { count: inserted };
+    }
+
+    async findCallLogs(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 100));
+        const offset = Math.max(0, Number(options.offset || 0));
+
+        const [rows] = await pool.query(
+            `SELECT * FROM call_logs ${whereClause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => ({
+            _id: String(r.id),
+            id: String(r.id),
+            deviceId: r.device_id,
+            userId: r.user_id,
+            number: r.number,
+            name: r.name,
+            type: r.type,
+            duration: r.duration,
+            timestamp: r.timestamp,
+            createdAt: r.created_at,
+        }));
+    }
+
+    // ================= SMS MESSAGES OPERATIONS ================= //
+    async upsertSmsMessages(deviceId, entries, userId = '') {
+        if (!deviceId || !Array.isArray(entries) || entries.length === 0) return { count: 0 };
+        const pool = await this.getPool();
+        let inserted = 0;
+
+        for (const e of entries) {
+            const address = String(e.address || '');
+            const body = String(e.body || '');
+            if (!address && !body) continue;
+            const type = Number(e.type) || 0;
+            const isRead = e.read || e.isRead ? 1 : 0;
+            const timestamp = e.timestamp ? new Date(e.timestamp) : new Date();
+
+            await pool.query(
+                `INSERT INTO sms_messages (device_id, user_id, address, body, type, is_read, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [deviceId, String(userId || ''), address, body, type, isRead, timestamp]
+            );
+            inserted++;
+        }
+        return { count: inserted };
+    }
+
+    async findSmsMessages(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 100));
+        const offset = Math.max(0, Number(options.offset || 0));
+
+        const [rows] = await pool.query(
+            `SELECT * FROM sms_messages ${whereClause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => ({
+            _id: String(r.id),
+            id: String(r.id),
+            deviceId: r.device_id,
+            userId: r.user_id,
+            address: r.address,
+            body: r.body,
+            type: r.type,
+            read: Boolean(r.is_read),
+            timestamp: r.timestamp,
+            createdAt: r.created_at,
+        }));
+    }
+
+    // ================= CONTACTS OPERATIONS ================= //
+    async upsertContacts(deviceId, entries, userId = '') {
+        if (!deviceId || !Array.isArray(entries) || entries.length === 0) return { count: 0 };
+        const pool = await this.getPool();
+        let inserted = 0;
+
+        for (const e of entries) {
+            const name = String(e.name || '');
+            const phone = String(e.phone || e.number || '');
+            if (!name && !phone) continue;
+
+            await pool.query(
+                `INSERT INTO contacts (device_id, user_id, name, phone)
+                 VALUES (?, ?, ?, ?)`,
+                [deviceId, String(userId || ''), name, phone]
+            );
+            inserted++;
+        }
+        return { count: inserted };
+    }
+
+    async findContacts(filter = {}, options = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const limit = Math.max(1, Number(options.limit || 100));
+        const offset = Math.max(0, Number(options.offset || 0));
+
+        const [rows] = await pool.query(
+            `SELECT * FROM contacts ${whereClause} ORDER BY name ASC LIMIT ? OFFSET ?`,
+            [...values, limit, offset]
+        );
+
+        return rows.map((r) => ({
+            _id: String(r.id),
+            id: String(r.id),
+            deviceId: r.device_id,
+            userId: r.user_id,
+            name: r.name,
+            phone: r.phone,
+            createdAt: r.created_at,
+        }));
+    }
 }
 
 module.exports = new MysqlModelAdapter();

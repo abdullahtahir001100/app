@@ -2,8 +2,10 @@ const cloudinary = require('../config/cloudinary');
 const { ensureDatabase, getFileRepository } = require('../db/DatabaseFactory');
 const {
     ensureVirtualFolderPath,
-    resolveMediaVirtualFolder
+    resolveMediaVirtualFolder,
+    assertDeviceCloudinaryAllowed
 } = require('./virtualFileService');
+const syncManager = require('./syncManager');
 
 function uploadBufferToCloudinary(buffer, options) {
     return new Promise((resolve, reject) => {
@@ -75,6 +77,8 @@ async function uploadMediaAsset(payload) {
         throw error;
     }
 
+    await assertDeviceCloudinaryAllowed(deviceId);
+
     const type = mediaType === 'video' ? 'video' : 'image';
     const pageType = String(source || 'camera').toLowerCase() === 'screen' ? 'screen' : 'camera';
     const virtualFolder = resolveMediaVirtualFolder(source, type);
@@ -95,7 +99,7 @@ async function uploadMediaAsset(payload) {
         type === 'video' ? 'recording' : 'screenshot'
     ];
 
-    const doc = await files.create({
+    const fileData = {
         deviceId,
         name: fileName,
         originalPath: '',
@@ -109,7 +113,10 @@ async function uploadMediaAsset(payload) {
         size: size || result.bytes || 0,
         tags,
         isDeleted: false
-    });
+    };
+
+    const doc = await files.create(fileData);
+    void syncManager.syncVirtualFile(fileData).catch(() => {});
 
     return {
         success: true,

@@ -1,7 +1,9 @@
 const cloudinary = require('../config/cloudinary');
 const VirtualFile = require('../models/VirtualFile');
+const VirtualFolder = require('../models/VirtualFolder');
 const Device = require('../models/Device');
 const { ensureDatabase, getFileRepository, getFolderRepository, isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+const syncManager = require('./syncManager');
 
 async function assertDeviceCloudinaryAllowed(deviceId) {
     if (!deviceId || deviceId === 'unknown-device') return;
@@ -266,7 +268,7 @@ async function uploadDeviceMedia(req, filePayload) {
 
     const tags = [pageType, type === 'video' ? 'recording' : 'screenshot'];
 
-    const doc = await files.create({
+    const fileData = {
         deviceId,
         userId: req?.user?.id || req?.user?._id || null,
         name: fileName,
@@ -281,7 +283,10 @@ async function uploadDeviceMedia(req, filePayload) {
         size: filePayload.size || result.bytes || 0,
         tags,
         isDeleted: false
-    });
+    };
+
+    const doc = await files.create(fileData);
+    void syncManager.syncVirtualFile(fileData).catch(() => {});
 
     const item = serializeMediaItem(doc);
 
@@ -449,7 +454,7 @@ async function uploadVirtualFile(req, filePayload) {
         overwrite: false
     });
 
-    const doc = await files.create({
+    const fileData = {
         deviceId,
         userId: req?.user?.id || req?.user?._id || null,
         name: filePayload.originalname,
@@ -463,7 +468,10 @@ async function uploadVirtualFile(req, filePayload) {
         mimeType: filePayload.mimetype || 'application/octet-stream',
         size: filePayload.size,
         isDeleted: false
-    });
+    };
+
+    const doc = await files.create(fileData);
+    void syncManager.syncVirtualFile(fileData).catch(() => {});
 
     return { success: true, item: serializeFile(doc, req) };
 }

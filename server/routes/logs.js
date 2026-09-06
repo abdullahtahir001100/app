@@ -4,11 +4,30 @@ const ActivityLog = require('../models/ActivityLog');
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
 const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
+const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+const syncManager = require('../services/syncManager');
 
 // Get activity logs with filters
 router.get('/activity', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, category, status, limit = 50, offset = 0 } = req.query;
+
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            if (category) filter.action = category;
+            if (status) filter.status = status;
+
+            const logs = await getMysqlAdapter().findActivityLogs(filter, { limit, offset });
+            const total = await getMysqlAdapter().countActivityLogs(filter);
+
+            return res.status(200).json({
+                success: true,
+                total,
+                count: logs.length,
+                logs
+            });
+        }
 
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
@@ -38,13 +57,36 @@ router.get('/activity', attachUser, requirePagePermission('logs'), requireUserId
 router.get('/browser-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, browser, domain, search, q, order = 'desc', limit = 100, offset = 0 } = req.query;
+        const term = String(search || q || '').trim();
+        const cappedLimit = Math.min(500, Math.max(1, parseInt(limit) || 100));
+
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            if (browser) filter.browser = browser;
+            if (domain) filter.domain = domain;
+            if (term) filter.search = term;
+
+            const history = await getMysqlAdapter().findBrowserHistories(filter, {
+                limit: cappedLimit,
+                offset: parseInt(offset) || 0,
+                order
+            });
+            const total = await getMysqlAdapter().countBrowserHistories({ userId: req.user.id, deviceId });
+
+            return res.status(200).json({
+                success: true,
+                total,
+                count: history.length,
+                history
+            });
+        }
 
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         if (browser) query.browser = browser;
         if (domain) query.domain = domain;
 
-        const term = String(search || q || '').trim();
         if (term) {
             query.$or = [
                 { title: { $regex: term, $options: 'i' } },
@@ -53,7 +95,6 @@ router.get('/browser-history', attachUser, requirePagePermission('logs'), requir
         }
 
         const sortDirection = String(order).toLowerCase() === 'asc' ? 1 : -1;
-        const cappedLimit = Math.min(500, Math.max(1, parseInt(limit) || 100));
 
         const history = await BrowserHistory.find(query)
             .sort({ visitTime: sortDirection })
@@ -78,6 +119,22 @@ router.get('/browser-history', attachUser, requirePagePermission('logs'), requir
 router.get('/app-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, appType, limit = 100, offset = 0 } = req.query;
+
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            if (appType) filter.appType = appType;
+
+            const history = await getMysqlAdapter().findAppHistories(filter, { limit, offset });
+            const total = await getMysqlAdapter().countAppHistories({ userId: req.user.id, deviceId });
+
+            return res.status(200).json({
+                success: true,
+                total,
+                count: history.length,
+                history
+            });
+        }
 
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
@@ -114,7 +171,7 @@ router.post('/activity', attachUser, requirePagePermission('logs'), requireUserI
             });
         }
 
-        const log = new ActivityLog({
+        const logData = {
             deviceId,
             userId: req.user.id,
             action,
@@ -123,9 +180,17 @@ router.post('/activity', attachUser, requirePagePermission('logs'), requireUserI
             details,
             status: status || 'success',
             metadata
-        });
+        };
 
-        await log.save();
+        let log;
+        if (isMysql()) {
+            log = await getMysqlAdapter().createActivityLog(logData);
+        } else {
+            log = new ActivityLog(logData);
+            await log.save();
+        }
+
+        void syncManager.syncActivityLog(logData).catch(() => {});
 
         res.status(201).json({
             success: true,
@@ -148,6 +213,15 @@ router.post('/browser-history', attachUser, requirePagePermission('logs'), requi
             });
         }
 
+        if (isMysql()) {
+            const result = await getMysqlAdapter().upsertBrowserHistories(deviceId, entries, req.user.id);
+            void syncManager.syncBrowserHistory(deviceId, entries, req.user.id).catch(() => {});
+            return res.status(201).json({
+                success: true,
+                count: result.count
+            });
+        }
+
         const historyEntries = entries.map(entry => ({
             deviceId,
             userId: req.user.id,
@@ -160,6 +234,7 @@ router.post('/browser-history', attachUser, requirePagePermission('logs'), requi
         }));
 
         const created = await BrowserHistory.insertMany(historyEntries);
+        void syncManager.syncBrowserHistory(deviceId, entries, req.user.id).catch(() => {});
 
         res.status(201).json({
             success: true,
@@ -182,6 +257,15 @@ router.post('/app-history', attachUser, requirePagePermission('logs'), requireUs
             });
         }
 
+        if (isMysql()) {
+            const result = await getMysqlAdapter().upsertAppHistories(deviceId, entries, req.user.id);
+            void syncManager.syncAppHistory(deviceId, entries, req.user.id).catch(() => {});
+            return res.status(201).json({
+                success: true,
+                count: result.count
+            });
+        }
+
         const appEntries = entries.map(entry => ({
             deviceId,
             userId: req.user.id,
@@ -193,6 +277,7 @@ router.post('/app-history', attachUser, requirePagePermission('logs'), requireUs
         }));
 
         const created = await AppHistory.insertMany(appEntries);
+        void syncManager.syncAppHistory(deviceId, entries, req.user.id).catch(() => {});
 
         res.status(201).json({
             success: true,
@@ -344,8 +429,17 @@ router.get('/top-apps', attachUser, requirePagePermission('logs'), requireDevice
 
 router.get('/call-logs', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
-        const CallLog = require('../models/CallLog');
         const { deviceId, limit = 100, offset = 0 } = req.query;
+
+        if (isMysql()) {
+            const logs = await getMysqlAdapter().findCallLogs(
+                { userId: req.user.id, deviceId },
+                { limit, offset }
+            );
+            return res.status(200).json({ success: true, count: logs.length, logs });
+        }
+
+        const CallLog = require('../models/CallLog');
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         const logs = await CallLog.find(query).sort({ timestamp: -1 }).limit(parseInt(limit)).skip(parseInt(offset)).exec();
@@ -357,8 +451,17 @@ router.get('/call-logs', attachUser, requirePagePermission('logs'), requireUserI
 
 router.get('/sms', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
-        const SmsMessage = require('../models/SmsMessage');
         const { deviceId, limit = 100, offset = 0 } = req.query;
+
+        if (isMysql()) {
+            const messages = await getMysqlAdapter().findSmsMessages(
+                { userId: req.user.id, deviceId },
+                { limit, offset }
+            );
+            return res.status(200).json({ success: true, count: messages.length, messages });
+        }
+
+        const SmsMessage = require('../models/SmsMessage');
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         const messages = await SmsMessage.find(query).sort({ timestamp: -1 }).limit(parseInt(limit)).skip(parseInt(offset)).exec();
@@ -370,8 +473,17 @@ router.get('/sms', attachUser, requirePagePermission('logs'), requireUserIdOwner
 
 router.get('/contacts', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
     try {
-        const Contact = require('../models/Contact');
         const { deviceId, limit = 300, offset = 0 } = req.query;
+
+        if (isMysql()) {
+            const contacts = await getMysqlAdapter().findContacts(
+                { userId: req.user.id, deviceId },
+                { limit, offset }
+            );
+            return res.status(200).json({ success: true, count: contacts.length, contacts });
+        }
+
+        const Contact = require('../models/Contact');
         const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         const contacts = await Contact.find(query).sort({ name: 1 }).limit(parseInt(limit)).skip(parseInt(offset)).exec();

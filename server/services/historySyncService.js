@@ -1,6 +1,8 @@
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
 const Notification = require('../models/Notification');
+const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+const syncManager = require('./syncManager');
 
 function parseFlexibleDate(value) {
     if (!value && value !== 0) return new Date();
@@ -67,24 +69,18 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
 
     if (docs.length === 0) return { count: 0 };
 
-    const ops = docs.map((doc) => ({
-        updateOne: {
-            filter: {
-                deviceId: doc.deviceId,
-                userId: doc.userId,
-                browser: doc.browser,
-                url: doc.url,
-                visitTime: doc.visitTime,
-                windowsUser: doc.windowsUser,
-                browserProfile: doc.browserProfile
-            },
-            update: {
-                $set: {
-                    title: doc.title,
-                    visitCount: doc.visitCount,
-                    domain: doc.domain
-                },
-                $setOnInsert: {
+    let count = 0;
+    if (isMysql()) {
+        try {
+            const res = await getMysqlAdapter().upsertBrowserHistories(deviceId, docs, userId);
+            count = res.count;
+        } catch (mErr) {
+            console.warn('[HISTORY-SYNC] MySQL browser history sync error:', mErr.message);
+        }
+    } else {
+        const ops = docs.map((doc) => ({
+            updateOne: {
+                filter: {
                     deviceId: doc.deviceId,
                     userId: doc.userId,
                     browser: doc.browser,
@@ -92,26 +88,41 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
                     visitTime: doc.visitTime,
                     windowsUser: doc.windowsUser,
                     browserProfile: doc.browserProfile
-                }
-            },
-            upsert: true
-        }
-    }));
+                },
+                update: {
+                    $set: {
+                        title: doc.title,
+                        visitCount: doc.visitCount,
+                        domain: doc.domain
+                    },
+                    $setOnInsert: {
+                        deviceId: doc.deviceId,
+                        userId: doc.userId,
+                        browser: doc.browser,
+                        url: doc.url,
+                        visitTime: doc.visitTime,
+                        windowsUser: doc.windowsUser,
+                        browserProfile: doc.browserProfile
+                    }
+                },
+                upsert: true
+            }
+        }));
 
-    try {
-        const result = await BrowserHistory.bulkWrite(ops, { ordered: false });
-        return {
-            count: (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0)
-        };
-    } catch (err) {
-        // Partial bulkWrite success still inserts most docs.
-        if (err?.result) {
-            return {
-                count: (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0)
-            };
+        try {
+            const result = await BrowserHistory.bulkWrite(ops, { ordered: false });
+            count = (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0);
+        } catch (err) {
+            if (err?.result) {
+                count = (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0);
+            } else {
+                console.warn('[HISTORY-SYNC] Mongo browser history bulkWrite error:', err.message);
+            }
         }
-        throw err;
     }
+
+    void syncManager.syncBrowserHistory(deviceId, docs, userId).catch(() => {});
+    return { count };
 }
 
 /**
@@ -138,49 +149,59 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         duration: Math.max(0, Number(entry.duration) || 0)
     }));
 
-    const ops = docs.map((doc) => ({
-        updateOne: {
-            filter: {
-                deviceId: doc.deviceId,
-                userId: doc.userId,
-                appName: doc.appName,
-                executablePath: doc.executablePath,
-                lastOpened: doc.lastOpened,
-                windowsUser: doc.windowsUser
-            },
-            update: {
-                $set: {
-                    appType: doc.appType,
-                    duration: doc.duration,
-                    ...(doc.category ? { category: doc.category } : {})
-                },
-                $setOnInsert: {
+    let count = 0;
+    if (isMysql()) {
+        try {
+            const res = await getMysqlAdapter().upsertAppHistories(deviceId, docs, userId);
+            count = res.count;
+        } catch (mErr) {
+            console.warn('[HISTORY-SYNC] MySQL app history sync error:', mErr.message);
+        }
+    } else {
+        const ops = docs.map((doc) => ({
+            updateOne: {
+                filter: {
                     deviceId: doc.deviceId,
                     userId: doc.userId,
                     appName: doc.appName,
                     executablePath: doc.executablePath,
                     lastOpened: doc.lastOpened,
-                    windowsUser: doc.windowsUser,
-                    duration: doc.duration
-                }
-            },
-            upsert: true
-        }
-    }));
+                    windowsUser: doc.windowsUser
+                },
+                update: {
+                    $set: {
+                        appType: doc.appType,
+                        duration: doc.duration,
+                        ...(doc.category ? { category: doc.category } : {})
+                    },
+                    $setOnInsert: {
+                        deviceId: doc.deviceId,
+                        userId: doc.userId,
+                        appName: doc.appName,
+                        executablePath: doc.executablePath,
+                        lastOpened: doc.lastOpened,
+                        windowsUser: doc.windowsUser,
+                        duration: doc.duration
+                    }
+                },
+                upsert: true
+            }
+        }));
 
-    try {
-        const result = await AppHistory.bulkWrite(ops, { ordered: false });
-        return {
-            count: (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0)
-        };
-    } catch (err) {
-        if (err?.result) {
-            return {
-                count: (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0)
-            };
+        try {
+            const result = await AppHistory.bulkWrite(ops, { ordered: false });
+            count = (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0);
+        } catch (err) {
+            if (err?.result) {
+                count = (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0);
+            } else {
+                console.warn('[HISTORY-SYNC] Mongo app history bulkWrite error:', err.message);
+            }
         }
-        throw err;
     }
+
+    void syncManager.syncAppHistory(deviceId, docs, userId).catch(() => {});
+    return { count };
 }
 
 async function syncSystemNotifications(deviceId, entries, userId = null) {
@@ -191,40 +212,62 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
     let count = 0;
 
     for (const entry of entries) {
-        await Notification.updateOne(
-            {
-                deviceId,
-                userId,
-                app: String(entry.app || "System"),
-                title: String(entry.title || "Notification"),
-                message: String(entry.message || "")
-            },
-            {
-                $setOnInsert: {
+        if (isMysql()) {
+            try {
+                await getMysqlAdapter().createNotification({
+                    userId,
+                    title: String(entry.title || "Notification"),
+                    message: String(entry.message || ""),
+                    type: String(entry.category || "other"),
+                    isRead: false
+                });
+            } catch (mErr) {
+                console.warn('[HISTORY-SYNC] MySQL notification sync error:', mErr.message);
+            }
+        } else {
+            await Notification.updateOne(
+                {
                     deviceId,
                     userId,
                     app: String(entry.app || "System"),
                     title: String(entry.title || "Notification"),
-                    message: String(entry.message || ""),
-                    icon: String(entry.icon || ""),
-                    image: String(entry.image || entry.picture || ""),
-                    category: String(entry.category || "other"),
-                    read: false,
-                    isDeleted: false,
-                    createdAt: new Date()
+                    message: String(entry.message || "")
                 },
-                $set: {
-                    ...(entry.image || entry.picture
-                        ? { image: String(entry.image || entry.picture || "") }
-                        : {}),
-                    ...(entry.icon ? { icon: String(entry.icon || "") } : {}),
-                    category: String(entry.category || "other")
+                {
+                    $setOnInsert: {
+                        deviceId,
+                        userId,
+                        app: String(entry.app || "System"),
+                        title: String(entry.title || "Notification"),
+                        message: String(entry.message || ""),
+                        icon: String(entry.icon || ""),
+                        image: String(entry.image || entry.picture || ""),
+                        category: String(entry.category || "other"),
+                        read: false,
+                        isDeleted: false,
+                        createdAt: new Date()
+                    },
+                    $set: {
+                        ...(entry.image || entry.picture
+                            ? { image: String(entry.image || entry.picture || "") }
+                            : {}),
+                        ...(entry.icon ? { icon: String(entry.icon || "") } : {}),
+                        category: String(entry.category || "other")
+                    }
+                },
+                {
+                    upsert: true
                 }
-            },
-            {
-                upsert: true
-            }
-        );
+            );
+        }
+
+        void syncManager.syncNotification({
+            userId,
+            title: String(entry.title || "Notification"),
+            message: String(entry.message || ""),
+            type: String(entry.category || "other"),
+            deviceId
+        }).catch(() => {});
 
         count++;
     }
@@ -244,7 +287,7 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
         const action = String(entry.action || entry.event || entry.type || '').trim();
         if (!action) continue;
         const duration = Math.max(0, Number(entry.duration) || Number(entry.metadata?.duration) || 0);
-        await ActivityLog.create({
+        const logData = {
             deviceId,
             userId,
             action,
@@ -260,7 +303,20 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
             status: String(entry.status || 'success'),
             duration,
             metadata: entry.metadata || entry,
-        });
+        };
+
+        if (isMysql()) {
+            try {
+                await getMysqlAdapter().createActivityLog(logData);
+            } catch (mErr) {
+                console.warn('[HISTORY-SYNC] MySQL activity log error:', mErr.message);
+            }
+        } else {
+            await ActivityLog.create(logData);
+        }
+
+        void syncManager.syncActivityLog(logData).catch(() => {});
+
         if (action === 'app_closed' && duration > 0) {
             await syncAppHistory(deviceId, [{
                 appName: String(entry.appName || entry.app_name || entry.processName || 'Unknown'),
@@ -321,69 +377,105 @@ async function persistHistoryPayloadInner(deviceId, packet) {
 
 async function syncCallLogs(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
-    const CallLog = require('../models/CallLog');
     let count = 0;
-    for (const entry of entries) {
-        const timestamp = parseFlexibleDate(entry.timestamp || entry.date);
-        const number = String(entry.number || '');
-        if (!number && !entry.name) continue;
-        await CallLog.updateOne(
-            { deviceId, userId, number, timestamp },
-            {
-                $set: {
-                    name: String(entry.name || ''),
-                    type: Number(entry.type) || 0,
-                    duration: Number(entry.duration) || 0
+
+    if (isMysql()) {
+        try {
+            const res = await getMysqlAdapter().upsertCallLogs(deviceId, entries, userId);
+            count = res.count;
+        } catch (mErr) {
+            console.warn('[HISTORY-SYNC] MySQL call logs error:', mErr.message);
+        }
+    } else {
+        const CallLog = require('../models/CallLog');
+        for (const entry of entries) {
+            const timestamp = parseFlexibleDate(entry.timestamp || entry.date);
+            const number = String(entry.number || '');
+            if (!number && !entry.name) continue;
+            await CallLog.updateOne(
+                { deviceId, userId, number, timestamp },
+                {
+                    $set: {
+                        name: String(entry.name || ''),
+                        type: Number(entry.type) || 0,
+                        duration: Number(entry.duration) || 0
+                    },
+                    $setOnInsert: { deviceId, userId, number, timestamp }
                 },
-                $setOnInsert: { deviceId, userId, number, timestamp }
-            },
-            { upsert: true }
-        );
-        count += 1;
+                { upsert: true }
+            );
+            count += 1;
+        }
     }
+
+    void syncManager.syncCallLogs(deviceId, entries, userId).catch(() => {});
     return { count };
 }
 
 async function syncSmsMessages(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
-    const SmsMessage = require('../models/SmsMessage');
     let count = 0;
-    for (const entry of entries) {
-        const timestamp = parseFlexibleDate(entry.timestamp || entry.date);
-        const address = String(entry.address || '');
-        const body = String(entry.body || '');
-        if (!address && !body) continue;
-        await SmsMessage.updateOne(
-            { deviceId, userId, address, body, timestamp },
-            {
-                $set: {
-                    type: Number(entry.type) || 0,
-                    read: Boolean(entry.read)
+
+    if (isMysql()) {
+        try {
+            const res = await getMysqlAdapter().upsertSmsMessages(deviceId, entries, userId);
+            count = res.count;
+        } catch (mErr) {
+            console.warn('[HISTORY-SYNC] MySQL sms error:', mErr.message);
+        }
+    } else {
+        const SmsMessage = require('../models/SmsMessage');
+        for (const entry of entries) {
+            const timestamp = parseFlexibleDate(entry.timestamp || entry.date);
+            const address = String(entry.address || '');
+            const body = String(entry.body || '');
+            if (!address && !body) continue;
+            await SmsMessage.updateOne(
+                { deviceId, userId, address, body, timestamp },
+                {
+                    $set: {
+                        type: Number(entry.type) || 0,
+                        read: Boolean(entry.read)
+                    },
+                    $setOnInsert: { deviceId, userId, address, body, timestamp }
                 },
-                $setOnInsert: { deviceId, userId, address, body, timestamp }
-            },
-            { upsert: true }
-        );
-        count += 1;
+                { upsert: true }
+            );
+            count += 1;
+        }
     }
+
+    void syncManager.syncSmsMessages(deviceId, entries, userId).catch(() => {});
     return { count };
 }
 
 async function syncContacts(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
-    const Contact = require('../models/Contact');
     let count = 0;
-    for (const entry of entries) {
-        const name = String(entry.name || '');
-        const phone = String(entry.phone || entry.number || '');
-        if (!name && !phone) continue;
-        await Contact.updateOne(
-            { deviceId, userId, name, phone },
-            { $setOnInsert: { deviceId, userId, name, phone } },
-            { upsert: true }
-        );
-        count += 1;
+
+    if (isMysql()) {
+        try {
+            const res = await getMysqlAdapter().upsertContacts(deviceId, entries, userId);
+            count = res.count;
+        } catch (mErr) {
+            console.warn('[HISTORY-SYNC] MySQL contacts error:', mErr.message);
+        }
+    } else {
+        const Contact = require('../models/Contact');
+        for (const entry of entries) {
+            const name = String(entry.name || '');
+            const phone = String(entry.phone || entry.number || '');
+            if (!name && !phone) continue;
+            await Contact.updateOne(
+                { deviceId, userId, name, phone },
+                { $setOnInsert: { deviceId, userId, name, phone } },
+                { upsert: true }
+            );
+            count += 1;
+        }
     }
+
+    void syncManager.syncContacts(deviceId, entries, userId).catch(() => {});
     return { count };
 }
 
