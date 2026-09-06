@@ -92,11 +92,13 @@ async function verifyUserToken(token) {
         }
 
         // Strictly verify admin authorization against Master Admin Database
-        let role = payload.role || user.role || 'user';
-        let adminUnlocked = payload.adminUnlocked === true;
+        let role = user.role || payload.role || 'user';
+        let adminUnlocked = false;
         if (role === 'admin') {
             const isMaster = await isUserMasterAdmin(payload.email || user.email);
-            if (!isMaster) {
+            if (isMaster) {
+                adminUnlocked = true;
+            } else {
                 role = 'user';
                 adminUnlocked = false;
             }

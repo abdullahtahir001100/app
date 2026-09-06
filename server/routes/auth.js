@@ -252,10 +252,14 @@ router.get('/session', attachUser, async (req, res) => {
     const user = isMysql()
         ? await getMysqlAdapter().findUserById(payload.sub)
         : await User.findById(payload.sub).lean();
-    const effectiveRole = req.user?.role || 'user';
-    const adminUnlocked = effectiveRole === 'admin'
-        ? (payload.adminUnlocked === true && req.user?.adminUnlocked === true)
-        : true;
+    const effectiveRole = (user?.role === 'admin' || req.user?.role === 'admin')
+        ? 'admin'
+        : (user?.role || req.user?.role || 'user');
+    const adminUnlocked = effectiveRole === 'admin' ? true : false;
+    const pages = effectiveRole === 'admin'
+        ? require('../models/Permission').defaultsForRole('admin')
+        : (req.user?.pages || []);
+
     return res.status(200).json({
         success: true,
         authenticated: true,
@@ -265,7 +269,7 @@ router.get('/session', attachUser, async (req, res) => {
             email: payload.email,
             name: payload.name,
             role: effectiveRole,
-            pages: req.user?.pages || [],
+            pages,
             avatarUrl: user?.avatarUrl || payload?.avatarUrl || null,
             pairingToken: user?.pairingToken || null,
             pairingUserId: user?.pairingUserId || null,

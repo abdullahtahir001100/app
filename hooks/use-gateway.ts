@@ -18,7 +18,7 @@ export function useGateway() {
     setDevices(gatewayClient.getDevices());
     setSocket(gatewayClient.getSocket());
 
-    void gatewayClient.refreshDevices().finally(() => setDevicesLoading(false));
+    void gatewayClient.refreshDevices({ force: true }).finally(() => setDevicesLoading(false));
 
     return gatewayClient.subscribe((event) => {
       if (event.type === "connected") {

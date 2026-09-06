@@ -41,19 +41,6 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
             };
         });
 
-        // Include live agents not yet in Mongo (still owner-scoped unless seeAll).
-        for (const live of liveDevices) {
-            if (!devices.some((d) => String(d.deviceId || d.value) === String(live.value))) {
-                devices.unshift({
-                    deviceId: live.value,
-                    value: live.value,
-                    label: live.label,
-                    status: 'online',
-                    hostname: live.label,
-                });
-            }
-        }
-
         res.status(200).json({ success: true, devices });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

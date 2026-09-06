@@ -283,7 +283,17 @@ export default function UsagePage() {
     [data]
   );
 
-  if (!featureLoading && !featureAllowed) {
+  if (!featureAllowed) {
+    if (featureLoading) {
+      return (
+        <div className="flex min-h-screen bg-background">
+          <AppSidebar />
+          <main className="flex-1 sidebar-aware-main p-8 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          </main>
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-screen bg-background">
         <AppSidebar />

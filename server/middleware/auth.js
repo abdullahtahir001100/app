@@ -151,10 +151,32 @@ async function attachUser(req, res, next) {
 
     let role = payload.role || 'user';
     let adminUnlocked = false;
+
+    // Check live database role so promoted admin takes effect immediately
+    try {
+        const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+        let dbUser = null;
+        if (isMysql()) {
+            dbUser = await getMysqlAdapter().findUserById(payload.sub);
+            if (!dbUser && payload.email) {
+                dbUser = await getMysqlAdapter().findUserByEmail(payload.email);
+            }
+        } else {
+            const User = require('../models/User');
+            dbUser = await User.findById(payload.sub).lean();
+            if (!dbUser && payload.email) {
+                dbUser = await User.findOne({ email: payload.email }).lean();
+            }
+        }
+        if (dbUser?.role) {
+            role = dbUser.role;
+        }
+    } catch (_) {}
+
     if (role === 'admin') {
         const isMaster = await isUserMasterAdmin(payload.email);
         if (isMaster) {
-            adminUnlocked = isAdminUnlocked(payload);
+            adminUnlocked = true;
         } else {
             role = 'user';
         }
@@ -179,10 +201,31 @@ async function optionalUser(req, res, next) {
     if (payload?.sub) {
         let role = payload.role || 'user';
         let adminUnlocked = false;
+
+        try {
+            const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+            let dbUser = null;
+            if (isMysql()) {
+                dbUser = await getMysqlAdapter().findUserById(payload.sub);
+                if (!dbUser && payload.email) {
+                    dbUser = await getMysqlAdapter().findUserByEmail(payload.email);
+                }
+            } else {
+                const User = require('../models/User');
+                dbUser = await User.findById(payload.sub).lean();
+                if (!dbUser && payload.email) {
+                    dbUser = await User.findOne({ email: payload.email }).lean();
+                }
+            }
+            if (dbUser?.role) {
+                role = dbUser.role;
+            }
+        } catch (_) {}
+
         if (role === 'admin') {
             const isMaster = await isUserMasterAdmin(payload.email);
             if (isMaster) {
-                adminUnlocked = isAdminUnlocked(payload);
+                adminUnlocked = true;
             } else {
                 role = 'user';
             }

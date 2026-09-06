@@ -9,52 +9,69 @@ export interface FeatureAccessState {
   pages: string[];
 }
 
-export function useFeatureAccess(pageKey: string): FeatureAccessState {
-  const [state, setState] = useState<FeatureAccessState>({
+const SESSION_CACHE_KEY = "zenvora_session_cache";
+
+function computeAllowed(pageKey: string, role: string, pages: string[]): boolean {
+  if (role === "admin") return true;
+  if (pageKey === "dashboard" || pageKey === "devices" || pageKey === "settings") return true;
+  if (pages.includes(pageKey)) return true;
+  if (pageKey.startsWith("logs.") && pages.includes("logs")) return true;
+  if (pageKey.startsWith("phone.") && pages.includes("phone")) return true;
+  if (pageKey.startsWith("settings.") && (pages.includes("settings.all") || pages.includes("admin"))) return true;
+  if (pageKey.startsWith("usage.") && pages.includes("usage")) return true;
+  if (pageKey.startsWith("apps.") && pages.includes("apps")) return true;
+  if (pageKey === "logs") return pages.some((p) => p === "logs" || p.startsWith("logs."));
+  if (pageKey === "phone") return pages.some((p) => p === "phone" || p.startsWith("phone."));
+  if (pageKey === "usage") return pages.includes("usage") || pages.some((p) => p.startsWith("usage."));
+  if (pageKey === "apps") return pages.includes("apps") || pages.some((p) => p.startsWith("apps."));
+  return false;
+}
+
+function getInitialState(pageKey: string): FeatureAccessState {
+  if (typeof window !== "undefined") {
+    try {
+      const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (data?.authenticated && data?.user) {
+          const role = data.user.role || "user";
+          const pages: string[] = Array.isArray(data.user.pages) ? data.user.pages : [];
+          return {
+            allowed: computeAllowed(pageKey, role, pages),
+            loading: false,
+            role,
+            pages,
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
+  return {
     allowed: pageKey === "dashboard" || pageKey === "devices" || pageKey === "settings",
     loading: true,
     role: "user",
     pages: [],
-  });
+  };
+}
+
+export function useFeatureAccess(pageKey: string): FeatureAccessState {
+  const [state, setState] = useState<FeatureAccessState>(() => getInitialState(pageKey));
 
   useEffect(() => {
     let active = true;
-    fetch("/api/auth/session", { credentials: "include" })
+    fetch("/api/auth/session", { credentials: "include", cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (!active) return;
         if (data?.authenticated && data?.user) {
+          try {
+            sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(data));
+          } catch (_) {}
+
           const role = data.user.role || "user";
           const pages: string[] = Array.isArray(data.user.pages) ? data.user.pages : [];
-
-          let allowed = false;
-          if (role === "admin") {
-            allowed = true;
-          } else if (pageKey === "dashboard" || pageKey === "devices") {
-            allowed = true;
-          } else if (pageKey === "settings") {
-            allowed = true;
-          } else if (pages.includes(pageKey)) {
-            allowed = true;
-          } else if (pageKey.startsWith("logs.") && pages.includes("logs")) {
-            allowed = true;
-          } else if (pageKey.startsWith("phone.") && pages.includes("phone")) {
-            allowed = true;
-          } else if (pageKey.startsWith("settings.") && (pages.includes("settings.all") || pages.includes("admin"))) {
-            allowed = true;
-          } else if (pageKey.startsWith("usage.") && pages.includes("usage")) {
-            allowed = true;
-          } else if (pageKey.startsWith("apps.") && pages.includes("apps")) {
-            allowed = true;
-          } else if (pageKey === "logs") {
-            allowed = pages.some((p) => p === "logs" || p.startsWith("logs."));
-          } else if (pageKey === "phone") {
-            allowed = pages.some((p) => p === "phone" || p.startsWith("phone."));
-          } else if (pageKey === "usage") {
-            allowed = pages.includes("usage") || pages.some((p) => p.startsWith("usage."));
-          } else if (pageKey === "apps") {
-            allowed = pages.includes("apps") || pages.some((p) => p.startsWith("apps."));
-          }
+          const allowed = computeAllowed(pageKey, role, pages);
 
           setState({
             allowed,

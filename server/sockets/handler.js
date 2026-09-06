@@ -232,15 +232,12 @@ async function getDeviceOptions(userId = null, opts = {}) {
         };
     });
 
-    // Include live agents that aren't in Mongo yet — still owner-scoped.
-    for (const live of liveDevices) {
-        if (!devices.some((d) => d.value === live.value)) {
-            devices.unshift(live);
-        }
-    }
-
     deviceOptionsCache.set(cacheKey, { devices, at: Date.now() });
     return devices;
+}
+
+function clearDeviceCache() {
+    deviceOptionsCache.clear();
 }
 
 function isPrivilegedDashboardUser(user) {

@@ -20,7 +20,17 @@ const FileManager = dynamic(
 export default function FilesPage() {
   const { allowed, loading } = useFeatureAccess("files");
 
-  if (!loading && !allowed) {
+  if (!allowed) {
+    if (loading) {
+      return (
+        <div className="flex h-screen bg-background">
+          <AppSidebar />
+          <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          </main>
+        </div>
+      );
+    }
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

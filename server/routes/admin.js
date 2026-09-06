@@ -387,23 +387,7 @@ router.get('/devices', async (_req, res) => {
                 cloudinaryEnabled: d.cloudinaryEnabled !== false,
             });
         }
-        for (const c of credentials) {
-            const id = String(c.deviceId);
-            if (!byId.has(id)) {
-                byId.set(id, {
-                    deviceId: id,
-                    userId: String(c.userId || ''),
-                    hostname: c.label || id,
-                    platform: 'unknown',
-                    status: online.has(id) ? 'online' : 'offline',
-                    lastSeen: c.updatedAt,
-                    battery: null,
-                    storage: null,
-                    cloudinaryEnabled: true,
-                });
-            }
-        }
-
+        // Only include actual registered devices from the database
         res.json({ success: true, devices: [...byId.values()] });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

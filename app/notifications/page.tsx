@@ -220,7 +220,17 @@ const filteredNotifications = notifications.filter((n) => {
 
   const selectedDeviceOption = deviceOptions.find(d => d.value === selectedDevice);
 
-  if (!featureLoading && !featureAllowed) {
+  if (!featureAllowed) {
+    if (featureLoading) {
+      return (
+        <div className="flex h-screen bg-background">
+          <AppSidebar />
+          <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          </main>
+        </div>
+      );
+    }
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

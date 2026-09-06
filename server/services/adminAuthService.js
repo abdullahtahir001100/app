@@ -71,30 +71,23 @@ async function isUserMasterAdmin(email) {
     let isAdmin = false;
 
     try {
-        const settings = await getAdminSettings();
-        const provider = settings.adminDbProvider || (process.env.DATABASE_PROVIDER || (process.env.MYSQL_URL || process.env.MYSQL_HOST ? 'mysql' : 'mongo'));
-        const config = settings.adminDbConfig || {};
-
-        if (provider === 'mysql') {
-            const pool = getMasterMysqlPool(config);
-            const [rows] = await pool.query(
-                'SELECT role FROM users WHERE email = ? LIMIT 1',
-                [normalized]
-            );
-            if (rows && rows[0]) {
-                isAdmin = rows[0].role === 'admin';
+        const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            const user = await adapter.findUserByEmail(normalized);
+            if (user && user.role === 'admin') {
+                isAdmin = true;
             }
         } else {
             // Mongo Master DB check
             const User = require('../models/User');
             const doc = await User.findOne({ email: normalized }).select('role').lean();
-            if (doc) {
-                isAdmin = doc.role === 'admin';
+            if (doc && doc.role === 'admin') {
+                isAdmin = true;
             }
         }
     } catch (err) {
         console.warn(`[ADMIN-AUTH] Master admin check notice for ${normalized}:`, err.message);
-        // Fallback: if master check fails, trust env admin only
         isAdmin = envAdmin ? normalized === envAdmin : false;
     }
 
