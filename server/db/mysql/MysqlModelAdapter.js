@@ -76,6 +76,7 @@ function mapDevice(row) {
         osVersion: row.os_version || '',
         architecture: row.architecture || '',
         metadata,
+        cloudinaryEnabled: row.cloudinary_enabled === null || row.cloudinary_enabled === undefined ? true : Boolean(row.cloudinary_enabled),
         lastSeen: row.last_seen ? new Date(row.last_seen).toISOString() : new Date().toISOString(),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -307,17 +308,21 @@ class MysqlModelAdapter {
         const osVersion = data.osVersion || existing?.osVersion || '';
         const architecture = data.architecture || existing?.architecture || '';
         const metadata = JSON.stringify(data.metadata || existing?.metadata || {});
+        const cloudinaryEnabled = data.cloudinaryEnabled !== undefined
+            ? (data.cloudinaryEnabled ? 1 : 0)
+            : (existing?.cloudinaryEnabled !== false ? 1 : 0);
 
         const sql = `
             INSERT INTO devices (
-                device_id, user_id, platform, status, client_port, local_ip, public_ip,
+                device_id, user_id, platform, status, cloudinary_enabled, client_port, local_ip, public_ip,
                 battery, storage, ram, cpu, network, hostname, username, os_version,
                 architecture, metadata, last_seen
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
                 user_id = IF(VALUES(user_id) != '', VALUES(user_id), user_id),
                 platform = VALUES(platform),
                 status = VALUES(status),
+                cloudinary_enabled = VALUES(cloudinary_enabled),
                 client_port = VALUES(client_port),
                 local_ip = VALUES(local_ip),
                 public_ip = VALUES(public_ip),
@@ -335,11 +340,21 @@ class MysqlModelAdapter {
         `;
 
         await pool.query(sql, [
-            deviceId, userId, platform, status, clientPort, localIp, publicIp,
+            deviceId, userId, platform, status, cloudinaryEnabled, clientPort, localIp, publicIp,
             battery, storage, ram, cpu, network, hostname, username, osVersion,
             architecture, metadata
         ]);
 
+        return this.findDeviceById(deviceId);
+    }
+
+    async updateDeviceCloudinary(deviceId, enabled) {
+        if (!deviceId) return null;
+        const pool = await this.getPool();
+        await pool.query(
+            'UPDATE devices SET cloudinary_enabled = ? WHERE device_id = ?',
+            [enabled ? 1 : 0, String(deviceId).trim()]
+        );
         return this.findDeviceById(deviceId);
     }
 
@@ -473,6 +488,36 @@ class MysqlModelAdapter {
                 [String(deviceId).trim()]
             );
         }
+    }
+
+    // ================= ADMIN SETTINGS OPERATIONS ================= //
+    async getAdminSetting(key) {
+        if (!key) return null;
+        const pool = await this.getPool();
+        const [rows] = await pool.query(
+            'SELECT * FROM admin_settings WHERE setting_key = ? LIMIT 1',
+            [String(key).trim()]
+        );
+        if (!rows[0]) return null;
+        try {
+            return typeof rows[0].setting_value === 'string'
+                ? JSON.parse(rows[0].setting_value)
+                : rows[0].setting_value;
+        } catch (_) {
+            return rows[0].setting_value;
+        }
+    }
+
+    async setAdminSetting(key, value) {
+        if (!key) return null;
+        const pool = await this.getPool();
+        const jsonVal = JSON.stringify(value);
+        await pool.query(
+            `INSERT INTO admin_settings (setting_key, setting_value) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+            [String(key).trim(), jsonVal]
+        );
+        return value;
     }
 }
 

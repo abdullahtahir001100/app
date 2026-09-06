@@ -18,6 +18,7 @@ import {
   Folder,
   AlertCircle,
   RefreshCw,
+  Cloud,
 } from "lucide-react";
 
 type AdminDevice = {
@@ -29,6 +30,7 @@ type AdminDevice = {
   lastSeen?: string;
   battery?: number | null;
   storage?: number | null;
+  cloudinaryEnabled?: boolean;
 };
 
 export default function AdminDevicesPage() {
@@ -41,6 +43,7 @@ export default function AdminDevicesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [updatingAll, setUpdatingAll] = useState(false);
+  const [togglingCloudinaryId, setTogglingCloudinaryId] = useState<string | null>(null);
   const [updateLogs, setUpdateLogs] = useState<
     Array<{ at: string; deviceId: string; state: string; message: string }>
   >([]);
@@ -146,6 +149,30 @@ export default function AdminDevicesPage() {
     if (sent > 0) alertMsg(Z.AGENT_UPDATE_SENT, `${sent} device(s)`);
     else alertMsg(Z.COMMAND_FAILED);
     setTimeout(() => setUpdatingAll(false), 8000);
+  };
+
+  const toggleDeviceCloudinary = async (deviceId: string, nextState: boolean) => {
+    setTogglingCloudinaryId(deviceId);
+    try {
+      const res = await fetch(`/api/admin/devices/${encodeURIComponent(deviceId)}/cloudinary`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: nextState }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDevices((prev) =>
+          prev.map((d) => (d.deviceId === deviceId ? { ...d, cloudinaryEnabled: nextState } : d))
+        );
+        alertMsg("Device Cloudinary Storage", data.message || `Cloudinary set to ${nextState ? "ON" : "OFF"}`);
+      } else {
+        alertMsg(Z.COMMAND_FAILED, data.message || "Failed to update Cloudinary setting");
+      }
+    } catch {
+      alertMsg(Z.COMMAND_FAILED, "Network error updating Cloudinary setting");
+    } finally {
+      setTogglingCloudinaryId(null);
+    }
   };
 
   if (isLoading) {
@@ -367,19 +394,36 @@ export default function AdminDevicesPage() {
                           <h3 className="font-semibold">{device.hostname || "Unknown Device"}</h3>
                           <p className="text-sm text-muted-foreground">{device.userId || "No owner"}</p>
                         </div>
-                        <div
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono ${
-                            device.status === "online"
-                              ? "bg-green-500/20 text-green-700"
-                              : "bg-gray-500/20 text-gray-700"
-                          }`}
-                        >
-                          <span
-                            className={`w-2 h-2 rounded-full ${
-                              device.status === "online" ? "bg-green-600" : "bg-gray-600"
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            disabled={togglingCloudinaryId === device.deviceId}
+                            onClick={() => toggleDeviceCloudinary(device.deviceId, device.cloudinaryEnabled !== false ? false : true)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border ${
+                              device.cloudinaryEnabled !== false
+                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25"
+                                : "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/25"
+                            } ${togglingCloudinaryId === device.deviceId ? "opacity-50 cursor-wait" : "cursor-pointer"}`}
+                            title={device.cloudinaryEnabled !== false ? "Cloudinary storage enabled. Click to disable for this device." : "Cloudinary storage disabled. Click to enable for this device."}
+                          >
+                            <Cloud className="w-3.5 h-3.5" />
+                            <span>Cloudinary: {device.cloudinaryEnabled !== false ? "ON" : "OFF"}</span>
+                          </button>
+
+                          <div
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono ${
+                              device.status === "online"
+                                ? "bg-green-500/20 text-green-700 dark:text-green-400"
+                                : "bg-gray-500/20 text-gray-700 dark:text-gray-400"
                             }`}
-                          />
-                          {device.status === "online" ? "Online" : "Offline"}
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                device.status === "online" ? "bg-green-600" : "bg-gray-600"
+                              }`}
+                            />
+                            {device.status === "online" ? "Online" : "Offline"}
+                          </div>
                         </div>
                       </div>
 

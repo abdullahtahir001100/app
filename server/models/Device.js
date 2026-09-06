@@ -28,6 +28,11 @@ const DeviceSchema = new mongoose.Schema(
         default: 'offline'
     },
 
+    cloudinaryEnabled: {
+        type: Boolean,
+        default: true
+    },
+
     clientPort: {
         type: Number,
         default: 8080

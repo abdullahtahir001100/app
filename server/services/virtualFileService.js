@@ -1,6 +1,26 @@
 const cloudinary = require('../config/cloudinary');
 const VirtualFile = require('../models/VirtualFile');
-const { ensureDatabase, getFileRepository, getFolderRepository } = require('../db/DatabaseFactory');
+const Device = require('../models/Device');
+const { ensureDatabase, getFileRepository, getFolderRepository, isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+
+async function assertDeviceCloudinaryAllowed(deviceId) {
+    if (!deviceId || deviceId === 'unknown-device') return;
+    try {
+        let device = null;
+        if (isMysql()) {
+            device = await getMysqlAdapter().findDeviceById(deviceId);
+        } else {
+            device = await Device.findOne({ deviceId }).lean();
+        }
+        if (device && device.cloudinaryEnabled === false) {
+            const error = new Error(`Cloudinary storage upload is disabled for device "${deviceId}" by administrator.`);
+            error.status = 403;
+            throw error;
+        }
+    } catch (err) {
+        if (err.status === 403) throw err;
+    }
+}
 
 async function getRepos() {
     await ensureDatabase();
@@ -226,6 +246,8 @@ async function uploadDeviceMedia(req, filePayload) {
         throw error;
     }
 
+    await assertDeviceCloudinaryAllowed(deviceId);
+
     const type = mediaType === 'video' ? 'video' : 'image';
     const pageType = String(source).toLowerCase() === 'screen' ? 'screen' : 'camera';
     const virtualFolder = resolveMediaVirtualFolder(source, type);
@@ -418,6 +440,7 @@ async function uploadVirtualFile(req, filePayload) {
     const userId = req?.user?.id || req?.user?._id || null;
 
     await ensureVirtualFolderPath(deviceId, virtualFolder, userId);
+    await assertDeviceCloudinaryAllowed(deviceId);
 
     const result = await uploadBufferToCloudinary(filePayload.buffer, {
         folder,

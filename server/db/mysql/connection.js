@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS devices (
     user_id VARCHAR(64) NOT NULL DEFAULT '',
     platform VARCHAR(64) NOT NULL DEFAULT 'unknown',
     status VARCHAR(32) NOT NULL DEFAULT 'offline',
+    cloudinary_enabled TINYINT(1) DEFAULT 1,
     client_port INT DEFAULT 0,
     local_ip VARCHAR(128) DEFAULT '',
     public_ip VARCHAR(128) DEFAULT '',
@@ -232,6 +233,15 @@ CREATE TABLE IF NOT EXISTS sms_messages (
     INDEX idx_sms_device (device_id),
     INDEX idx_sms_user (user_id),
     INDEX idx_sms_time (timestamp)
+);
+
+CREATE TABLE IF NOT EXISTS admin_settings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    setting_key VARCHAR(128) UNIQUE NOT NULL,
+    setting_value JSON,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_setting_key (setting_key)
 );
 `;
 
@@ -501,7 +511,8 @@ async function initializeMysqlTables(targetPool) {
             `ALTER TABLE users ADD COLUMN password_reset_otp_expires_at DATETIME NULL`,
             `ALTER TABLE users ADD COLUMN admin_pin_hash TEXT`,
             `ALTER TABLE users ADD INDEX idx_user_google (google_id)`,
-            `ALTER TABLE users ADD INDEX idx_user_pairing (pairing_token, pairing_user_id)`
+            `ALTER TABLE users ADD INDEX idx_user_pairing (pairing_token, pairing_user_id)`,
+            `ALTER TABLE devices ADD COLUMN cloudinary_enabled TINYINT(1) DEFAULT 1`
         ];
         for (const migration of migrations) {
             try {
