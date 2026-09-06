@@ -401,6 +401,42 @@ async function upsertGoogleUser(profile) {
         throw error;
     }
 
+    if (isMysql()) {
+        const adapter = getMysqlAdapter();
+        let user = await adapter.findUserByGoogleId(googleId);
+        if (!user && normalized) {
+            user = await adapter.findUserByEmail(normalized);
+        }
+
+        if (!user) {
+            const passwordHashValue = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 12);
+            user = await adapter.createUser({
+                email: normalized,
+                passwordHash: passwordHashValue,
+                name: String(profile.name || profile.given_name || normalized.split('@')[0] || 'Google User').trim(),
+                provider: 'google',
+                googleId,
+                avatarUrl: String(profile.picture || '').trim(),
+                emailVerified: true,
+                role: 'user',
+                pairingToken: await generateUniqueUserField('pairingToken'),
+                pairingUserId: await generateUniqueUserField('pairingUserId')
+            });
+        } else {
+            const updates = {
+                provider: 'google',
+                googleId,
+                emailVerified: true,
+                avatarUrl: String(profile.picture || user.avatarUrl || '').trim()
+            };
+            if (!user.name && profile.name) updates.name = String(profile.name).trim();
+            user = await adapter.updateUser(user._id || user.id, updates);
+            user = await ensureUserPairingFields(user);
+        }
+
+        return user;
+    }
+
     let user = await User.findOne({ $or: [{ googleId }, { email: normalized }] });
 
     if (!user) {
@@ -440,17 +476,26 @@ async function requestPasswordReset(email) {
         throw error;
     }
 
-    const user = await User.findOne({ email: normalized });
+    const user = isMysql()
+        ? await getMysqlAdapter().findUserByEmail(normalized)
+        : await User.findOne({ email: normalized });
     // Always look successful to the client so emails cannot be enumerated.
     const generic = { success: true, message: 'If that email exists, a reset code was sent.' };
     if (!user) return generic;
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpHash = await bcrypt.hash(otp, 10);
-    await User.findByIdAndUpdate(user._id, {
-        passwordResetOtpHash: otpHash,
-        passwordResetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
-    });
+    if (isMysql()) {
+        await getMysqlAdapter().updateUser(user._id || user.id, {
+            passwordResetOtpHash: otpHash,
+            passwordResetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        });
+    } else {
+        await User.findByIdAndUpdate(user._id, {
+            passwordResetOtpHash: otpHash,
+            passwordResetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        });
+    }
 
     await sendPasswordResetOtp({
         to: user.email,
@@ -463,7 +508,9 @@ async function requestPasswordReset(email) {
 
 async function verifyPasswordResetOtp(email, otp) {
     const normalized = String(email || '').trim().toLowerCase();
-    const user = await User.findOne({ email: normalized });
+    const user = isMysql()
+        ? await getMysqlAdapter().findUserByEmail(normalized)
+        : await User.findOne({ email: normalized });
     if (!user?.passwordResetOtpHash || !user.passwordResetOtpExpiresAt) {
         const error = new Error('Invalid or expired verification code.');
         error.status = 401;
@@ -483,10 +530,17 @@ async function verifyPasswordResetOtp(email, otp) {
         throw error;
     }
 
-    await User.findByIdAndUpdate(user._id, {
-        passwordResetOtpHash: '',
-        passwordResetOtpExpiresAt: null
-    });
+    if (isMysql()) {
+        await getMysqlAdapter().updateUser(user._id || user.id, {
+            passwordResetOtpHash: '',
+            passwordResetOtpExpiresAt: null
+        });
+    } else {
+        await User.findByIdAndUpdate(user._id, {
+            passwordResetOtpHash: '',
+            passwordResetOtpExpiresAt: null
+        });
+    }
 
     return user;
 }
@@ -502,7 +556,11 @@ async function resetPassword(email, otp, newPassword) {
     }
 
     const passwordHash = await bcrypt.hash(plain, 12);
-    await User.findByIdAndUpdate(user._id, { passwordHash });
+    if (isMysql()) {
+        await getMysqlAdapter().updateUser(user._id || user.id, { passwordHash });
+    } else {
+        await User.findByIdAndUpdate(user._id, { passwordHash });
+    }
     return true;
 }
 
@@ -516,6 +574,37 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
         const error = new Error('deviceId is required.');
         error.status = 400;
         throw error;
+    }
+
+    if (isMysql()) {
+        const adapter = getMysqlAdapter();
+        const existing = await adapter.findAgentCredential(cleanDeviceId);
+        if (existing && String(existing.userId) !== String(userId)) {
+            const error = new Error('This device is already registered to another account.');
+            error.status = 409;
+            throw error;
+        }
+
+        const agentToken = generateAgentToken();
+        const tokenHash = await bcrypt.hash(agentToken, 12);
+
+        const doc = await adapter.upsertAgentCredential({
+            userId,
+            deviceId: cleanDeviceId,
+            label: String(label || 'My Agent').trim(),
+            tokenHash,
+            lastConnectedAt: new Date()
+        });
+
+        await adapter.upsertDevice(cleanDeviceId, {
+            userId,
+            deviceId: cleanDeviceId,
+            status: 'offline',
+            lastSeen: new Date()
+        });
+        await adapter.deleteDevices({ deviceId: cleanDeviceId, notUserId: userId });
+
+        return { credential: doc, agentToken };
     }
 
     const existing = await AgentCredential.findOne({ deviceId: cleanDeviceId });
@@ -577,9 +666,14 @@ async function verifyAgentToken(deviceId, agentToken) {
         return cached.cred;
     }
 
-    const cred = await AgentCredential.findOne({ deviceId: cleanDeviceId })
-        .maxTimeMS(4000)
-        .lean();
+    let cred;
+    if (isMysql()) {
+        cred = await getMysqlAdapter().findAgentCredential(cleanDeviceId);
+    } else {
+        cred = await AgentCredential.findOne({ deviceId: cleanDeviceId })
+            .maxTimeMS(4000)
+            .lean();
+    }
     if (!cred || !cred.tokenHash) return null;
     const ok = await bcrypt.compare(cleanToken, cred.tokenHash);
     if (!ok) return null;
@@ -595,10 +689,14 @@ async function verifyAgentToken(deviceId, agentToken) {
     }
 
     // Fire-and-forget lastConnectedAt update so WS upgrade is not blocked.
-    AgentCredential.updateOne(
-        { _id: cred._id },
-        { $set: { lastConnectedAt: new Date() } }
-    ).catch(() => {});
+    if (isMysql()) {
+        getMysqlAdapter().updateAgentCredentialLastConnected(cleanDeviceId).catch(() => {});
+    } else {
+        AgentCredential.updateOne(
+            { _id: cred._id },
+            { $set: { lastConnectedAt: new Date() } }
+        ).catch(() => {});
+    }
 
     return cred;
 }
@@ -614,16 +712,21 @@ async function pairAgent(body, req) {
         throw error;
     }
 
-    let user = await User.findOne({ pairingToken, pairingUserId }).lean();
-    if (!user) {
-        // Legacy numeric pairing fields
-        const asNumToken = Number(pairingToken);
-        const asNumUser = Number(pairingUserId);
-        if (Number.isFinite(asNumToken) && Number.isFinite(asNumUser)) {
-            user = await User.findOne({
-                pairingToken: asNumToken,
-                pairingUserId: asNumUser
-            }).lean();
+    let user;
+    if (isMysql()) {
+        user = await getMysqlAdapter().findUserByPairing(pairingToken, pairingUserId);
+    } else {
+        user = await User.findOne({ pairingToken, pairingUserId }).lean();
+        if (!user) {
+            // Legacy numeric pairing fields
+            const asNumToken = Number(pairingToken);
+            const asNumUser = Number(pairingUserId);
+            if (Number.isFinite(asNumToken) && Number.isFinite(asNumUser)) {
+                user = await User.findOne({
+                    pairingToken: asNumToken,
+                    pairingUserId: asNumUser
+                }).lean();
+            }
         }
     }
 
@@ -631,6 +734,58 @@ async function pairAgent(body, req) {
         const error = new Error('Invalid pairing token or user ID.');
         error.status = 404;
         throw error;
+    }
+
+    const userIdStr = String(user._id || user.id);
+
+    if (isMysql()) {
+        const adapter = getMysqlAdapter();
+        const existingCred = await adapter.findAgentCredential(deviceId);
+        if (existingCred && String(existingCred.userId) !== userIdStr) {
+            const error = new Error('This device is already paired to another account.');
+            error.status = 409;
+            throw error;
+        }
+
+        const existingDevice = await adapter.findDeviceById(deviceId);
+        if (existingDevice && String(existingDevice.userId) !== userIdStr) {
+            const error = new Error('This device is already paired to another account.');
+            error.status = 409;
+            throw error;
+        }
+
+        const agentToken = crypto.randomBytes(32).toString('hex');
+        const tokenHash = await bcrypt.hash(agentToken, 12);
+
+        await adapter.upsertAgentCredential({
+            userId: userIdStr,
+            deviceId,
+            label: hostname,
+            tokenHash,
+            lastConnectedAt: new Date()
+        });
+
+        const deviceUpdate = {
+            userId: userIdStr,
+            deviceId,
+            hostname,
+            status: 'offline',
+            lastSeen: new Date(),
+        };
+        if (String(body.platform || '').toLowerCase() === 'android') {
+            deviceUpdate.platform = 'android';
+        }
+
+        await adapter.upsertDevice(deviceId, deviceUpdate);
+        await adapter.deleteDevices({ deviceId, notUserId: userIdStr });
+
+        const { resolvePublicGatewayUrl } = require('../utils/publicUrls');
+        const gatewayUrl = resolvePublicGatewayUrl(req, body.gatewayUrl);
+
+        return {
+            agentToken,
+            gatewayUrl,
+        };
     }
 
     const existingCred = await AgentCredential.findOne({ deviceId }).lean();
@@ -803,7 +958,9 @@ async function verifyAdminUnlockPin(userId, pin) {
         throw err;
     }
 
-    const user = await User.findById(userId);
+    const user = isMysql()
+        ? await getMysqlAdapter().findUserById(userId)
+        : await User.findById(userId);
     if (!user || user.role !== 'admin') {
         const err = new Error('Admin access required.');
         err.status = 403;
@@ -817,8 +974,13 @@ async function verifyAdminUnlockPin(userId, pin) {
         const bootstrap = bootstrapAdminPin();
         if (bootstrap && bootstrap === digits) {
             ok = true;
-            user.adminPinHash = await bcrypt.hash(digits, 12);
-            await user.save();
+            const newPinHash = await bcrypt.hash(digits, 12);
+            if (isMysql()) {
+                await getMysqlAdapter().updateUser(userId, { adminPinHash: newPinHash });
+            } else {
+                user.adminPinHash = newPinHash;
+                await user.save();
+            }
         }
     }
 

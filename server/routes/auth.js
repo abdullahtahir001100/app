@@ -1,5 +1,6 @@
 const express = require('express');
 const User = require('../models/User');
+const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const {
     registerUser,
     loginUser,
@@ -248,7 +249,9 @@ router.get('/session', attachUser, async (req, res) => {
         });
     }
 
-    const user = await User.findById(payload.sub).lean();
+    const user = isMysql()
+        ? await getMysqlAdapter().findUserById(payload.sub)
+        : await User.findById(payload.sub).lean();
     const adminUnlocked = payload.role === 'admin'
         ? payload.adminUnlocked === true
         : true;

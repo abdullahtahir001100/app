@@ -14,6 +14,7 @@ let connectPromise = null;
 
 function resolveProvider() {
     if (activeProvider) return activeProvider;
+    if (isMysqlConnected()) return 'mysql';
     if (process.env.DATABASE_PROVIDER) {
         return String(process.env.DATABASE_PROVIDER).trim().toLowerCase();
     }

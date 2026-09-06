@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
     const token = signUserToken(user);
     await setUserAuthSession(user, token);
     try {
-      forceLogoutUserDashboards(getConnectionRegistry(), String(user._id), "session_replaced");
+      forceLogoutUserDashboards(getConnectionRegistry(), String(user._id || user.id), "session_replaced");
     } catch {
       // registry may be unavailable in some Next-only deployments
     }
@@ -150,7 +150,9 @@ export async function GET(request: NextRequest) {
       message.includes("buffering timed out") ||
       message.includes("Server selection timed out") ||
       message.includes("ECONNREFUSED") ||
-      message.includes("ENOTFOUND")
+      message.includes("ENOTFOUND") ||
+      message.includes("ER_") ||
+      message.includes("PROTOCOL_")
     ) {
       return redirectToLogin("database-unavailable");
     }

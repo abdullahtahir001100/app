@@ -17,9 +17,27 @@ function mapUser(row) {
         authTokenHash: row.auth_token_hash || '',
         pairingToken: row.pairing_token || '',
         pairingUserId: row.pairing_user_id || '',
-        lastLoginAt: row.last_login_at,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
+        passwordResetOtpHash: row.password_reset_otp_hash || '',
+        passwordResetOtpExpiresAt: row.password_reset_otp_expires_at ? new Date(row.password_reset_otp_expires_at) : null,
+        adminPinHash: row.admin_pin_hash || '',
+        lastLoginAt: row.last_login_at ? new Date(row.last_login_at) : null,
+        createdAt: row.created_at ? new Date(row.created_at) : null,
+        updatedAt: row.updated_at ? new Date(row.updated_at) : null,
+    };
+}
+
+function mapAgentCredential(row) {
+    if (!row) return null;
+    return {
+        _id: String(row.id),
+        id: String(row.id),
+        userId: row.user_id,
+        deviceId: row.device_id,
+        label: row.label || 'My Agent',
+        tokenHash: row.token_hash || '',
+        lastConnectedAt: row.last_connected_at ? new Date(row.last_connected_at) : null,
+        createdAt: row.created_at ? new Date(row.created_at) : null,
+        updatedAt: row.updated_at ? new Date(row.updated_at) : null,
     };
 }
 
@@ -89,6 +107,16 @@ class MysqlModelAdapter {
         const [rows] = await pool.query(
             'SELECT * FROM users WHERE email = ? LIMIT 1',
             [String(email).trim().toLowerCase()]
+        );
+        return mapUser(rows[0]);
+    }
+
+    async findUserByGoogleId(googleId) {
+        if (!googleId) return null;
+        const pool = await this.getPool();
+        const [rows] = await pool.query(
+            'SELECT * FROM users WHERE google_id = ? LIMIT 1',
+            [String(googleId).trim()]
         );
         return mapUser(rows[0]);
     }
@@ -165,6 +193,18 @@ class MysqlModelAdapter {
             fields.push('role = ?');
             values.push(updates.role);
         }
+        if (updates.provider !== undefined) {
+            fields.push('provider = ?');
+            values.push(updates.provider);
+        }
+        if (updates.googleId !== undefined) {
+            fields.push('google_id = ?');
+            values.push(updates.googleId);
+        }
+        if (updates.emailVerified !== undefined) {
+            fields.push('email_verified = ?');
+            values.push(updates.emailVerified ? 1 : 0);
+        }
         if (updates.lastLoginAt !== undefined) {
             fields.push('last_login_at = ?');
             values.push(updates.lastLoginAt ? new Date(updates.lastLoginAt) : new Date());
@@ -172,6 +212,18 @@ class MysqlModelAdapter {
         if (updates.avatarUrl !== undefined) {
             fields.push('avatar_url = ?');
             values.push(updates.avatarUrl);
+        }
+        if (updates.passwordResetOtpHash !== undefined) {
+            fields.push('password_reset_otp_hash = ?');
+            values.push(updates.passwordResetOtpHash);
+        }
+        if (updates.passwordResetOtpExpiresAt !== undefined) {
+            fields.push('password_reset_otp_expires_at = ?');
+            values.push(updates.passwordResetOtpExpiresAt ? new Date(updates.passwordResetOtpExpiresAt) : null);
+        }
+        if (updates.adminPinHash !== undefined) {
+            fields.push('admin_pin_hash = ?');
+            values.push(updates.adminPinHash);
         }
 
         if (fields.length === 0) {
@@ -323,6 +375,104 @@ class MysqlModelAdapter {
             [String(userId), jsonPages]
         );
         return { userId, pages };
+    }
+
+    // ================= AGENT CREDENTIAL OPERATIONS ================= //
+    async findAgentCredential(deviceId) {
+        if (!deviceId) return null;
+        const pool = await this.getPool();
+        const [rows] = await pool.query(
+            'SELECT * FROM agent_credentials WHERE device_id = ? LIMIT 1',
+            [String(deviceId).trim()]
+        );
+        return mapAgentCredential(rows[0]);
+    }
+
+    async upsertAgentCredential(data) {
+        const pool = await this.getPool();
+        const deviceId = String(data.deviceId).trim();
+        const userId = String(data.userId);
+        const label = data.label || 'My Agent';
+        const tokenHash = data.tokenHash || '';
+        const lastConnectedAt = data.lastConnectedAt ? new Date(data.lastConnectedAt) : new Date();
+
+        await pool.query(
+            `INSERT INTO agent_credentials (user_id, device_id, label, token_hash, last_connected_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                user_id = VALUES(user_id),
+                label = VALUES(label),
+                token_hash = VALUES(token_hash),
+                last_connected_at = VALUES(last_connected_at)`,
+            [userId, deviceId, label, tokenHash, lastConnectedAt]
+        );
+
+        return this.findAgentCredential(deviceId);
+    }
+
+    async updateAgentCredentialLastConnected(deviceId) {
+        if (!deviceId) return;
+        const pool = await this.getPool();
+        await pool.query(
+            'UPDATE agent_credentials SET last_connected_at = NOW() WHERE device_id = ?',
+            [String(deviceId).trim()]
+        ).catch(() => {});
+    }
+
+    async listAgentCredentials(userId) {
+        const pool = await this.getPool();
+        const [rows] = await pool.query(
+            'SELECT * FROM agent_credentials WHERE user_id = ? ORDER BY updated_at DESC',
+            [String(userId)]
+        );
+        return rows.map(mapAgentCredential);
+    }
+
+    async listAllAgentCredentials(limit = 500) {
+        const pool = await this.getPool();
+        const [rows] = await pool.query(
+            'SELECT * FROM agent_credentials ORDER BY updated_at DESC LIMIT ?',
+            [Number(limit) || 500]
+        );
+        return rows.map(mapAgentCredential);
+    }
+
+    async countAgentCredentials() {
+        const pool = await this.getPool();
+        const [rows] = await pool.query('SELECT COUNT(*) AS cnt FROM agent_credentials');
+        return Number(rows[0]?.cnt || 0);
+    }
+
+    async deleteAgentCredentials(deviceId, notUserId) {
+        if (!deviceId) return;
+        const pool = await this.getPool();
+        if (notUserId) {
+            await pool.query(
+                'DELETE FROM agent_credentials WHERE device_id = ? AND user_id != ?',
+                [String(deviceId).trim(), String(notUserId)]
+            );
+        } else {
+            await pool.query(
+                'DELETE FROM agent_credentials WHERE device_id = ?',
+                [String(deviceId).trim()]
+            );
+        }
+    }
+
+    async deleteDevices({ deviceId, notUserId } = {}) {
+        if (!deviceId) return;
+        const pool = await this.getPool();
+        if (notUserId) {
+            await pool.query(
+                'DELETE FROM devices WHERE device_id = ? AND user_id != ?',
+                [String(deviceId).trim(), String(notUserId)]
+            );
+        } else {
+            await pool.query(
+                'DELETE FROM devices WHERE device_id = ?',
+                [String(deviceId).trim()]
+            );
+        }
     }
 }
 
