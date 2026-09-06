@@ -909,20 +909,31 @@ async function handleSocketMessage(ws, message) {
         }
 
         if (packet.type === 'event' && packet.action === 'SYSTEM_NOTIFICATION' && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
-            const Notification = require('../models/Notification');
             const ownerUserId = extractOwnerUserId(ws);
             const deviceId = extractDeviceIdFromAgentSocket(ws);
             if (ownerUserId && deviceId && packet.payload) {
                 const notif = packet.payload;
-                Notification.create({
-                    deviceId,
-                    userId: ownerUserId,
-                    app: notif.app || 'System',
-                    title: notif.title || 'Notification',
-                    message: notif.message || '',
-                    icon: notif.icon || '',
-                    category: notif.category || 'toast',
-                }).catch(() => {}); // Ignore duplicate key errors
+                const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+                if (isMysql()) {
+                    getMysqlAdapter().createNotification({
+                        deviceId,
+                        userId: ownerUserId,
+                        title: notif.title || 'Notification',
+                        message: notif.message || '',
+                        type: notif.category || 'toast',
+                    }).catch(() => {});
+                } else {
+                    const Notification = require('../models/Notification');
+                    Notification.create({
+                        deviceId,
+                        userId: ownerUserId,
+                        app: notif.app || 'System',
+                        title: notif.title || 'Notification',
+                        message: notif.message || '',
+                        icon: notif.icon || '',
+                        category: notif.category || 'toast',
+                    }).catch(() => {});
+                }
 
                 forwardPacketToDashboards(packet, activeConnections, ownerUserId);
             }
@@ -1286,25 +1297,47 @@ function handleActivityLog(ws, packet, activeConnections) {
     }
 
     const writeQueue = require('../services/writeQueue');
-    const ActivityLog = require('../models/ActivityLog');
     writeQueue.enqueue(async () => {
-        const log = new ActivityLog({
-            deviceId,
-            userId,
-            action: liveLog.action,
-            category: liveLog.category,
-            device: liveLog.device,
-            details,
-            status: liveLog.status,
-            metadata,
-            appName,
-            processName,
-            windowTitle,
-            executablePath: liveLog.executablePath,
-            duration: Math.max(0, Number(metadata.duration || packet.duration || 0)),
-        });
-        await log.save();
-        const duration = Math.max(0, Number(log.duration) || 0);
+        const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+        const durationValue = Math.max(0, Number(metadata.duration || packet.duration || 0));
+
+        if (isMysql()) {
+            await getMysqlAdapter().createActivityLog({
+                deviceId,
+                userId,
+                action: liveLog.action,
+                category: liveLog.category,
+                device: liveLog.device,
+                details,
+                status: liveLog.status,
+                metadata,
+                appName,
+                processName,
+                windowTitle,
+                executablePath: liveLog.executablePath,
+                duration: durationValue,
+            });
+        } else {
+            const ActivityLog = require('../models/ActivityLog');
+            const log = new ActivityLog({
+                deviceId,
+                userId,
+                action: liveLog.action,
+                category: liveLog.category,
+                device: liveLog.device,
+                details,
+                status: liveLog.status,
+                metadata,
+                appName,
+                processName,
+                windowTitle,
+                executablePath: liveLog.executablePath,
+                duration: durationValue,
+            });
+            await log.save();
+        }
+
+        const duration = durationValue;
         const closed = String(liveLog.action) === 'app_closed';
         if (closed && duration > 0 && (appName || processName) && userId) {
             const { syncAppHistory } = require('../services/historySyncService');

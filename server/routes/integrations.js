@@ -659,29 +659,30 @@ router.post('/db-config', attachUser, requirePagePermission('settings.custom_db'
         // Persist to .env
         try {
             const envPath = path.resolve(process.cwd(), '.env');
-            if (fs.existsSync(envPath)) {
-                let envContent = fs.readFileSync(envPath, 'utf-8');
-                const updateOrAppend = (key, val) => {
-                    const regex = new RegExp(`^${key}=.*$`, 'm');
-                    if (regex.test(envContent)) {
-                        envContent = envContent.replace(regex, `${key}=${val}`);
-                    } else {
-                        envContent += `\n${key}=${val}`;
-                    }
-                };
+            let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+            const updateOrAppend = (key, val) => {
+                const regex = new RegExp(`^${key}=.*$`, 'm');
+                if (regex.test(envContent)) {
+                    envContent = envContent.replace(regex, `${key}=${val}`);
+                } else {
+                    envContent += (envContent.length > 0 && !envContent.endsWith('\n') ? '\n' : '') + `${key}=${val}\n`;
+                }
+            };
 
-                updateOrAppend('DATABASE_PROVIDER', chosenProvider);
-                if (mongodbUri) updateOrAppend('MONGODB_URI', mongodbUri.trim());
-                updateOrAppend('MYSQL_CONFIG_MODE', mysqlMode);
-                if (effectiveMysqlUri) updateOrAppend('MYSQL_URL', effectiveMysqlUri);
-                if (process.env.MYSQL_HOST) updateOrAppend('MYSQL_HOST', process.env.MYSQL_HOST);
-                if (process.env.MYSQL_PORT) updateOrAppend('MYSQL_PORT', process.env.MYSQL_PORT);
-                if (process.env.MYSQL_DATABASE) updateOrAppend('MYSQL_DATABASE', process.env.MYSQL_DATABASE);
-                if (process.env.MYSQL_USER) updateOrAppend('MYSQL_USER', process.env.MYSQL_USER);
-                if (process.env.MYSQL_PASSWORD !== undefined) updateOrAppend('MYSQL_PASSWORD', process.env.MYSQL_PASSWORD);
-
-                fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf-8');
+            updateOrAppend('DATABASE_PROVIDER', chosenProvider);
+            if (chosenProvider === 'mysql') {
+                process.env.DATABASE_PROVIDER = 'mysql';
             }
+            if (mongodbUri) updateOrAppend('MONGODB_URI', mongodbUri.trim());
+            updateOrAppend('MYSQL_CONFIG_MODE', mysqlMode);
+            if (effectiveMysqlUri) updateOrAppend('MYSQL_URL', effectiveMysqlUri);
+            if (process.env.MYSQL_HOST) updateOrAppend('MYSQL_HOST', process.env.MYSQL_HOST);
+            if (process.env.MYSQL_PORT) updateOrAppend('MYSQL_PORT', process.env.MYSQL_PORT);
+            if (process.env.MYSQL_DATABASE) updateOrAppend('MYSQL_DATABASE', process.env.MYSQL_DATABASE);
+            if (process.env.MYSQL_USER) updateOrAppend('MYSQL_USER', process.env.MYSQL_USER);
+            if (process.env.MYSQL_PASSWORD !== undefined) updateOrAppend('MYSQL_PASSWORD', process.env.MYSQL_PASSWORD);
+
+            fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf-8');
         } catch (fsErr) {
             console.warn('Could not update .env file:', fsErr);
         }

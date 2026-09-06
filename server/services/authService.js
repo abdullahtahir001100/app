@@ -310,6 +310,16 @@ async function updateUserPairingFields(userId, body = {}) {
         throw error;
     }
 
+    if (isMysql()) {
+        const user = await getMysqlAdapter().updateUser(userId, { pairingToken, pairingUserId });
+        if (!user) {
+            const error = new Error('User not found.');
+            error.status = 404;
+            throw error;
+        }
+        return user;
+    }
+
     const conflict = await User.findOne({
         _id: { $ne: userId },
         $or: [{ pairingToken }, { pairingUserId }],

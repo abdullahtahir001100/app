@@ -205,13 +205,16 @@ nextApp.prepare().then(() => {
         }
     });
 
-    // Mongo in background — never block accept/upgrade.
+    // Connect active database in background — never block accept/upgrade.
     void connectDB().then((ok) => {
-        global.__ZENVORA_MONGO_OK = Boolean(ok);
+        const { getActiveProvider } = require('./server/db/DatabaseFactory');
+        const provider = getActiveProvider().toUpperCase();
+        global.__ZENVORA_MONGO_OK = Boolean(ok && provider === 'MONGO');
+        global.__ZENVORA_DB_OK = Boolean(ok);
         liveLogBus.push({
-            channel: 'mongo',
+            channel: 'system',
             level: ok ? 'info' : 'error',
-            message: ok ? 'MongoDB connected' : 'MongoDB unavailable — auth/data limited',
+            message: ok ? `Database (${provider}) connected successfully` : `Database (${provider}) unavailable`,
         });
     });
 }).catch((err) => {

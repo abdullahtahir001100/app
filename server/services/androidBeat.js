@@ -44,6 +44,27 @@ async function recordAndroidBeat(deviceId, extras = {}) {
         update.$setOnInsert = { userId: extras.userId, deviceId: id };
     }
 
+    const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+    if (isMysql()) {
+        try {
+            const data = {
+                platform: extras.platform || 'android',
+                status: 'away',
+                lastSeen: now,
+            };
+            if (extras.hostname) data.hostname = extras.hostname;
+            if (extras.battery != null && Number.isFinite(Number(extras.battery))) {
+                data.battery = Math.max(0, Math.min(100, Number(extras.battery)));
+            }
+            if (extras.network) data.network = String(extras.network);
+            if (extras.localIp) data.localIp = String(extras.localIp);
+            if (extras.userId) data.userId = String(extras.userId);
+            return await getMysqlAdapter().upsertDevice(id, data);
+        } catch (_) {
+            return null;
+        }
+    }
+
     try {
         return await Device.findOneAndUpdate(
             { deviceId: id },

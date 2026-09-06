@@ -10,12 +10,14 @@ let lastCacheTime = 0;
 const CACHE_TTL_MS = 15_000;
 
 function getDefaultSettings() {
+    const { resolveProvider } = require('../db/DatabaseFactory');
+    const currentProvider = resolveProvider();
     return {
-        syncToAdminDbEnabled: true,
+        syncToAdminDbEnabled: false,
         excludedDeviceIds: [],
-        adminDbProvider: process.env.DATABASE_PROVIDER || (process.env.MYSQL_URL || process.env.MYSQL_HOST ? 'mysql' : 'mongo'),
+        adminDbProvider: currentProvider,
         adminDbConfig: {
-            provider: process.env.DATABASE_PROVIDER || (process.env.MYSQL_URL || process.env.MYSQL_HOST ? 'mysql' : 'mongo'),
+            provider: currentProvider,
             mongodbUri: process.env.MONGODB_URI || '',
             mysqlHost: process.env.MYSQL_HOST || '127.0.0.1',
             mysqlPort: process.env.MYSQL_PORT || '3306',

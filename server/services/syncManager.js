@@ -21,6 +21,9 @@ class SyncManager {
      * Check if a write should mirror to the Admin Database
      */
     async shouldSyncToAdmin(deviceId) {
+        // Strict Single-Database Policy:
+        // By default, exactly ONE database is active. We never duplicate data into MongoDB when MySQL is active,
+        // nor into MySQL when MongoDB is active, ensuring complete privacy and zero data mixing.
         const syncEnabled = await isAdminSyncEnabled();
         if (!syncEnabled) return false;
 
@@ -31,11 +34,19 @@ class SyncManager {
 
         const settings = await getAdminSettings();
         const activeProvider = isMysql() ? 'mysql' : 'mongo';
-        const adminProvider = settings.adminDbProvider || 'mongo';
+        const adminProvider = settings.adminDbProvider || activeProvider;
 
-        // If the active database is already the admin DB, primary write recorded it.
-        // Skip duplicate write.
+        // If the admin DB provider is the same as the active provider, primary write handles it.
         if (activeProvider === adminProvider) {
+            return false;
+        }
+
+        // Only sync if explicit external admin database credentials are provided
+        const adminConfig = settings.adminDbConfig || {};
+        if (adminProvider === 'mongo' && !adminConfig.mongodbUri) {
+            return false;
+        }
+        if (adminProvider === 'mysql' && !adminConfig.mysqlUri && !adminConfig.mysqlHost) {
             return false;
         }
 
