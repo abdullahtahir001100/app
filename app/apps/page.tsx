@@ -24,6 +24,7 @@ import {
   Cpu,
   ChevronRight,
   ExternalLink,
+  Lock,
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
@@ -56,6 +57,8 @@ const WINGET_PRESETS = [
 
 export default function InstallAppsPage() {
   const { allowed, loading } = useFeatureAccess("apps");
+  const installerAccess = useFeatureAccess("apps.installer");
+  const screenAccess = useFeatureAccess("apps.screen");
   const searchParams = useSearchParams();
   const { devices, dispatch, subscribe, resolveTarget, ensureConnected } = useGateway();
   const [selectedDevice, setSelectedDevice] = useState(searchParams.get("device") || "");
@@ -362,6 +365,9 @@ export default function InstallAppsPage() {
                 >
                   <Layers className="w-3.5 h-3.5" />
                   Installers & Jobs
+                  {!installerAccess.allowed && !installerAccess.loading && (
+                    <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -374,6 +380,9 @@ export default function InstallAppsPage() {
                 >
                   <Monitor className="w-3.5 h-3.5" />
                   Live Remote Screen
+                  {!screenAccess.allowed && !screenAccess.loading && (
+                    <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+                  )}
                 </button>
               </div>
             </div>
@@ -382,6 +391,16 @@ export default function InstallAppsPage() {
 
         {/* Tab 1: Installers, Winget & Jobs */}
         {activeTab === "apps" && (
+          !installerAccess.allowed && !installerAccess.loading ? (
+            <div className="flex-1 p-6">
+              <PremiumGate
+                featureKey="apps.installer"
+                featureTitle="Application Deployment & Push"
+                featureDescription="Upload up to 500MB chunked installers, trigger automated silent Winget packages, and manage software batches remotely."
+                onUnlocked={() => window.location.reload()}
+              />
+            </div>
+          ) : (
           <div className="flex-1 p-6 overflow-auto">
             <div className="mx-auto max-w-6xl space-y-6">
               {/* Section 1: 500MB Chunked File Upload Card */}
@@ -673,10 +692,21 @@ export default function InstallAppsPage() {
               </Card>
             </div>
           </div>
+          )
         )}
 
         {/* Tab 2: Embedded Live Screen Session (No need to navigate to /screen) */}
         {activeTab === "screen" && (
+          !screenAccess.allowed && !screenAccess.loading ? (
+            <div className="flex-1 p-6">
+              <PremiumGate
+                featureKey="apps.screen"
+                featureTitle="Live App Screen Streaming"
+                featureDescription="Stream live ultra-low latency desktop and monitor video directly in your browser."
+                onUnlocked={() => window.location.reload()}
+              />
+            </div>
+          ) : (
           <div className="flex-1 flex flex-col min-h-0 p-4">
             {selectedDevice ? (
               <div className="flex-1 flex flex-col min-h-0 border border-border rounded-xl overflow-hidden shadow-2xl bg-black">
@@ -697,6 +727,7 @@ export default function InstallAppsPage() {
               </div>
             )}
           </div>
+          )
         )}
       </main>
     </div>

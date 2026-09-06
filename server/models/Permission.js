@@ -43,6 +43,20 @@ const PAGE_KEYS = [
     'phone.contacts',
     'phone.lock',
 
+    // Settings Suite Granular Tabs
+    'settings.custom_db',
+    'settings.cloudinary',
+    'settings.ai',
+    'settings.security',
+
+    // Usage Suite Granular Tabs
+    'usage.charts',
+    'usage.3d',
+
+    // Apps Suite Granular Tabs
+    'apps.installer',
+    'apps.screen',
+
     // System Administration
     'admin',
     'devices.any',
@@ -58,13 +72,13 @@ const PAGE_LABELS = {
     files: 'File Manager (Premium)',
     shell: 'Shell Control (Premium)',
     ops: 'Agent Ops (Premium)',
-    apps: 'Install Apps (Premium)',
+    apps: 'Install Apps Suite (All Tabs)',
     fleet: 'Fleet Grid (Premium)',
     cockpit: 'Cockpit Control (Premium)',
     notifications: 'Notifications (Premium)',
     console: 'Live Console (Premium)',
     architecture: 'Architecture & Diagrams (Premium)',
-    usage: 'Usage Metrics (Premium)',
+    usage: 'Usage Metrics Suite (All Tabs)',
 
     // Granular Logs Capabilities
     logs: 'Activity Logs Suite (All Tabs)',
@@ -79,6 +93,20 @@ const PAGE_LABELS = {
     'phone.sms': 'SMS Messages Tab (Add-on)',
     'phone.contacts': 'Contacts Tab (Add-on)',
     'phone.lock': 'Remote Device Lock Tab (Add-on)',
+
+    // Granular Settings Capabilities
+    'settings.custom_db': 'Custom Database Tab (Add-on)',
+    'settings.cloudinary': 'Cloudinary Storage Tab (Add-on)',
+    'settings.ai': 'AI Copilot Engine Tab (Add-on)',
+    'settings.security': 'Advanced Security Tab (Add-on)',
+
+    // Granular Usage Capabilities
+    'usage.charts': 'Usage Charts Tab (Add-on)',
+    'usage.3d': 'Usage 3D Engine Tab (Add-on)',
+
+    // Granular Apps Capabilities
+    'apps.installer': 'App Installer Tab (Add-on)',
+    'apps.screen': 'Live App Screen Tab (Add-on)',
 
     admin: 'Admin Dashboard (Master)',
     'devices.any': 'All Devices Access (Cross-User)',

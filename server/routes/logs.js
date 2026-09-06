@@ -8,7 +8,7 @@ const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const syncManager = require('../services/syncManager');
 
 // Get activity logs with filters
-router.get('/activity', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/activity', attachUser, requirePagePermission('logs.activity'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, category, status, limit = 50, offset = 0 } = req.query;
 
@@ -54,7 +54,7 @@ router.get('/activity', attachUser, requirePagePermission('logs'), requireUserId
 });
 
 // Get browser history with filters
-router.get('/browser-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/browser-history', attachUser, requirePagePermission('logs.browser'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, browser, domain, search, q, order = 'desc', limit = 100, offset = 0 } = req.query;
         const term = String(search || q || '').trim();
@@ -116,7 +116,7 @@ router.get('/browser-history', attachUser, requirePagePermission('logs'), requir
 });
 
 // Get app history with filters
-router.get('/app-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/app-history', attachUser, requirePagePermission('logs.apps'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, appType, limit = 100, offset = 0 } = req.query;
 
@@ -160,7 +160,7 @@ router.get('/app-history', attachUser, requirePagePermission('logs'), requireUse
 });
 
 // Create activity log
-router.post('/activity', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/activity', attachUser, requirePagePermission('logs.activity'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, action, category, device, details, status, metadata } = req.body;
 
@@ -202,7 +202,7 @@ router.post('/activity', attachUser, requirePagePermission('logs'), requireUserI
 });
 
 // Create browser history entries (from Rust agent)
-router.post('/browser-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/browser-history', attachUser, requirePagePermission('logs.browser'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, entries } = req.body;
 
@@ -246,7 +246,7 @@ router.post('/browser-history', attachUser, requirePagePermission('logs'), requi
 });
 
 // Create app history entries (from Rust agent)
-router.post('/app-history', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.post('/app-history', attachUser, requirePagePermission('logs.apps'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, entries } = req.body;
 
@@ -289,7 +289,7 @@ router.post('/app-history', attachUser, requirePagePermission('logs'), requireUs
 });
 
 // Get browser statistics
-router.get('/browser-stats', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/browser-stats', attachUser, requirePagePermission('logs.browser'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
 
@@ -320,7 +320,7 @@ router.get('/browser-stats', attachUser, requirePagePermission('logs'), requireU
 
 // Get most visited domains
 
-router.get('/activity-stats', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/activity-stats', attachUser, requirePagePermission('logs.activity'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
         const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
@@ -346,7 +346,7 @@ router.get('/activity-stats', attachUser, requirePagePermission('logs'), require
 
 const mongoose = require('mongoose');
 
-router.get('/top-domains', attachUser, requirePagePermission('logs'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
+router.get('/top-domains', attachUser, requirePagePermission('logs.browser'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
 
@@ -385,7 +385,7 @@ router.get('/top-domains', attachUser, requirePagePermission('logs'), requireUse
 });
 
 
-router.get('/top-apps', attachUser, requirePagePermission('logs'), requireDeviceAccess, async (req, res) => {
+router.get('/top-apps', attachUser, requirePagePermission('logs.apps'), requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
 
@@ -427,7 +427,7 @@ router.get('/top-apps', attachUser, requirePagePermission('logs'), requireDevice
 
 
 
-router.get('/call-logs', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/call-logs', attachUser, requirePagePermission('phone.calls'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, limit = 100, offset = 0 } = req.query;
 
@@ -449,7 +449,7 @@ router.get('/call-logs', attachUser, requirePagePermission('logs'), requireUserI
     }
 });
 
-router.get('/sms', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/sms', attachUser, requirePagePermission('phone.sms'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, limit = 100, offset = 0 } = req.query;
 
@@ -471,7 +471,7 @@ router.get('/sms', attachUser, requirePagePermission('logs'), requireUserIdOwner
     }
 });
 
-router.get('/contacts', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/contacts', attachUser, requirePagePermission('phone.contacts'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, limit = 300, offset = 0 } = req.query;
 
@@ -493,7 +493,7 @@ router.get('/contacts', attachUser, requirePagePermission('logs'), requireUserId
     }
 });
 
-router.get('/usage', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/usage', attachUser, requirePagePermission('logs.usage'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, from, to } = req.query;
         const start = from ? new Date(String(from)) : new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -572,7 +572,7 @@ router.get('/usage', attachUser, requirePagePermission('logs'), requireUserIdOwn
 });
 
 /** App drill-down: activity + browser visits related to one app name (Chrome, etc.). */
-router.get('/usage/detail', attachUser, requirePagePermission('logs'), requireUserIdOwnership, async (req, res) => {
+router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), requireUserIdOwnership, async (req, res) => {
     try {
         const deviceId = req.query.deviceId ? String(req.query.deviceId) : '';
         const appName = String(req.query.appName || req.query.app || '').trim();

@@ -259,6 +259,93 @@ router.put('/permissions/:userId', async (req, res) => {
     }
 });
 
+// Bulk Grant: Grant pages or all PRO features to all registered users in a single click
+router.post('/permissions/bulk-grant', async (req, res) => {
+    try {
+        const { pages: incomingPages, grantAllPro = false } = req.body || {};
+        let targetPages = [];
+
+        if (grantAllPro) {
+            targetPages = Permission.PAGE_KEYS.filter((p) => p !== 'admin' && p !== 'devices.any');
+        } else if (Array.isArray(incomingPages)) {
+            const allowed = new Set(Permission.PAGE_KEYS);
+            targetPages = [...new Set(incomingPages.filter((p) => allowed.has(p) && p !== 'admin' && p !== 'devices.any'))];
+        }
+
+        if (targetPages.length === 0) {
+            return res.status(400).json({ success: false, message: 'No valid capability pages specified to grant.' });
+        }
+
+        let updatedCount = 0;
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            const users = await adapter.listAllUsers();
+            for (const u of users) {
+                if (u.role === 'admin') continue;
+                const existingPerm = await adapter.findPermissionByUser(u.id || u._id);
+                const currentPages = new Set(existingPerm?.pages || Permission.defaultsForRole(u.role));
+                targetPages.forEach((p) => currentPages.add(p));
+                await adapter.savePermission(u.id || u._id, [...currentPages]);
+                updatedCount++;
+            }
+        } else {
+            const users = await User.find({ role: { $ne: 'admin' } }).select('_id role').lean();
+            for (const u of users) {
+                const doc = await ensurePermissionDoc(u);
+                const currentPages = new Set(doc.pages || Permission.defaultsForRole(u.role));
+                targetPages.forEach((p) => currentPages.add(p));
+                doc.pages = [...currentPages];
+                await doc.save();
+                updatedCount++;
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: `Successfully granted ${targetPages.length} permissions to all ${updatedCount} users in 1 click.`,
+            updatedCount,
+            pagesGranted: targetPages,
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// Bulk Reset: Reset all non-admin users back to free tier defaults in a single click
+router.post('/permissions/bulk-reset', async (_req, res) => {
+    try {
+        const defaultFree = Permission.DEFAULT_USER_PAGES;
+        let resetCount = 0;
+
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            const users = await adapter.listAllUsers();
+            for (const u of users) {
+                if (u.role === 'admin') continue;
+                await adapter.savePermission(u.id || u._id, [...defaultFree]);
+                resetCount++;
+            }
+        } else {
+            const users = await User.find({ role: { $ne: 'admin' } }).select('_id role').lean();
+            for (const u of users) {
+                const doc = await ensurePermissionDoc(u);
+                doc.pages = [...defaultFree];
+                await doc.save();
+                resetCount++;
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: `Successfully reset all ${resetCount} users to default Free Tier permissions.`,
+            resetCount,
+            pages: defaultFree,
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 router.get('/devices', async (_req, res) => {
     try {
         let devices = [];

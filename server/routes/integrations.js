@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
+const { attachUser, requirePagePermission } = require('../middleware/auth');
 
 function getMysqlConnection() {
     return require('../db/mysql/connection');
@@ -12,7 +13,7 @@ function getDatabaseFactory() {
 }
 
 // 1. Test AI API Key
-router.post('/test-ai', async (req, res) => {
+router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async (req, res) => {
     try {
         const { provider = 'gemini', apiKey = '', model = '' } = req.body || {};
         const trimmedKey = String(apiKey || '').trim();
@@ -285,7 +286,7 @@ router.post('/test-ai', async (req, res) => {
 });
 
 // 2. Test MongoDB Connection
-router.post('/test-mongo', async (req, res) => {
+router.post('/test-mongo', attachUser, requirePagePermission('settings.custom_db'), async (req, res) => {
     let tempConn = null;
     try {
         const { mongodbUri = '' } = req.body || {};
@@ -347,7 +348,7 @@ router.post('/test-mongo', async (req, res) => {
 });
 
 // 3. Test MySQL Connection
-router.post('/test-mysql', async (req, res) => {
+router.post('/test-mysql', attachUser, requirePagePermission('settings.custom_db'), async (req, res) => {
     try {
         const body = req.body || {};
         const {
@@ -411,7 +412,7 @@ router.post('/test-mysql', async (req, res) => {
 });
 
 // 4. Test Cloudinary Credentials
-router.post('/test-cloudinary', async (req, res) => {
+router.post('/test-cloudinary', attachUser, requirePagePermission('settings.cloudinary'), async (req, res) => {
     try {
         const { cloudName = '', apiKey = '', apiSecret = '' } = req.body || {};
         const trimmedCloud = String(cloudName || '').trim();
@@ -475,7 +476,7 @@ router.post('/test-cloudinary', async (req, res) => {
 });
 
 // 4.1 Cloudinary Config GET & POST
-router.get('/cloudinary-config', (req, res) => {
+router.get('/cloudinary-config', attachUser, requirePagePermission('settings.cloudinary'), (req, res) => {
     try {
         const cloudName = process.env.CLOUDINARY_CLOUD_NAME || '';
         const apiKey = process.env.CLOUDINARY_API_KEY || '';
@@ -492,7 +493,7 @@ router.get('/cloudinary-config', (req, res) => {
     }
 });
 
-router.post('/cloudinary-config', async (req, res) => {
+router.post('/cloudinary-config', attachUser, requirePagePermission('settings.cloudinary'), async (req, res) => {
     try {
         const { cloudName = '', apiKey = '', apiSecret = '' } = req.body || {};
         const trimmedCloud = String(cloudName || '').trim();
@@ -545,7 +546,7 @@ router.post('/cloudinary-config', async (req, res) => {
 });
 
 // 5. Database Config GET & POST
-router.get('/db-config', (req, res) => {
+router.get('/db-config', attachUser, requirePagePermission('settings.custom_db'), (req, res) => {
     try {
         const factory = getDatabaseFactory();
         const activeProvider = factory.resolveProvider();
@@ -599,7 +600,7 @@ router.get('/db-config', (req, res) => {
     }
 });
 
-router.post('/db-config', async (req, res) => {
+router.post('/db-config', attachUser, requirePagePermission('settings.custom_db'), async (req, res) => {
     try {
         const {
             provider = 'mongo',

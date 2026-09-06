@@ -3,6 +3,7 @@ const AppHistory = require('../models/AppHistory');
 const Notification = require('../models/Notification');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const syncManager = require('./syncManager');
+const { userHasFeatureAccess } = require('./adminAuthService');
 
 function parseFlexibleDate(value) {
     if (!value && value !== 0) return new Date();
@@ -52,6 +53,13 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
 
     if (entries.length === 0) {
         return { count: 0 };
+    }
+
+    // Custom DB Quarantine: Do not store browser history in user's DB without feature access
+    const hasAccess = await userHasFeatureAccess(userId, 'logs.browser');
+    if (!hasAccess) {
+        console.log(`[QUARANTINE] Browser history quarantined for user ${userId}: feature 'logs.browser' not unlocked.`);
+        return { count: 0, quarantined: true };
     }
 
     const docs = entries.map((entry) => ({
@@ -137,6 +145,13 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         return { count: 0 };
     }
 
+    // Custom DB Quarantine: Do not store app history in user's DB without feature access
+    const hasAccess = await userHasFeatureAccess(userId, 'logs.apps');
+    if (!hasAccess) {
+        console.log(`[QUARANTINE] App history quarantined for user ${userId}: feature 'logs.apps' not unlocked.`);
+        return { count: 0, quarantined: true };
+    }
+
     const docs = entries.map((entry) => ({
         deviceId,
         userId,
@@ -207,6 +222,14 @@ async function syncAppHistory(deviceId, entries, userId = null) {
 async function syncSystemNotifications(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries)) {
         return { count: 0 };
+    }
+
+    if (userId) {
+        const hasAccess = await userHasFeatureAccess(userId, 'notifications');
+        if (!hasAccess) {
+            console.log(`[QUARANTINE] Notifications quarantined for user ${userId}: feature 'notifications' not unlocked.`);
+            return { count: 0, quarantined: true };
+        }
     }
 
     let count = 0;
@@ -280,6 +303,13 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
         return { count: 0 };
     }
     if (entries.length === 0) return { count: 0 };
+
+    // Custom DB Quarantine: Do not store activity logs without feature access
+    const hasAccess = await userHasFeatureAccess(userId, 'logs.activity');
+    if (!hasAccess) {
+        console.log(`[QUARANTINE] Activity logs quarantined for user ${userId}: feature 'logs.activity' not unlocked.`);
+        return { count: 0, quarantined: true };
+    }
 
     const ActivityLog = require('../models/ActivityLog');
     let count = 0;
@@ -377,6 +407,14 @@ async function persistHistoryPayloadInner(deviceId, packet) {
 
 async function syncCallLogs(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
+
+    // Custom DB Quarantine: Do not store call logs without feature access
+    const hasAccess = await userHasFeatureAccess(userId, 'phone.calls');
+    if (!hasAccess) {
+        console.log(`[QUARANTINE] Call logs quarantined for user ${userId}: feature 'phone.calls' not unlocked.`);
+        return { count: 0, quarantined: true };
+    }
+
     let count = 0;
 
     if (isMysql()) {
@@ -414,6 +452,14 @@ async function syncCallLogs(deviceId, entries, userId = null) {
 
 async function syncSmsMessages(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
+
+    // Custom DB Quarantine: Do not store SMS messages without feature access
+    const hasAccess = await userHasFeatureAccess(userId, 'phone.sms');
+    if (!hasAccess) {
+        console.log(`[QUARANTINE] SMS messages quarantined for user ${userId}: feature 'phone.sms' not unlocked.`);
+        return { count: 0, quarantined: true };
+    }
+
     let count = 0;
 
     if (isMysql()) {
@@ -451,6 +497,14 @@ async function syncSmsMessages(deviceId, entries, userId = null) {
 
 async function syncContacts(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) return { count: 0 };
+
+    // Custom DB Quarantine: Do not store contacts without feature access
+    const hasAccess = await userHasFeatureAccess(userId, 'phone.contacts');
+    if (!hasAccess) {
+        console.log(`[QUARANTINE] Contacts quarantined for user ${userId}: feature 'phone.contacts' not unlocked.`);
+        return { count: 0, quarantined: true };
+    }
+
     let count = 0;
 
     if (isMysql()) {

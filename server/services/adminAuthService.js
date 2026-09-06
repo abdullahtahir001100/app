@@ -129,11 +129,33 @@ async function enforceAdminRoleIsolation(user) {
     return user;
 }
 
-function invalidateAdminCache(email) {
-    if (email) {
-        adminEmailCache.delete(String(email).trim().toLowerCase());
-    } else {
-        adminEmailCache.clear();
+/**
+ * Checks if a specific user owns or is granted access to a specific capability / tab.
+ * Admins verified against Master Admin DB automatically have access to all features.
+ * Custom DB writes are quarantined unless this function returns true.
+ */
+async function userHasFeatureAccess(userId, featureKey) {
+    if (!userId) return false;
+    try {
+        const { loadUserPermissions, userHasPage } = require('../middleware/auth');
+        const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+        let user;
+        if (isMysql()) {
+            user = await getMysqlAdapter().findUserById(userId);
+        } else {
+            const User = require('../models/User');
+            user = await User.findById(userId).lean();
+        }
+        if (!user) return false;
+        if (user.role === 'admin') {
+            const isMaster = await isUserMasterAdmin(user.email);
+            if (isMaster) return true;
+        }
+        const pages = await loadUserPermissions(userId, user.role || 'user');
+        return userHasPage(pages, featureKey);
+    } catch (err) {
+        console.warn(`[FEATURE-ACCESS] Error checking ${featureKey} for user ${userId}:`, err.message);
+        return false;
     }
 }
 
@@ -141,4 +163,5 @@ module.exports = {
     isUserMasterAdmin,
     enforceAdminRoleIsolation,
     invalidateAdminCache,
+    userHasFeatureAccess,
 };

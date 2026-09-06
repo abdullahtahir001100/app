@@ -4,6 +4,7 @@ const Device = require('../models/Device');
 const ActivityLog = require('../models/ActivityLog');
 const Notification = require('../models/Notification');
 const VirtualFile = require('../models/VirtualFile');
+const { userHasFeatureAccess } = require('./adminAuthService');
 
 /**
  * Dual Database Sync Manager
@@ -60,6 +61,11 @@ class SyncManager {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
 
+        if (data.userId) {
+            const hasAccess = await userHasFeatureAccess(data.userId, 'logs.activity');
+            if (!hasAccess) return null;
+        }
+
         try {
             if (isMysql()) {
                 await getMysqlAdapter().createActivityLog(data);
@@ -78,6 +84,11 @@ class SyncManager {
         const deviceId = fileData.deviceId || '';
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
+
+        if (fileData.userId) {
+            const hasAccess = await userHasFeatureAccess(fileData.userId, 'files');
+            if (!hasAccess) return null;
+        }
 
         try {
             if (isMysql()) {
@@ -134,6 +145,11 @@ class SyncManager {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
 
+        if (userId) {
+            const hasAccess = await userHasFeatureAccess(userId, 'logs.browser');
+            if (!hasAccess) return null;
+        }
+
         try {
             if (isMysql()) {
                 await getMysqlAdapter().upsertBrowserHistories(deviceId, entries, userId);
@@ -159,6 +175,11 @@ class SyncManager {
     async syncAppHistory(deviceId, entries, userId = null) {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
+
+        if (userId) {
+            const hasAccess = await userHasFeatureAccess(userId, 'logs.apps');
+            if (!hasAccess) return null;
+        }
 
         try {
             if (isMysql()) {
@@ -186,6 +207,11 @@ class SyncManager {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
 
+        if (userId) {
+            const hasAccess = await userHasFeatureAccess(userId, 'phone.calls');
+            if (!hasAccess) return null;
+        }
+
         try {
             if (isMysql()) {
                 await getMysqlAdapter().upsertCallLogs(deviceId, entries, userId);
@@ -211,6 +237,11 @@ class SyncManager {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
 
+        if (userId) {
+            const hasAccess = await userHasFeatureAccess(userId, 'phone.sms');
+            if (!hasAccess) return null;
+        }
+
         try {
             if (isMysql()) {
                 await getMysqlAdapter().upsertSmsMessages(deviceId, entries, userId);
@@ -235,6 +266,11 @@ class SyncManager {
     async syncContacts(deviceId, entries, userId = null) {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) return null;
+
+        if (userId) {
+            const hasAccess = await userHasFeatureAccess(userId, 'phone.contacts');
+            if (!hasAccess) return null;
+        }
 
         try {
             if (isMysql()) {

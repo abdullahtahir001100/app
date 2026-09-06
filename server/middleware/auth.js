@@ -57,7 +57,6 @@ function isPublicApiRoute(pathname = "") {
         '/api/agent/download',
         '/api/health',
         '/api/network/android-beat',
-        '/api/integrations',
         '/downloads/',
         '/r/',
     ];
@@ -112,6 +111,9 @@ function userHasPage(pages, pageKey) {
     // Granular parent grants child
     if (pageKey.startsWith('logs.') && pages.includes('logs')) return true;
     if (pageKey.startsWith('phone.') && pages.includes('phone')) return true;
+    if (pageKey.startsWith('settings.') && (pages.includes('settings.all') || pages.includes('admin'))) return true;
+    if (pageKey.startsWith('usage.') && pages.includes('usage')) return true;
+    if (pageKey.startsWith('apps.') && pages.includes('apps')) return true;
 
     // Granular child grants parent page access (e.g. logs.browser grants access to /logs)
     if (pageKey === 'logs') {
@@ -119,6 +121,15 @@ function userHasPage(pages, pageKey) {
     }
     if (pageKey === 'phone') {
         return pages.some((p) => p === 'phone' || p.startsWith('phone.'));
+    }
+    if (pageKey === 'settings') {
+        return pages.includes('settings') || pages.some((p) => p.startsWith('settings.'));
+    }
+    if (pageKey === 'usage') {
+        return pages.includes('usage') || pages.some((p) => p.startsWith('usage.'));
+    }
+    if (pageKey === 'apps') {
+        return pages.includes('apps') || pages.some((p) => p.startsWith('apps.'));
     }
 
     return false;
@@ -419,6 +430,7 @@ module.exports = {
     verifyRequestDeviceAccess,
     parseCookies,
     loadUserPermissions,
+    userHasPage,
     userCanAccessAnyDevice,
     rejectIfAdminLocked,
 };

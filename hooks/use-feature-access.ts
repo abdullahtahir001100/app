@@ -30,14 +30,30 @@ export function useFeatureAccess(pageKey: string): FeatureAccessState {
           let allowed = false;
           if (role === "admin") {
             allowed = true;
-          } else if (pageKey === "dashboard" || pageKey === "devices" || pageKey === "settings") {
+          } else if (pageKey === "dashboard" || pageKey === "devices") {
+            allowed = true;
+          } else if (pageKey === "settings") {
             allowed = true;
           } else if (pages.includes(pageKey)) {
+            allowed = true;
+          } else if (pageKey.startsWith("logs.") && pages.includes("logs")) {
+            allowed = true;
+          } else if (pageKey.startsWith("phone.") && pages.includes("phone")) {
+            allowed = true;
+          } else if (pageKey.startsWith("settings.") && (pages.includes("settings.all") || pages.includes("admin"))) {
+            allowed = true;
+          } else if (pageKey.startsWith("usage.") && pages.includes("usage")) {
+            allowed = true;
+          } else if (pageKey.startsWith("apps.") && pages.includes("apps")) {
             allowed = true;
           } else if (pageKey === "logs") {
             allowed = pages.some((p) => p === "logs" || p.startsWith("logs."));
           } else if (pageKey === "phone") {
             allowed = pages.some((p) => p === "phone" || p.startsWith("phone."));
+          } else if (pageKey === "usage") {
+            allowed = pages.includes("usage") || pages.some((p) => p.startsWith("usage."));
+          } else if (pageKey === "apps") {
+            allowed = pages.includes("apps") || pages.some((p) => p.startsWith("apps."));
           }
 
           setState({

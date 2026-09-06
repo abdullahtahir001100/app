@@ -33,7 +33,10 @@ import {
   Link2,
   Eye,
   EyeOff,
+  Lock,
 } from "lucide-react";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { PremiumGate } from "@/components/premium-card";
 import {
   useApiConfig,
   PROVIDER_OPTIONS,
@@ -104,6 +107,8 @@ function isWeakCode(code: string): boolean {
 }
 
 export default function SettingsPage() {
+  const customDbAccess = useFeatureAccess("settings.custom_db");
+  const aiAccess = useFeatureAccess("settings.ai");
   const [activeTab, setActiveTab] = useState<TabKey>("pairing");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -863,6 +868,9 @@ export default function SettingsPage() {
               >
                 <Database className="w-4 h-4" />
                 Variables & Storage
+                {!customDbAccess.allowed && !customDbAccess.loading && (
+                  <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+                )}
               </button>
 
               <button
@@ -875,6 +883,9 @@ export default function SettingsPage() {
               >
                 <Cpu className="w-4 h-4" />
                 AI Engine & Binding
+                {!aiAccess.allowed && !aiAccess.loading && (
+                  <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+                )}
               </button>
             </div>
 
@@ -1268,7 +1279,15 @@ export default function SettingsPage() {
 
             {/* Tab 3: Variables & Storage */}
             {activeTab === "integrations" && (
-              <form onSubmit={saveVariables} className="space-y-8">
+              !customDbAccess.allowed && !customDbAccess.loading ? (
+                <PremiumGate
+                  featureKey="settings.custom_db"
+                  featureTitle="Custom Database & Storage Integration"
+                  featureDescription="Connect your own private MongoDB or MySQL cluster and persist fleet data directly in your database infrastructure."
+                  onUnlocked={() => window.location.reload()}
+                />
+              ) : (
+                <form onSubmit={saveVariables} className="space-y-8">
                 {/* Database Engine Section (MongoDB or MySQL - One at a Time) */}
                 <section className="space-y-5 p-5 border border-border rounded-xl bg-card shadow-sm">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/50">
@@ -1803,11 +1822,20 @@ export default function SettingsPage() {
                   )}
                 </section>
               </form>
+              )
             )}
 
             {/* Tab 4: AI Providers & Agent AI Binding */}
             {activeTab === "ai" && (
-              <div className="space-y-8">
+              !aiAccess.allowed && !aiAccess.loading ? (
+                <PremiumGate
+                  featureKey="settings.ai"
+                  featureTitle="AI Copilot & Multi-Model Engine"
+                  featureDescription="Integrate Gemini, OpenAI, Groq, Anthropic, or DeepSeek API keys to power autonomous device agent copilots."
+                  onUnlocked={() => window.location.reload()}
+                />
+              ) : (
+                <div className="space-y-8">
                 <section className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Cpu className="w-5 h-5 text-purple-500" />
@@ -1968,6 +1996,7 @@ export default function SettingsPage() {
                   </div>
                 </section>
               </div>
+              )
             )}
           </div>
         </div>

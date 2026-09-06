@@ -10,6 +10,7 @@ import DeviceUserDataThreeChart from "@/components/DeviceUserDataThreeChart";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Select from "react-select";
+import { Lock } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -78,6 +79,8 @@ const COLORS = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6"
 
 export default function UsagePage() {
   const { allowed: featureAllowed, loading: featureLoading } = useFeatureAccess("usage");
+  const chartsAccess = useFeatureAccess("usage.charts");
+  const threeDAccess = useFeatureAccess("usage.3d");
   const searchParams = useSearchParams();
   const requestedDevice = searchParams.get("device") || "";
   const { devices: deviceOptions, dispatch, subscribe } = useGateway() as {
@@ -357,22 +360,36 @@ export default function UsagePage() {
 
         <div className="flex gap-2 mb-6">
           <button
-            className={`px-4 py-2 rounded-md text-sm ${tab === "charts" ? "bg-emerald-600 text-white" : "bg-muted"}`}
+            className={`px-4 py-2 rounded-md text-sm flex items-center gap-1.5 ${tab === "charts" ? "bg-emerald-600 text-white font-medium shadow-sm" : "bg-muted text-muted-foreground hover:text-foreground"}`}
             onClick={() => setTab("charts")}
           >
             Charts
+            {!chartsAccess.allowed && !chartsAccess.loading && (
+              <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+            )}
           </button>
           <button
-            className={`px-4 py-2 rounded-md text-sm ${tab === "3d" ? "bg-emerald-600 text-white" : "bg-muted"}`}
+            className={`px-4 py-2 rounded-md text-sm flex items-center gap-1.5 ${tab === "3d" ? "bg-emerald-600 text-white font-medium shadow-sm" : "bg-muted text-muted-foreground hover:text-foreground"}`}
             onClick={() => setTab("3d")}
           >
             3D view
+            {!threeDAccess.allowed && !threeDAccess.loading && (
+              <Lock className="w-3 h-3 text-amber-500 shrink-0" />
+            )}
           </button>
         </div>
 
         {loading && <p className="text-sm text-muted-foreground">Loading usage…</p>}
 
         {tab === "charts" ? (
+          !chartsAccess.allowed && !chartsAccess.loading ? (
+            <PremiumGate
+              featureKey="usage.charts"
+              featureTitle="Usage Telemetry & Charts"
+              featureDescription="Access historical telemetry charts, per-app timelines, and duration analytics."
+              onUnlocked={() => window.location.reload()}
+            />
+          ) : (
           <div className="grid gap-6 lg:grid-cols-2">
             <Card className="p-4">
               <h2 className="mb-4 text-sm font-medium">Longest apps — click for detail</h2>
@@ -465,11 +482,21 @@ export default function UsagePage() {
               </div>
             </Card>
           </div>
+          )
         ) : (
+          !threeDAccess.allowed && !threeDAccess.loading ? (
+            <PremiumGate
+              featureKey="usage.3d"
+              featureTitle="Usage 3D Engine & Matrix"
+              featureDescription="Render three-dimensional interactive matrix mesh representations of fleet device activity."
+              onUnlocked={() => window.location.reload()}
+            />
+          ) : (
           <Card className="p-4">
             <h2 className="mb-4 text-sm font-medium">3D time spent (seconds)</h2>
             <DeviceUserDataThreeChart data={threeData} />
           </Card>
+          )
         )}
 
         {selectedApp && (

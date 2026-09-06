@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Sparkles, Users, RefreshCw, CheckCircle2, ShieldCheck, Zap } from "lucide-react";
 
 type AdminUser = {
   id: string;
@@ -42,6 +43,30 @@ const PERMISSION_GROUPS = [
     keys: ["phone", "phone.calls", "phone.sms", "phone.contacts", "phone.lock"],
   },
   {
+    id: "settings_tabs",
+    title: "Settings Suite Granular Tabs",
+    badge: "Premium Add-ons",
+    badgeColor: "bg-cyan-500/10 text-cyan-600 border-cyan-500/20",
+    description: "Grant access to custom database integration, Cloudinary media storage, AI copilot keys, and advanced security.",
+    keys: ["settings.custom_db", "settings.cloudinary", "settings.ai", "settings.security"],
+  },
+  {
+    id: "usage_tabs",
+    title: "Usage Metrics & 3D Engine Tabs",
+    badge: "Granular Add-ons",
+    badgeColor: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
+    description: "Grant access to live usage telemetry charts or interactive 3D matrix visualization.",
+    keys: ["usage", "usage.charts", "usage.3d"],
+  },
+  {
+    id: "apps_tabs",
+    title: "App Suite & Live Screen Tabs",
+    badge: "Granular Add-ons",
+    badgeColor: "bg-violet-500/10 text-violet-600 border-violet-500/20",
+    description: "Grant access to remote application push installer or live application screen streaming.",
+    keys: ["apps", "apps.installer", "apps.screen"],
+  },
+  {
     id: "premium",
     title: "Premium Pro Tools",
     badge: "PRO Upgrade",
@@ -53,13 +78,11 @@ const PERMISSION_GROUPS = [
       "files",
       "shell",
       "ops",
-      "apps",
       "fleet",
       "cockpit",
       "notifications",
       "console",
       "architecture",
-      "usage",
     ],
   },
   {
@@ -165,6 +188,94 @@ export default function AdminPermissionsPage() {
     }
   };
 
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
+
+  const bulkGrantProAll = async () => {
+    if (!confirm("Are you sure you want to grant ALL PRO capabilities to ALL registered users in 1 click?")) return;
+    setBulkLoading(true);
+    setBulkMessage("");
+    try {
+      const res = await fetch("/api/admin/permissions/bulk-grant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ grantAllPro: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBulkMessage(data.message || "Bulk grant failed");
+        return;
+      }
+      setBulkMessage(data.message || "Granted to all users!");
+      const uRes = await fetch("/api/admin/users", { credentials: "include" });
+      const uData = await uRes.json();
+      if (uData.users) setUsers(uData.users);
+    } catch (e: any) {
+      setBulkMessage(e.message || "Error performing bulk grant");
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const bulkGrantSelectedAll = async () => {
+    if (pages.length === 0) {
+      alert("No features selected. Please select features first.");
+      return;
+    }
+    if (!confirm(`Are you sure you want to grant these ${pages.length} selected capabilities to ALL registered users in 1 click?`)) return;
+    setBulkLoading(true);
+    setBulkMessage("");
+    try {
+      const res = await fetch("/api/admin/permissions/bulk-grant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ pages }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBulkMessage(data.message || "Bulk grant failed");
+        return;
+      }
+      setBulkMessage(data.message || "Granted selected features to all users!");
+      const uRes = await fetch("/api/admin/users", { credentials: "include" });
+      const uData = await uRes.json();
+      if (uData.users) setUsers(uData.users);
+    } catch (e: any) {
+      setBulkMessage(e.message || "Error performing bulk grant");
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const bulkResetAll = async () => {
+    if (!confirm("Are you sure you want to reset ALL users back to Free Default tier in 1 click?")) return;
+    setBulkLoading(true);
+    setBulkMessage("");
+    try {
+      const res = await fetch("/api/admin/permissions/bulk-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBulkMessage(data.message || "Bulk reset failed");
+        return;
+      }
+      setBulkMessage(data.message || "Reset all users to Free default!");
+      const uRes = await fetch("/api/admin/users", { credentials: "include" });
+      const uData = await uRes.json();
+      if (uData.users) setUsers(uData.users);
+      setPages(["dashboard", "devices", "settings"]);
+    } catch (e: any) {
+      setBulkMessage(e.message || "Error performing bulk reset");
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-screen bg-background">
@@ -203,10 +314,80 @@ export default function AdminPermissionsPage() {
     <div className="flex h-screen bg-background">
       <AppSidebar />
       <main className="flex-1 overflow-y-auto sidebar-aware-main p-6">
-        <h1 className="text-3xl font-display tracking-tight mb-1">Permissions & Subscriptions</h1>
-        <p className="text-sm text-muted-foreground mb-6">
-          Grant full page permissions or granular tab add-ons (e.g. Browser Data only). Unassigned features render purchase upgrade cards.
-        </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <h1 className="text-3xl font-display tracking-tight mb-1">Permissions & Subscriptions</h1>
+            <p className="text-sm text-muted-foreground">
+              Grant full page permissions or granular tab add-ons. Admin can also grant permissions to ALL users in 1 click.
+            </p>
+          </div>
+        </div>
+
+        {/* 1-Click Global Operations Banner */}
+        <Card className="mb-6 p-4 border border-primary/20 bg-gradient-to-r from-primary/5 via-card to-primary/5 shadow-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0">
+                <Sparkles className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-semibold text-sm tracking-tight text-foreground">1-Click Bulk Permissions (All Users)</h2>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-bold">
+                    GLOBAL OVERRIDE
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Execute single-click capability grants or resets across the entire user base simultaneously.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {bulkMessage && (
+                <span className="text-xs font-mono font-medium text-emerald-600 animate-in fade-in flex items-center gap-1.5 mr-2">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  {bulkMessage}
+                </span>
+              )}
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => void bulkGrantProAll()}
+                disabled={bulkLoading}
+                className="h-8 text-xs font-semibold gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                {bulkLoading ? "Applying..." : "Grant ALL PRO to All Users"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void bulkGrantSelectedAll()}
+                disabled={bulkLoading || pages.length === 0}
+                className="h-8 text-xs font-medium gap-1.5 border-primary/30 hover:bg-primary/10 text-primary"
+              >
+                <Users className="w-3.5 h-3.5" />
+                Grant Selection to All ({pages.length})
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void bulkResetAll()}
+                disabled={bulkLoading}
+                className="h-8 text-xs font-medium gap-1.5 text-muted-foreground hover:text-destructive hover:border-destructive/40"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Reset All to Free
+              </Button>
+            </div>
+          </div>
+        </Card>
 
         <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
           {/* User List */}
