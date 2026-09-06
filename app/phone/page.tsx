@@ -9,6 +9,7 @@ import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 import Select from "react-select";
 import { toast } from "sonner";
+import { PremiumGate } from "@/components/premium-card";
 
 type Tab = "calls" | "sms" | "contacts" | "lock";
 type LockKind = "pin" | "password" | "pattern";
@@ -60,6 +61,46 @@ export default function PhonePage() {
   const [lockValue, setLockValue] = useState("");
   const [lockBusy, setLockBusy] = useState(false);
   const [lastLockMsg, setLastLockMsg] = useState("");
+
+  const [userProfile, setUserProfile] = useState<{ role?: string; pages?: string[] } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/session", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.authenticated && data?.user) {
+          setUserProfile(data.user);
+          const userPages = Array.isArray(data.user.pages) ? data.user.pages : [];
+          const isAdmin = data.user.role === "admin";
+          const hasFull = isAdmin || userPages.includes("phone");
+          const hasCalls = hasFull || userPages.includes("phone.calls");
+          const hasSms = hasFull || userPages.includes("phone.sms");
+          const hasContacts = hasFull || userPages.includes("phone.contacts");
+
+          if (!hasCalls && hasSms) {
+            setActiveTab("sms");
+          } else if (!hasCalls && !hasSms && hasContacts) {
+            setActiveTab("contacts");
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const canAccess = (key: string) => {
+    if (!userProfile) return true;
+    if (userProfile.role === "admin") return true;
+    const p = Array.isArray(userProfile.pages) ? userProfile.pages : [];
+    if (p.includes("phone")) return true;
+    return p.includes(key);
+  };
+
+  const hasAnyPhoneAccess = () => {
+    if (!userProfile) return true;
+    if (userProfile.role === "admin") return true;
+    const p = Array.isArray(userProfile.pages) ? userProfile.pages : [];
+    return p.some((key) => key === "phone" || key.startsWith("phone."));
+  };
 
   useEffect(() => {
     ensureConnected();
@@ -236,42 +277,119 @@ export default function PhonePage() {
             </div>
           </div>
 
-          <div className="flex gap-2 border-b border-border mb-4 overflow-x-auto">
-            {(
-              [
-                { id: "calls" as const, label: "Calls", icon: Phone },
-                { id: "sms" as const, label: "Messages", icon: MessageSquare },
-                { id: "contacts" as const, label: "Contacts", icon: Users },
-                { id: "lock" as const, label: "Lock / PIN", icon: Lock },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 text-sm border-b-2 flex items-center gap-2 whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? "border-foreground text-foreground"
-                    : "border-transparent text-muted-foreground"
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {activeTab !== "lock" && (
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search number, name, message…"
-              className="mb-4 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-sm"
+          {userProfile && !hasAnyPhoneAccess() ? (
+            <PremiumGate
+              featureKey="phone"
+              title="Phone Intelligence & Communications Suite"
+              description="Full telecommunications suite including call logs, SMS message history, contacts database, and remote device lock."
+              price="$14.99/mo"
+              bullets={[
+                "Incoming, outgoing, and missed call recording with duration",
+                "SMS text message history with sender addresses and timestamps",
+                "Complete device address book contacts list",
+                "Remote lock screen with PIN, password, or pattern override",
+              ]}
+              onUnlocked={() => window.location.reload()}
             />
-          )}
+          ) : (
+            <>
+              <div className="flex gap-2 border-b border-border mb-4 overflow-x-auto">
+                {(
+                  [
+                    { id: "calls" as const, label: "Calls", icon: Phone, perm: "phone.calls" },
+                    { id: "sms" as const, label: "Messages", icon: MessageSquare, perm: "phone.sms" },
+                    { id: "contacts" as const, label: "Contacts", icon: Users, perm: "phone.contacts" },
+                    { id: "lock" as const, label: "Lock / PIN", icon: Lock, perm: "phone.lock" },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`px-4 py-2 text-sm border-b-2 flex items-center gap-2 whitespace-nowrap ${
+                      activeTab === tab.id
+                        ? "border-foreground text-foreground"
+                        : "border-transparent text-muted-foreground"
+                    }`}
+                  >
+                    <tab.icon className="w-4 h-4" />
+                    <span>{tab.label}</span>
+                    {!canAccess(tab.perm) && (
+                      <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    )}
+                  </button>
+                ))}
+              </div>
 
-          <div className="space-y-3">
-            {activeTab === "calls" &&
+              {activeTab !== "lock" && canAccess(
+                activeTab === "calls" ? "phone.calls" : activeTab === "sms" ? "phone.sms" : "phone.contacts"
+              ) && (
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search number, name, message…"
+                  className="mb-4 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+              )}
+
+              <div className="space-y-3">
+                {activeTab === "calls" && !canAccess("phone.calls") ? (
+                  <PremiumGate
+                    featureKey="phone.calls"
+                    title="Call Logs Intelligence"
+                    description="Inspect incoming, outgoing, and missed phone calls with contact names, phone numbers, and call durations."
+                    price="$4.99/mo"
+                    bullets={[
+                      "Complete incoming, outgoing, and missed call records",
+                      "Caller name and dialed phone number indexing",
+                      "Call duration in seconds and exact timestamps",
+                      "Real-time synchronization with Android gateway",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : activeTab === "sms" && !canAccess("phone.sms") ? (
+                  <PremiumGate
+                    featureKey="phone.sms"
+                    title="SMS Message Intelligence"
+                    description="Inspect incoming and outgoing text messages, sender addresses, read states, and delivery timestamps."
+                    price="$4.99/mo"
+                    bullets={[
+                      "Full SMS conversation history",
+                      "Sender and recipient phone numbers",
+                      "Message delivery and read timestamps",
+                      "Real-time SMS synchronization with Android gateway",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : activeTab === "contacts" && !canAccess("phone.contacts") ? (
+                  <PremiumGate
+                    featureKey="phone.contacts"
+                    title="Phone Contacts Directory"
+                    description="Complete address book inspection with contact names, mobile numbers, and associated profiles."
+                    price="$3.99/mo"
+                    bullets={[
+                      "Full device address book directory",
+                      "Contact names and associated phone numbers",
+                      "Fast live searching and instant export",
+                      "Automatic sync with Android device agent",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : activeTab === "lock" && !canAccess("phone.lock") ? (
+                  <PremiumGate
+                    featureKey="phone.lock"
+                    title="Remote Device Lock"
+                    description="Remote lock screen controls with instant PIN, password, or pattern override."
+                    price="$4.99/mo"
+                    bullets={[
+                      "Remote screen lock engagement",
+                      "Custom PIN, password, or pattern setting",
+                      "Device Admin compliance verification",
+                      "Instant emergency wipe / lock enforcement",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : activeTab === "calls" &&
               (filteredCalls.length === 0 ? (
                 <Card className="p-8 text-center text-muted-foreground">No call logs</Card>
               ) : (
@@ -406,6 +524,8 @@ export default function PhonePage() {
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
       </main>
     </div>

@@ -32,6 +32,8 @@ import {
   type MediaTransport,
 } from "@/lib/media-transport";
 import { MicPanel } from "@/components/cockpit/mic-panel";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 type StreamQuality = "saver" | "low" | "medium" | "high" | "ultra";
 
@@ -70,6 +72,7 @@ function loadSavedFps(): number {
 }
 
 export default function ScreenPage() {
+  const { allowed: featureAllowed, loading: featureLoading } = useFeatureAccess("screen");
   const searchParams = useSearchParams();
   const requestedDevice = searchParams.get("device") || "";
   const {
@@ -590,6 +593,17 @@ export default function ScreenPage() {
       if (sliderTimerRef.current) clearTimeout(sliderTimerRef.current);
     };
   }, []);
+
+  if (!featureLoading && !featureAllowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate featureKey="screen" onUnlocked={() => window.location.reload()} />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

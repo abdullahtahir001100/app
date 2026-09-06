@@ -16,6 +16,62 @@ type AdminUser = {
   pages?: string[];
 };
 
+const PERMISSION_GROUPS = [
+  {
+    id: "core",
+    title: "Core Pages (Always Free)",
+    badge: "Free Default",
+    badgeColor: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+    description: "Basic capabilities available out-of-the-box to every regular registered user account.",
+    keys: ["dashboard", "devices", "settings"],
+  },
+  {
+    id: "logs",
+    title: "Activity Logs & Granular Tabs",
+    badge: "Granular Add-ons",
+    badgeColor: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+    description: "Grant full activity logs access or individual sub-tabs (e.g. Browser Data only). If only 'logs.browser' is checked, user sees ONLY browser history while other tabs stay locked.",
+    keys: ["logs", "logs.browser", "logs.activity", "logs.apps", "logs.usage"],
+  },
+  {
+    id: "phone",
+    title: "Phone Suite & Granular Tabs",
+    badge: "Granular Add-ons",
+    badgeColor: "bg-purple-500/10 text-purple-600 border-purple-500/20",
+    description: "Grant full mobile phone suite access or individual sub-tabs (Calls, SMS, Contacts, or Remote Lock) as add-on purchases.",
+    keys: ["phone", "phone.calls", "phone.sms", "phone.contacts", "phone.lock"],
+  },
+  {
+    id: "premium",
+    title: "Premium Pro Tools",
+    badge: "PRO Upgrade",
+    badgeColor: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+    description: "High-tier monitoring and live execution tools gated behind premium subscriptions.",
+    keys: [
+      "camera",
+      "screen",
+      "files",
+      "shell",
+      "ops",
+      "apps",
+      "fleet",
+      "cockpit",
+      "notifications",
+      "console",
+      "architecture",
+      "usage",
+    ],
+  },
+  {
+    id: "admin",
+    title: "System Administration",
+    badge: "Master Only",
+    badgeColor: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+    description: "Administrative console access and cross-user device oversight. Strict master DB verification applies.",
+    keys: ["admin", "devices.any"],
+  },
+];
+
 export default function AdminPermissionsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -73,6 +129,15 @@ export default function AdminPermissionsPage() {
 
   const toggle = (key: string) => {
     setPages((prev) => (prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]));
+  };
+
+  const toggleGroup = (keys: string[]) => {
+    const allChecked = keys.every((k) => pages.includes(k));
+    if (allChecked) {
+      setPages((prev) => prev.filter((p) => !keys.includes(p)));
+    } else {
+      setPages((prev) => [...new Set([...prev, ...keys])]);
+    }
   };
 
   const save = async () => {
@@ -138,83 +203,196 @@ export default function AdminPermissionsPage() {
     <div className="flex h-screen bg-background">
       <AppSidebar />
       <main className="flex-1 overflow-y-auto sidebar-aware-main p-6">
-        <h1 className="text-3xl font-display tracking-tight mb-2">Permissions</h1>
+        <h1 className="text-3xl font-display tracking-tight mb-1">Permissions & Subscriptions</h1>
         <p className="text-sm text-muted-foreground mb-6">
-          Grant page access per user. <code>devices.any</code> lets a user control every device.
+          Grant full page permissions or granular tab add-ons (e.g. Browser Data only). Unassigned features render purchase upgrade cards.
         </p>
 
-        <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-          <Card className="p-3 space-y-1 max-h-[70vh] overflow-y-auto">
+        <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+          {/* User List */}
+          <Card className="p-3 space-y-1 max-h-[80vh] overflow-y-auto">
+            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Users ({users.length})
+            </div>
             {users.map((user) => (
               <button
                 key={user.id}
                 onClick={() => setSelectedUserId(user.id)}
-                className={`w-full text-left rounded-md px-3 py-2 text-sm ${
-                  selectedUserId === user.id ? "bg-muted" : "hover:bg-muted/50"
+                className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                  selectedUserId === user.id
+                    ? "bg-primary/10 border border-primary/20 text-primary font-medium"
+                    : "hover:bg-muted/50 border border-transparent"
                 }`}
               >
-                <div className="font-medium">{user.name}</div>
-                <div className="text-[11px] text-muted-foreground">{user.email}</div>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium truncate">{user.name}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-mono font-bold ${
+                      user.role === "admin"
+                        ? "bg-rose-500/15 text-rose-600"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {user.role}
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground truncate">{user.email}</div>
+                <div className="text-[10px] text-muted-foreground/80 mt-1">
+                  {(user.pages || []).length} features enabled
+                </div>
               </button>
             ))}
           </Card>
 
-          <Card className="p-5">
+          {/* Permissions Matrix */}
+          <div className="space-y-6">
             {selected ? (
               <>
-                <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-base">{selected.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {selected.email} · role: <span className="font-mono font-semibold uppercase">{selected.role}</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                      {pages.length} / {pageKeys.length} granted
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPages([...pageKeys])}
-                      className="text-xs h-7 px-2.5"
-                    >
-                      Select All
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPages([])}
-                      className="text-xs h-7 px-2.5"
-                    >
-                      Clear
-                    </Button>
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {pageKeys.map((key) => (
-                    <label key={key} className="flex items-center gap-2 text-sm border border-border rounded-lg px-3 py-2.5 hover:bg-muted/40 transition-colors cursor-pointer">
-                      <Checkbox checked={pages.includes(key)} onCheckedChange={() => toggle(key)} />
-                      <span className="flex flex-col min-w-0">
-                        <span className="text-sm font-medium">{pageLabels[key] || key}</span>
-                        <span className="font-mono text-[10px] text-muted-foreground">{key}</span>
+                <Card className="p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <p className="font-semibold text-lg">{selected.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {selected.email} · Provider: <span className="font-mono font-medium">{selected.provider || "local"}</span> · Role:{" "}
+                        <span className="font-mono font-semibold uppercase">{selected.role}</span>
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-mono px-2.5 py-1 rounded-md bg-muted text-muted-foreground border border-border">
+                        {pages.length} / {pageKeys.length} enabled
                       </span>
-                    </label>
-                  ))}
-                </div>
-                <div className="mt-4 flex items-center gap-3">
-                  <Button onClick={() => void save()} disabled={saving}>
-                    {saving ? "Saving…" : "Save permissions"}
-                  </Button>
-                  {message && <span className="text-sm text-muted-foreground">{message}</span>}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPages(["dashboard", "devices", "settings"])}
+                        className="text-xs h-8 px-2.5"
+                      >
+                        Reset Free Default
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPages([...pageKeys])}
+                        className="text-xs h-8 px-2.5"
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPages([])}
+                        className="text-xs h-8 px-2.5"
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Grouped Permissions Cards */}
+                {PERMISSION_GROUPS.map((group) => {
+                  const availableKeys = group.keys.filter((k) => pageKeys.includes(k));
+                  if (availableKeys.length === 0) return null;
+                  const allActive = availableKeys.every((k) => pages.includes(k));
+                  const activeCount = availableKeys.filter((k) => pages.includes(k)).length;
+
+                  return (
+                    <Card key={group.id} className="p-5 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                        <div>
+                          <div className="flex items-center gap-2.5">
+                            <h3 className="font-semibold text-base">{group.title}</h3>
+                            <span
+                              className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${group.badgeColor}`}
+                            >
+                              {group.badge}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">{group.description}</p>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto">
+                          <span className="text-[11px] font-mono text-muted-foreground">
+                            {activeCount} / {availableKeys.length} active
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleGroup(availableKeys)}
+                            className="text-xs h-7 px-2 text-primary"
+                          >
+                            {allActive ? "Deselect Group" : "Select Group"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {availableKeys.map((key) => {
+                          const checked = pages.includes(key);
+                          const isGranularTab = key.includes(".");
+                          return (
+                            <label
+                              key={key}
+                              className={`flex items-start gap-3 rounded-lg border p-3 transition-all cursor-pointer select-none ${
+                                checked
+                                  ? "border-primary/40 bg-primary/5 shadow-sm"
+                                  : "border-border hover:border-border/80 hover:bg-muted/30"
+                              } ${isGranularTab ? "ml-2 border-dashed" : ""}`}
+                            >
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={() => toggle(key)}
+                                className="mt-0.5"
+                              />
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <span className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                                  {pageLabels[key] || key}
+                                  {isGranularTab && (
+                                    <span className="text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-600">
+                                      Tab
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="font-mono text-[10px] text-muted-foreground mt-0.5">
+                                  {key}
+                                </span>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </Card>
+                  );
+                })}
+
+                {/* Save Bar */}
+                <div className="sticky bottom-4 z-20 flex items-center justify-between rounded-xl border border-border bg-card/95 p-4 shadow-lg backdrop-blur">
+                  <div className="text-xs text-muted-foreground">
+                    Saving updates user session ACL immediately across all active WebSocket channels.
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {message && (
+                      <span className="text-xs font-medium text-emerald-600 animate-in fade-in">
+                        {message}
+                      </span>
+                    )}
+                    <Button onClick={() => void save()} disabled={saving} className="px-5">
+                      {saving ? "Saving Changes…" : "Save All Permissions"}
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Select a user</p>
+              <Card className="p-8 text-center text-muted-foreground">
+                Select a user from the left pane to manage their permissions.
+              </Card>
             )}
-          </Card>
+          </div>
         </div>
       </main>
     </div>

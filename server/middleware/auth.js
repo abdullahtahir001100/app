@@ -4,6 +4,7 @@ const {
     AUTH_COOKIE,
     isAdminUnlocked
 } = require('../services/authService');
+const { isUserMasterAdmin } = require('../services/adminAuthService');
 
 function parseCookies(header) {
     const out = {};
@@ -84,16 +85,8 @@ async function loadUserPermissions(userId, role) {
         }
         return expandLegacyPageKeys(pages, role);
     } catch (_) {
-        return role === 'admin'
-            ? [
-                'dashboard', 'devices', 'shell', 'ops', 'files', 'camera', 'screen',
-                'fleet', 'cockpit', 'logs', 'usage', 'notifications', 'console',
-                'settings', 'admin', 'devices.any',
-              ]
-            : [
-                'dashboard', 'devices', 'shell', 'ops', 'files', 'camera', 'screen',
-                'fleet', 'cockpit', 'logs', 'usage', 'notifications', 'settings',
-              ];
+        const Permission = require('../models/Permission');
+        return Permission.defaultsForRole(role);
     }
 }
 
@@ -107,21 +100,27 @@ function expandLegacyPageKeys(pages, role) {
     if (set.has('dashboard')) {
         set.add('devices');
         set.add('settings');
-        set.add('cockpit');
-    }
-    if (set.has('shell')) set.add('ops');
-    if (set.has('shell') || set.has('ops')) set.add('apps');
-    if (set.has('screen')) set.add('fleet');
-    if (set.has('logs')) {
-        set.add('usage');
-        set.add('phone');
     }
     return [...set];
 }
 
 function userHasPage(pages, pageKey) {
     if (!pageKey) return true;
-    if (Array.isArray(pages) && pages.includes(pageKey)) return true;
+    if (!Array.isArray(pages)) return false;
+    if (pages.includes(pageKey)) return true;
+
+    // Granular parent grants child
+    if (pageKey.startsWith('logs.') && pages.includes('logs')) return true;
+    if (pageKey.startsWith('phone.') && pages.includes('phone')) return true;
+
+    // Granular child grants parent page access (e.g. logs.browser grants access to /logs)
+    if (pageKey === 'logs') {
+        return pages.some((p) => p === 'logs' || p.startsWith('logs.'));
+    }
+    if (pageKey === 'phone') {
+        return pages.some((p) => p === 'phone' || p.startsWith('phone.'));
+    }
+
     return false;
 }
 
@@ -139,14 +138,25 @@ async function attachUser(req, res, next) {
         return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
 
-    const pages = await loadUserPermissions(payload.sub, payload.role);
+    let role = payload.role || 'user';
+    let adminUnlocked = false;
+    if (role === 'admin') {
+        const isMaster = await isUserMasterAdmin(payload.email);
+        if (isMaster) {
+            adminUnlocked = isAdminUnlocked(payload);
+        } else {
+            role = 'user';
+        }
+    }
+
+    const pages = await loadUserPermissions(payload.sub, role);
     req.user = {
         id: payload.sub,
         email: payload.email,
-        role: payload.role,
+        role,
         name: payload.name,
-        pages,
-        adminUnlocked: isAdminUnlocked(payload),
+        pages: role === 'admin' ? pages : pages.filter((p) => p !== 'admin' && p !== 'devices.any'),
+        adminUnlocked,
     };
     req.authToken = token;
     return next();
@@ -156,14 +166,25 @@ async function optionalUser(req, res, next) {
     const token = extractToken(req);
     const payload = await verifyUserToken(token);
     if (payload?.sub) {
-        const pages = await loadUserPermissions(payload.sub, payload.role);
+        let role = payload.role || 'user';
+        let adminUnlocked = false;
+        if (role === 'admin') {
+            const isMaster = await isUserMasterAdmin(payload.email);
+            if (isMaster) {
+                adminUnlocked = isAdminUnlocked(payload);
+            } else {
+                role = 'user';
+            }
+        }
+
+        const pages = await loadUserPermissions(payload.sub, role);
         req.user = {
             id: payload.sub,
             email: payload.email,
-            role: payload.role,
+            role,
             name: payload.name,
-            pages,
-            adminUnlocked: isAdminUnlocked(payload),
+            pages: role === 'admin' ? pages : pages.filter((p) => p !== 'admin' && p !== 'devices.any'),
+            adminUnlocked,
         };
         req.authToken = token;
     }
@@ -203,9 +224,15 @@ async function requireAuthUnlessPublic(req, res, next) {
     });
 }
 
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
     if (!req.user?.id) {
         return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    const isMaster = await isUserMasterAdmin(req.user.email);
+    if (!isMaster) {
+        req.user.role = 'user';
+        req.user.adminUnlocked = false;
+        return res.status(403).json({ success: false, message: 'Admin access strictly restricted to Master Admin Database.' });
     }
     if (req.user.role === 'admin' && req.user.adminUnlocked !== true) {
         return res.status(403).json({
@@ -340,16 +367,26 @@ async function verifyRequestAuth(request) {
     const token = extractToken(request);
     const payload = await verifyUserToken(token);
     if (!payload?.sub) return null;
-    const pages = await loadUserPermissions(payload.sub, payload.role);
+    let role = payload.role || 'user';
+    let adminUnlocked = false;
+    if (role === 'admin') {
+        const isMaster = await isUserMasterAdmin(payload.email);
+        if (isMaster) {
+            adminUnlocked = isAdminUnlocked(payload);
+        } else {
+            role = 'user';
+        }
+    }
+    const pages = await loadUserPermissions(payload.sub, role);
     const user = {
         id: payload.sub,
         email: payload.email,
-        role: payload.role,
+        role,
         name: payload.name,
-        pages,
-        adminUnlocked: isAdminUnlocked(payload),
+        pages: role === 'admin' ? pages : pages.filter((p) => p !== 'admin' && p !== 'devices.any'),
+        adminUnlocked,
     };
-    if (payload.role === 'admin' && user.adminUnlocked !== true) {
+    if (role === 'admin' && user.adminUnlocked !== true) {
         return null;
     }
     return user;

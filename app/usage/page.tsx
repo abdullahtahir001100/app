@@ -1,6 +1,8 @@
 "use client";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useGateway } from "@/hooks/use-gateway";
@@ -75,6 +77,7 @@ function formatDuration(seconds: number) {
 const COLORS = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6"];
 
 export default function UsagePage() {
+  const { allowed: featureAllowed, loading: featureLoading } = useFeatureAccess("usage");
   const searchParams = useSearchParams();
   const requestedDevice = searchParams.get("device") || "";
   const { devices: deviceOptions, dispatch, subscribe } = useGateway() as {
@@ -276,6 +279,29 @@ export default function UsagePage() {
       })),
     [data]
   );
+
+  if (!featureLoading && !featureAllowed) {
+    return (
+      <div className="flex min-h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main p-8 flex items-center justify-center">
+          <PremiumGate
+            featureKey="usage"
+            title="App & Time Analytics"
+            description="Deep usage analytics, 3D visualization, interactive app breakdowns, and AI-powered productivity summaries."
+            price="$19.99/mo"
+            features={[
+              "Comprehensive app runtimes and session counts",
+              "Interactive 3D bar visualization of endpoint workloads",
+              "Granular browser history vs desktop process comparison",
+              "AI copilot for employee productivity and compliance summaries",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-background">

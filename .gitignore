@@ -53,7 +53,8 @@ zenvora_agent/target.nosync/
 
 # typescript
 *.tsbuildinfo
-next-env.d.tszenvora_agent/target/
+next-env.d.ts
+zenvora_agent/target/
 zenvora_agent/target.nosync/
 *.nosync
 

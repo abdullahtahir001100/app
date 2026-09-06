@@ -2,67 +2,91 @@ const mongoose = require('mongoose');
 
 /**
  * First-class page / capability keys for ACL.
- * Keep in sync with auth-guard pathToPageKey + sidebar.
+ * - Core Free: 'dashboard', 'devices', 'settings'
+ * - Premium Full Pages: 'camera', 'screen', 'files', 'shell', 'ops', 'apps', 'fleet', 'cockpit', 'notifications', 'console', 'architecture', 'usage'
+ * - Granular Tab Add-ons:
+ *   - Logs: 'logs' (all), 'logs.browser', 'logs.activity', 'logs.apps', 'logs.usage'
+ *   - Phone: 'phone' (all), 'phone.calls', 'phone.sms', 'phone.contacts', 'phone.lock'
+ * - Admin: 'admin', 'devices.any'
  */
 const PAGE_KEYS = [
+    // Core Free Pages
     'dashboard',
     'devices',
+    'settings',
+
+    // Premium Full Pages
+    'camera',
+    'screen',
+    'files',
     'shell',
     'ops',
     'apps',
-    'files',
-    'camera',
-    'screen',
     'fleet',
     'cockpit',
-    'logs',
-    'usage',
-    'phone',
     'notifications',
     'console',
-    'settings',
     'architecture',
+    'usage',
+
+    // Activity Logs Suite & Granular Tabs
+    'logs',
+    'logs.browser',
+    'logs.activity',
+    'logs.apps',
+    'logs.usage',
+
+    // Phone Suite & Granular Tabs
+    'phone',
+    'phone.calls',
+    'phone.sms',
+    'phone.contacts',
+    'phone.lock',
+
+    // System Administration
     'admin',
     'devices.any',
 ];
 
 const PAGE_LABELS = {
-    dashboard: 'Dashboard',
-    devices: 'Devices',
-    shell: 'Shell Control',
-    ops: 'Agent Ops',
-    apps: 'Install Apps',
-    files: 'File Manager',
-    camera: 'Camera Access',
-    screen: 'Screen Monitor',
-    fleet: 'Fleet Grid',
-    cockpit: 'Cockpit',
-    logs: 'Activity Logs',
-    usage: 'Usage',
-    phone: 'Phone',
-    notifications: 'Notifications',
-    console: 'Live Console',
-    settings: 'Settings',
-    architecture: 'Architecture & Diagrams',
-    admin: 'Admin',
-    'devices.any': 'All devices (cross-user)',
+    dashboard: 'Dashboard (Free)',
+    devices: 'Devices (Free)',
+    settings: 'Settings (Free)',
+
+    camera: 'Camera Access (Premium)',
+    screen: 'Screen Monitor (Premium)',
+    files: 'File Manager (Premium)',
+    shell: 'Shell Control (Premium)',
+    ops: 'Agent Ops (Premium)',
+    apps: 'Install Apps (Premium)',
+    fleet: 'Fleet Grid (Premium)',
+    cockpit: 'Cockpit Control (Premium)',
+    notifications: 'Notifications (Premium)',
+    console: 'Live Console (Premium)',
+    architecture: 'Architecture & Diagrams (Premium)',
+    usage: 'Usage Metrics (Premium)',
+
+    // Granular Logs Capabilities
+    logs: 'Activity Logs Suite (All Tabs)',
+    'logs.browser': 'Browser History Tab (Add-on)',
+    'logs.activity': 'Activity Logs Tab (Add-on)',
+    'logs.apps': 'App Usage Tab (Add-on)',
+    'logs.usage': 'Usage Telemetry Tab (Add-on)',
+
+    // Granular Phone Capabilities
+    phone: 'Phone Suite (All Tabs)',
+    'phone.calls': 'Call Logs Tab (Add-on)',
+    'phone.sms': 'SMS Messages Tab (Add-on)',
+    'phone.contacts': 'Contacts Tab (Add-on)',
+    'phone.lock': 'Remote Device Lock Tab (Add-on)',
+
+    admin: 'Admin Dashboard (Master)',
+    'devices.any': 'All Devices Access (Cross-User)',
 };
 
 const DEFAULT_USER_PAGES = [
     'dashboard',
     'devices',
-    'shell',
-    'ops',
-    'apps',
-    'files',
-    'camera',
-    'screen',
-    'fleet',
-    'cockpit',
-    'logs',
-    'usage',
-    'phone',
-    'notifications',
     'settings',
 ];
 

@@ -94,11 +94,12 @@ class MysqlModelAdapter {
 
     // ================= USER OPERATIONS ================= //
     async findUserById(id) {
+        if (!id) return null;
         const pool = await this.getPool();
-        const [rows] = await pool.query(
-            'SELECT * FROM users WHERE _id = ? OR id = ? LIMIT 1',
-            [String(id), String(id)]
-        );
+        const isNum = /^\d+$/.test(String(id).trim());
+        const [rows] = isNum
+            ? await pool.query('SELECT * FROM users WHERE _id = ? OR id = ? LIMIT 1', [String(id), Number(id)])
+            : await pool.query('SELECT * FROM users WHERE _id = ? LIMIT 1', [String(id)]);
         return mapUser(rows[0]);
     }
 
@@ -231,11 +232,20 @@ class MysqlModelAdapter {
             return this.findUserById(id);
         }
 
-        values.push(String(id), String(id));
-        await pool.query(
-            `UPDATE users SET ${fields.join(', ')} WHERE _id = ? OR id = ?`,
-            values
-        );
+        const isNum = /^\d+$/.test(String(id).trim());
+        if (isNum) {
+            values.push(String(id), Number(id));
+            await pool.query(
+                `UPDATE users SET ${fields.join(', ')} WHERE _id = ? OR id = ?`,
+                values
+            );
+        } else {
+            values.push(String(id));
+            await pool.query(
+                `UPDATE users SET ${fields.join(', ')} WHERE _id = ?`,
+                values
+            );
+        }
 
         return this.findUserById(id);
     }
@@ -390,6 +400,18 @@ class MysqlModelAdapter {
             [String(userId), jsonPages]
         );
         return { userId, pages };
+    }
+
+    async listAllPermissions() {
+        const pool = await this.getPool();
+        const [rows] = await pool.query('SELECT * FROM permissions');
+        return rows.map((r) => {
+            let pages = [];
+            try {
+                pages = typeof r.pages === 'string' ? JSON.parse(r.pages) : r.pages;
+            } catch (_) {}
+            return { userId: String(r.user_id), pages: Array.isArray(pages) ? pages : [] };
+        });
     }
 
     // ================= AGENT CREDENTIAL OPERATIONS ================= //

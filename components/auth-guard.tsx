@@ -128,7 +128,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
           }
 
           const pageKey = pathToPageKey(pathname);
-          if (pageKey && !userCanAccessPage(role, pages, pageKey)) {
+          if (pageKey === "admin" && role !== "admin") {
             setAuthorized(false);
             setForbidden(true);
             return;

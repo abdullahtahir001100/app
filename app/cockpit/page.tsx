@@ -1,6 +1,8 @@
 "use client";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { CameraPanel } from "@/components/cockpit/camera-panel";
 import { FloatingPanel, type PanelId } from "@/components/cockpit/floating-panel";
 import { HistoryPanel } from "@/components/cockpit/history-panel";
@@ -140,6 +142,7 @@ const WORKSPACE_H = 880;
 type PanelState = { open: boolean; min: boolean; z: number };
 
 function CockpitInner() {
+  const { allowed, loading } = useFeatureAccess("cockpit");
   const router = useRouter();
   const searchParams = useSearchParams();
   const requested = searchParams.get("device") ?? "";
@@ -217,6 +220,29 @@ function CockpitInner() {
     },
     [deviceId, router]
   );
+
+  if (!loading && !allowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate
+            featureKey="cockpit"
+            title="Unified Device Cockpit"
+            description="All-in-one mission control dashboard featuring simultaneous live screen, camera, microphone, terminal, and telemetry panels."
+            price="$29.99/mo"
+            features={[
+              "Draggable, resizable multi-window workspace",
+              "Concurrent real-time screen, camera, and mic monitors",
+              "Interactive bidirectional command terminal",
+              "Live hardware metrics and system resource graphs",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

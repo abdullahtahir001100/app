@@ -44,11 +44,29 @@ async function ensurePermissionDoc(user) {
 
 router.get('/stats', async (_req, res) => {
     try {
-        const [users, devices, credentials] = await Promise.all([
-            User.countDocuments(),
-            Device.countDocuments(),
-            AgentCredential.countDocuments(),
-        ]);
+        let users = 0;
+        let devices = 0;
+        let credentials = 0;
+
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            const pool = await adapter.getPool();
+            const [uRows] = await pool.query('SELECT COUNT(*) AS cnt FROM users');
+            const [dRows] = await pool.query('SELECT COUNT(*) AS cnt FROM devices');
+            const [cRows] = await pool.query('SELECT COUNT(*) AS cnt FROM agent_credentials');
+            users = Number(uRows[0]?.cnt || 0);
+            devices = Number(dRows[0]?.cnt || 0);
+            credentials = Number(cRows[0]?.cnt || 0);
+        } else {
+            const [uCount, dCount, cCount] = await Promise.all([
+                User.countDocuments(),
+                Device.countDocuments(),
+                AgentCredential.countDocuments(),
+            ]);
+            users = uCount;
+            devices = dCount;
+            credentials = cCount;
+        }
 
         let agentsOnline = 0;
         try {
@@ -74,6 +92,25 @@ router.get('/stats', async (_req, res) => {
 
 router.get('/users', async (_req, res) => {
     try {
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            const users = await adapter.listAllUsers();
+            const perms = await adapter.listAllPermissions();
+            const byUser = new Map(perms.map((p) => [String(p.userId), p.pages]));
+
+            return res.json({
+                success: true,
+                users: users.map((u) => ({
+                    ...u,
+                    id: String(u.id || u._id),
+                    provider: u.provider || 'local',
+                    pages: byUser.get(String(u.id || u._id)) || Permission.defaultsForRole(u.role),
+                })),
+                pageKeys: Permission.PAGE_KEYS,
+                pageLabels: Permission.PAGE_LABELS || {},
+            });
+        }
+
         const users = await User.find({})
             .select('name email role provider lastLoginAt createdAt avatarUrl')
             .sort({ createdAt: -1 })
@@ -106,6 +143,20 @@ router.put('/users/:id/role', async (req, res) => {
         if (!['admin', 'user'].includes(role)) {
             return res.status(400).json({ success: false, message: 'role must be admin or user' });
         }
+
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            const user = await adapter.findUserById(req.params.id);
+            if (!user) {
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
+            const updated = await adapter.updateUser(user.id || user._id, { role });
+            if (role === 'admin') {
+                await adapter.savePermission(user.id || user._id, Permission.defaultsForRole('admin'));
+            }
+            return res.json({ success: true, user: updated });
+        }
+
         const user = await User.findByIdAndUpdate(
             req.params.id,
             { role },
@@ -129,20 +180,35 @@ router.put('/users/:id/role', async (req, res) => {
 
 router.get('/permissions/:userId', async (req, res) => {
     try {
-        const user = await User.findById(req.params.userId).select('name email role');
-        if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+        let user;
+        let pages;
+
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            user = await adapter.findUserById(req.params.userId);
+            if (!user) {
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
+            const perm = await adapter.findPermissionByUser(user.id || user._id);
+            pages = perm?.pages?.length ? perm.pages : Permission.defaultsForRole(user.role);
+        } else {
+            user = await User.findById(req.params.userId).select('name email role');
+            if (!user) {
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
+            const perm = await ensurePermissionDoc(user);
+            pages = perm.pages;
         }
-        const perm = await ensurePermissionDoc(user);
+
         res.json({
             success: true,
             user: {
-                id: String(user._id),
+                id: String(user.id || user._id),
                 name: user.name,
                 email: user.email,
                 role: user.role,
             },
-            pages: perm.pages,
+            pages,
             pageKeys: Permission.PAGE_KEYS,
             pageLabels: Permission.PAGE_LABELS || {},
         });
@@ -153,27 +219,40 @@ router.get('/permissions/:userId', async (req, res) => {
 
 router.put('/permissions/:userId', async (req, res) => {
     try {
-        const user = await User.findById(req.params.userId).select('name email role');
-        if (!user) {
-            return res.status(404).json({ success: false, message: 'User not found' });
-        }
+        let user;
+        let savedPages;
         const incoming = Array.isArray(req.body?.pages) ? req.body.pages.map(String) : [];
         const allowed = new Set(Permission.PAGE_KEYS);
         const pages = [...new Set(incoming.filter((p) => allowed.has(p)))];
 
-        const perm = await ensurePermissionDoc(user);
-        perm.pages = pages.length ? pages : Permission.defaultsForRole(user.role);
-        await perm.save();
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            user = await adapter.findUserById(req.params.userId);
+            if (!user) {
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
+            savedPages = pages.length ? pages : Permission.defaultsForRole(user.role);
+            await adapter.savePermission(user.id || user._id, savedPages);
+        } else {
+            user = await User.findById(req.params.userId).select('name email role');
+            if (!user) {
+                return res.status(404).json({ success: false, message: 'User not found' });
+            }
+            const perm = await ensurePermissionDoc(user);
+            perm.pages = pages.length ? pages : Permission.defaultsForRole(user.role);
+            await perm.save();
+            savedPages = perm.pages;
+        }
 
         res.json({
             success: true,
             user: {
-                id: String(user._id),
+                id: String(user.id || user._id),
                 name: user.name,
                 email: user.email,
                 role: user.role,
             },
-            pages: perm.pages,
+            pages: savedPages,
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

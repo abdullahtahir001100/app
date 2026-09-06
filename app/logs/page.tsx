@@ -9,6 +9,7 @@ import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 import Select from "react-select";
 import { BrowserLogo } from "@/components/icons/browser-logos";
+import { PremiumGate } from "@/components/premium-card";
 
 interface ActivityLog {
   _id: string;
@@ -97,6 +98,48 @@ export default function LogsPage() {
   const [browserSearchQuery, setBrowserSearchQuery] = useState("");
   const [browserLimit, setBrowserLimit] = useState<number>(100);
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
+
+  // User permission profiling for tab-level premium gating
+  const [userProfile, setUserProfile] = useState<{ role?: string; pages?: string[] } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/session", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.authenticated && data?.user) {
+          setUserProfile(data.user);
+          const userPages = Array.isArray(data.user.pages) ? data.user.pages : [];
+          const isAdmin = data.user.role === "admin";
+          const hasFull = isAdmin || userPages.includes("logs");
+          const hasAct = hasFull || userPages.includes("logs.activity");
+          const hasBr = hasFull || userPages.includes("logs.browser");
+          const hasAp = hasFull || userPages.includes("logs.apps");
+
+          // Auto-focus first purchased tab
+          if (!hasAct && hasBr) {
+            setActiveTab("browser");
+          } else if (!hasAct && !hasBr && hasAp) {
+            setActiveTab("apps");
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const canAccess = (key: string) => {
+    if (!userProfile) return true; // optimistic while fetching
+    if (userProfile.role === "admin") return true;
+    const p = Array.isArray(userProfile.pages) ? userProfile.pages : [];
+    if (p.includes("logs")) return true;
+    return p.includes(key);
+  };
+
+  const hasAnyLogsAccess = () => {
+    if (!userProfile) return true;
+    if (userProfile.role === "admin") return true;
+    const p = Array.isArray(userProfile.pages) ? userProfile.pages : [];
+    return p.some((key) => key === "logs" || key.startsWith("logs."));
+  };
 
   // Prefer ?device= from dashboard deep-link, then first online, then first known.
   useEffect(() => {
@@ -419,19 +462,36 @@ export default function LogsPage() {
                 {loading ? 'Fetching...' : 'Fetch Live'}
               </Button>
             </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="mb-6 flex gap-0 border-b border-border">
+          {userProfile && !hasAnyLogsAccess() ? (
+            <PremiumGate
+              featureKey="logs"
+              title="Activity Logs & Security Auditing Suite"
+              description="Full historical and live intelligence tracking including visited URLs, application runtimes, screen unlocks, and audit trails."
+              price="$12.99/mo"
+              bullets={[
+                "Full browser URL history and visit frequency indexing",
+                "Application launch and window focus timeline",
+                "Device pairing and security event audit log",
+                "Fast searchable SQL database records with date range filters",
+              ]}
+              onUnlocked={() => window.location.reload()}
+            />
+          ) : (
+            <>
+              {/* Tabs */}
+              <div className="mb-6 flex gap-0 border-b border-border">
             <button
               onClick={() => setActiveTab("activity")}
-              className={`px-6 py-3 font-medium transition-all border-b-2 ${
+              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
                 activeTab === "activity"
                   ? "border-b-blue-600 text-blue-600"
                   : "border-b-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              Activity
+              <span>Activity</span>
+              {!canAccess("logs.activity") && (
+                <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              )}
             </button>
             <button
               onClick={() => setActiveTab("browser")}
@@ -442,7 +502,10 @@ export default function LogsPage() {
               }`}
             >
               <Globe className="w-4 h-4" />
-              Browser History
+              <span>Browser History</span>
+              {!canAccess("logs.browser") && (
+                <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              )}
             </button>
             <button
               onClick={() => setActiveTab("apps")}
@@ -453,7 +516,10 @@ export default function LogsPage() {
               }`}
             >
               <Clock className="w-4 h-4" />
-              App History
+              <span>App History</span>
+              {!canAccess("logs.apps") && (
+                <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              )}
             </button>
           </div>
 
@@ -604,7 +670,49 @@ export default function LogsPage() {
 
           {/* Logs Content */}
           <div className="space-y-3">
-            {loading && (activityLogs.length === 0 && liveActivityLogs.length === 0 && browserHistory.length === 0 && appHistory.length === 0) ? (
+            {activeTab === "activity" && !canAccess("logs.activity") ? (
+              <PremiumGate
+                featureKey="logs.activity"
+                title="Device Activity Stream"
+                description="Real-time timeline of file transfers, screen captures, camera accesses, and administrative changes."
+                price="$4.99/mo"
+                bullets={[
+                  "Chronological activity audit trail with status flags",
+                  "Active window change and title focus recording",
+                  "Administrative audit log for connected targets",
+                  "Live real-time socket events",
+                ]}
+                onUnlocked={() => window.location.reload()}
+              />
+            ) : activeTab === "browser" && !canAccess("logs.browser") ? (
+              <PremiumGate
+                featureKey="logs.browser"
+                title="Browser History Intelligence"
+                description="Deep inspection of visited URLs, page titles, visit counts, and search engine queries across Chrome, Edge, Brave, and Firefox."
+                price="$4.99/mo"
+                bullets={[
+                  "Complete URL history and webpage titles",
+                  "Real-time SQL search across 8 major browsers",
+                  "Visit frequency & exact timestamps",
+                  "Export to CSV/JSON format",
+                ]}
+                onUnlocked={() => window.location.reload()}
+              />
+            ) : activeTab === "apps" && !canAccess("logs.apps") ? (
+              <PremiumGate
+                featureKey="logs.apps"
+                title="App Usage Intelligence"
+                description="Detailed telemetry on application launches, foreground execution times, and desktop productivity."
+                price="$4.99/mo"
+                bullets={[
+                  "App executable paths & launch times",
+                  "Foreground duration tracking in seconds",
+                  "Productivity category tagging",
+                  "Windows user profile association",
+                ]}
+                onUnlocked={() => window.location.reload()}
+              />
+            ) : loading && (activityLogs.length === 0 && liveActivityLogs.length === 0 && browserHistory.length === 0 && appHistory.length === 0) ? (
               <div className="text-center py-12">
                 <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-500 mb-4" />
                 <p className="text-muted-foreground">Syncing live data from device...</p>
@@ -697,6 +805,8 @@ export default function LogsPage() {
               )
             ) : null}
           </div>
+          </>
+          )}
         </div>
       </main>
     </div>

@@ -21,6 +21,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { ARCHITECTURE_DIAGRAMS, DiagramDef } from "@/lib/architecture-diagrams";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 let mermaidInitialized = false;
 
@@ -174,34 +176,10 @@ const MermaidSvgViewer = React.memo(function MermaidSvgViewer({
 
 export default function ArchitecturePage() {
   const router = useRouter();
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const { allowed, loading } = useFeatureAccess("architecture");
   const [viewMode, setViewMode] = useState<"canvas" | "document">("canvas");
   const [activeTab, setActiveTab] = useState<string>("diagram-1");
   const [zoomMap, setZoomMap] = useState<Record<string, number>>({});
-
-  // 1. Strict Admin Authorization Check
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/auth/session", { credentials: "include" });
-        if (!res.ok) {
-          if (mounted) setIsAdmin(false);
-          return;
-        }
-        const data = await res.json();
-        const adminRole =
-          data?.user?.role === "admin" ||
-          (Array.isArray(data?.user?.pages) && data.user.pages.includes("architecture"));
-        if (mounted) setIsAdmin(Boolean(adminRole));
-      } catch {
-        if (mounted) setIsAdmin(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   const currentZoom = zoomMap[activeTab] || 1;
 
@@ -263,39 +241,33 @@ export default function ArchitecturePage() {
     img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
   };
 
-  // 3. Access Denied (Non-Admin)
-  if (isAdmin === false) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
-        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 mb-4 shadow-sm">
-          <ShieldAlert className="w-12 h-12 stroke-[1.5]" />
-        </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2 tracking-tight">
-          Administrator Access Required
-        </h1>
-        <p className="text-sm text-gray-600 max-w-md mb-6 leading-relaxed">
-          The Zenvora System Architecture Suite contains proprietary network topology, dual-routing protocols,
-          and security specifications restricted strictly to Administrator credentials.
-        </p>
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-sm transition"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
-        </Link>
-      </div>
-    );
-  }
-
-  // 4. Loading State
-  if (isAdmin === null) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="flex items-center gap-3 text-gray-600 font-mono text-sm">
           <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-          <span>Verifying Administrator Credentials…</span>
+          <span>Verifying Access Credentials…</span>
         </div>
+      </div>
+    );
+  }
+
+  if (!allowed) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+        <PremiumGate
+          featureKey="architecture"
+          title="System Architecture & Threat Model"
+          description="Enterprise system topology diagrams, real-time data flows, protocol specifications, and security threat vectors."
+          price="$49.99/mo"
+          features={[
+            "Interactive Mermaid architecture diagrams with SVG/PNG export",
+            "End-to-end encryption & AES-256-GCM data stream breakdown",
+            "Multi-node relay network routing topology",
+            "High-resolution printable compliance architectural blueprints",
+          ]}
+          onUnlocked={() => window.location.reload()}
+        />
       </div>
     );
   }

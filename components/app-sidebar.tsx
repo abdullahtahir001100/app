@@ -29,6 +29,7 @@ import {
   Volume2,
   Radio,
   Layers,
+  Lock,
 } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -364,9 +365,13 @@ function AppSidebarContent() {
   };
 
   const can = (page: string) => {
-    if (!userProfile) return page !== "console" && page !== "admin";
+    if (!userProfile) return page === "dashboard" || page === "devices" || page === "settings";
     if (userProfile.role === "admin") return true;
-    return Array.isArray(userProfile.pages) && userProfile.pages.includes(page);
+    if (!Array.isArray(userProfile.pages)) return false;
+    if (userProfile.pages.includes(page)) return true;
+    if (page === "logs") return userProfile.pages.some((p) => p === "logs" || p.startsWith("logs."));
+    if (page === "phone") return userProfile.pages.some((p) => p === "phone" || p.startsWith("phone."));
+    return false;
   };
 
   const coreMenuItems = [
@@ -379,7 +384,7 @@ function AppSidebarContent() {
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
     { icon: Settings, label: "Settings", href: "/settings", page: "settings" },
     { icon: Layers, label: "Architecture", href: "/architecture", page: "architecture" },
-  ].filter((item) => can(item.page));
+  ];
 
   const premiumMenuItems = [
     { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "fleet" },
@@ -388,7 +393,7 @@ function AppSidebarContent() {
     { icon: Package, label: "Install Apps", href: "/apps", page: "apps" },
     { icon: Activity, label: "Usage", href: "/usage", page: "usage" },
     { icon: Phone, label: "Phone", href: "/phone", page: "phone" },
-  ].filter((item) => can(item.page));
+  ];
 
   const adminMenuItems = can("admin")
     ? [
@@ -618,17 +623,30 @@ function AppSidebarContent() {
               )}
             </div>
             <nav className="space-y-2">
-              {coreMenuItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setIsOpen(false)}
-                  className="flex items-center gap-3 px-4 py-3 text-sm rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
-                >
-                  <item.icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </Link>
-              ))}
+              {coreMenuItems.map((item) => {
+                const isLocked = item.page && !can(item.page);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-3 text-sm rounded-lg transition-colors group ${
+                      isLocked
+                        ? "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                    }`}
+                  >
+                    <item.icon className={`w-4 h-4 shrink-0 ${isLocked ? "text-sidebar-foreground/50" : ""}`} />
+                    <span className="flex-1 truncate">{item.label}</span>
+                    {isLocked && (
+                      <span className="flex items-center gap-1 text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
+                        <Lock className="w-2.5 h-2.5" />
+                        PRO
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
             </nav>
           </div>
 
@@ -638,17 +656,30 @@ function AppSidebarContent() {
                 Premium
               </p>
               <nav className="space-y-2">
-                {premiumMenuItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setIsOpen(false)}
-                    className="flex items-center gap-3 px-4 py-3 text-sm rounded-lg text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
-                  >
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.label}</span>
-                  </Link>
-                ))}
+                {premiumMenuItems.map((item) => {
+                  const isLocked = item.page && !can(item.page);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setIsOpen(false)}
+                      className={`flex items-center gap-3 px-4 py-3 text-sm rounded-lg transition-colors group ${
+                        isLocked
+                          ? "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      }`}
+                    >
+                      <item.icon className={`w-4 h-4 shrink-0 ${isLocked ? "text-sidebar-foreground/50" : ""}`} />
+                      <span className="flex-1 truncate">{item.label}</span>
+                      {isLocked && (
+                        <span className="flex items-center gap-1 text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
+                          <Lock className="w-2.5 h-2.5" />
+                          PRO
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
               </nav>
             </div>
           )}

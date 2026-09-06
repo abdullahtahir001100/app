@@ -5,6 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ExternalLink, Trash2, MonitorSmartphone } from "lucide-react";
 import { useGateway } from "@/hooks/use-gateway";
 import { AgentChatPanel } from "@/components/shell/agent-chat-panel";
+import { AppSidebar } from "@/components/app-sidebar";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 type TerminalLine = {
   id: string;
@@ -20,6 +23,7 @@ function newShellId() {
 }
 
 export default function ShellPage() {
+  const { allowed, loading } = useFeatureAccess("shell");
   const router = useRouter();
   const searchParams = useSearchParams();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -283,6 +287,17 @@ export default function ShellPage() {
   const focusInput = () => {
     inputRef.current?.focus();
   };
+
+  if (!loading && !allowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate featureKey="shell" onUnlocked={() => window.location.reload()} />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#f5f7fb] text-slate-800">

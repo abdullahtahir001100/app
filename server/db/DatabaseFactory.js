@@ -5,7 +5,7 @@ const { PostgresVirtualFolderRepository } = require('./postgres/PostgresVirtualF
 const { MysqlVirtualFileRepository } = require('./mysql/MysqlVirtualFileRepository');
 const { MysqlVirtualFolderRepository } = require('./mysql/MysqlVirtualFolderRepository');
 const { ensureMongooseConnected } = require('./mongo/connection');
-const { ensureMysqlConnected, isMysqlConnected } = require('./mysql/connection');
+const { ensureMysqlConnected, isMysqlConnected, resetMysqlPool } = require('./mysql/connection');
 
 let activeProvider = null;
 let fileRepository = null;
@@ -32,6 +32,9 @@ function setActiveProvider(provider) {
         fileRepository = null;
         folderRepository = null;
         connectPromise = null;
+        try {
+            void resetMysqlPool();
+        } catch (_) {}
     }
 }
 

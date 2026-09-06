@@ -7,6 +7,7 @@ const Device = require('../models/Device');
 const { ensureMongooseConnected } = require('../db/mongo/connection');
 const { sendPasswordResetOtp } = require('./mailService');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+const { isUserMasterAdmin, enforceAdminRoleIsolation } = require('./adminAuthService');
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
@@ -90,8 +91,21 @@ async function verifyUserToken(token) {
             if (!matches) return null;
         }
 
+        // Strictly verify admin authorization against Master Admin Database
+        let role = payload.role || user.role || 'user';
+        let adminUnlocked = payload.adminUnlocked === true;
+        if (role === 'admin') {
+            const isMaster = await isUserMasterAdmin(payload.email || user.email);
+            if (!isMaster) {
+                role = 'user';
+                adminUnlocked = false;
+            }
+        }
+
         return {
             ...payload,
+            role,
+            adminUnlocked,
             avatarUrl: user.avatarUrl || ''
         };
     } catch {
@@ -117,8 +131,11 @@ function verifyUserTokenFast(token) {
 
 async function ensureAuthDatabase() {
     if (isMysql()) {
-        const { ensureMysqlConnected } = require('../db/mysql/connection');
-        await ensureMysqlConnected();
+        const { ensureMysqlConnected, initializeMysqlTables } = require('../db/mysql/connection');
+        const p = await ensureMysqlConnected();
+        try {
+            await initializeMysqlTables(p);
+        } catch (_) {}
     } else {
         await ensureMongooseConnected();
     }
@@ -343,12 +360,13 @@ async function registerUser({ email, password, passwordHash, name, provider = 'l
         : await User.countDocuments();
     const pairingToken = await generateUniqueUserField('pairingToken');
     const pairingUserId = await generateUniqueUserField('pairingUserId');
+    const isMasterAdmin = await isUserMasterAdmin(normalized);
 
     const userData = {
         email: normalized,
         passwordHash: passwordHashValue,
         name: String(name || normalized.split('@')[0] || 'User').trim(),
-        role: userCount === 0 ? 'admin' : 'user',
+        role: isMasterAdmin ? 'admin' : 'user',
         provider,
         googleId: String(googleId || '').trim(),
         avatarUrl: String(avatarUrl || '').trim(),
@@ -366,7 +384,7 @@ async function registerUser({ email, password, passwordHash, name, provider = 'l
 
 async function loginUser({ email, password }) {
     const normalized = String(email || '').trim().toLowerCase();
-    const user = isMysql()
+    let user = isMysql()
         ? await getMysqlAdapter().findUserByEmail(normalized)
         : await User.findOne({ email: normalized });
     if (!user) {
@@ -388,6 +406,7 @@ async function loginUser({ email, password }) {
         throw error;
     }
 
+    user = await enforceAdminRoleIsolation(user);
     return await ensureUserPairingFields(user);
 }
 
@@ -434,7 +453,7 @@ async function upsertGoogleUser(profile) {
             user = await ensureUserPairingFields(user);
         }
 
-        return user;
+        return await enforceAdminRoleIsolation(user);
     }
 
     let user = await User.findOne({ $or: [{ googleId }, { email: normalized }] });
@@ -465,7 +484,7 @@ async function upsertGoogleUser(profile) {
         user = await ensureUserPairingFields(await User.findById(user._id));
     }
 
-    return user;
+    return await enforceAdminRoleIsolation(user);
 }
 
 async function requestPasswordReset(email) {

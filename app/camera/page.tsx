@@ -18,6 +18,8 @@ import {
   getPreferredMediaTransport,
   type MediaTransport,
 } from "@/lib/media-transport";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 function b64ToBlob(b64: string, mimeType: string): Blob {
   const binary = atob(b64);
@@ -46,6 +48,7 @@ type DetectedCamera = {
 };
 
 export default function CameraPage() {
+  const { allowed: featureAllowed, loading: featureLoading } = useFeatureAccess("camera");
   const searchParams = useSearchParams();
   const requestedDevice = searchParams.get("device") || "";
   const {
@@ -887,6 +890,18 @@ export default function CameraPage() {
     observer.observe(stage);
     return () => observer.disconnect();
   }, []);
+
+  if (!featureLoading && !featureAllowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate featureKey="camera" onUnlocked={() => window.location.reload()} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-background">
       <canvas ref={rgbCanvasRef} className="hidden" aria-hidden />

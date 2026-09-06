@@ -252,8 +252,9 @@ router.get('/session', attachUser, async (req, res) => {
     const user = isMysql()
         ? await getMysqlAdapter().findUserById(payload.sub)
         : await User.findById(payload.sub).lean();
-    const adminUnlocked = payload.role === 'admin'
-        ? payload.adminUnlocked === true
+    const effectiveRole = req.user?.role || 'user';
+    const adminUnlocked = effectiveRole === 'admin'
+        ? (payload.adminUnlocked === true && req.user?.adminUnlocked === true)
         : true;
     return res.status(200).json({
         success: true,
@@ -263,7 +264,7 @@ router.get('/session', attachUser, async (req, res) => {
             id: payload.sub,
             email: payload.email,
             name: payload.name,
-            role: payload.role || user?.role || 'user',
+            role: effectiveRole,
             pages: req.user?.pages || [],
             avatarUrl: user?.avatarUrl || payload?.avatarUrl || null,
             pairingToken: user?.pairingToken || null,

@@ -32,11 +32,15 @@ import {
   PROVIDER_OPTIONS,
   type ProviderKey,
 } from "@/hooks/use-api-config";
+import { AppSidebar } from "@/components/app-sidebar";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 /* ── Constants ─────────────────────────────────────────────── */
 const MAX_FILE_SIZE = 500 * 1024; // 500 KB
 
 function OpsPageInner() {
+  const { allowed, loading } = useFeatureAccess("ops");
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedDeviceRef = useRef("");
@@ -206,6 +210,29 @@ function OpsPageInner() {
     ? activeProvider.model.split("/").pop()?.split("-").slice(0, 3).join(" ") ||
       activeProvider.model
     : "2.0 Flash";
+
+  if (!loading && !allowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate
+            featureKey="ops"
+            title="Agent Ops Canvas"
+            description="Multi-window visual canvas for simultaneous device stream monitoring, remote controls, and AI agent operations."
+            price="$29.99/mo"
+            features={[
+              "Multi-agent canvas with real-time video feeds",
+              "Concurrent screen, camera, and terminal windows",
+              "Multi-model AI reasoning copilot (OpenAI, Claude, DeepSeek)",
+              "Automated remote scripting and bulk command execution",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#fafafa] text-slate-800 font-sans">

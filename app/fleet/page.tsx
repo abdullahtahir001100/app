@@ -1,6 +1,8 @@
 "use client";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { Button } from "@/components/ui/button";
 import { useGateway } from "@/hooks/use-gateway";
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
@@ -41,6 +43,7 @@ const THUMB_MAX_WIDTH = 480;
 type PendingFrame = { blob: Blob };
 
 export default function FleetPage() {
+  const { allowed, loading } = useFeatureAccess("fleet");
   const router = useRouter();
   const {
     isConnected,
@@ -348,6 +351,29 @@ export default function FleetPage() {
   };
 
   const onlineCount = devices.filter((d) => d.status === "online").length;
+
+  if (!loading && !allowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate
+            featureKey="fleet"
+            title="Fleet Grid View"
+            description="Infinite zoomable and pannable grid view for real-time visual monitoring of thousands of device screens."
+            price="$29.99/mo"
+            features={[
+              "Infinite 2D canvas with hardware-accelerated zoom and pan",
+              "Viewport-adaptive multi-screen video streaming",
+              "Instant one-click Cockpit drill-down",
+              "Filter by online status and device hostname query",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

@@ -539,6 +539,16 @@ function getMysqlPool() {
     return pool;
 }
 
+async function resetMysqlPool() {
+    if (pool) {
+        try {
+            await pool.end();
+        } catch (_) {}
+        pool = null;
+    }
+    tablesInitialized = false;
+}
+
 async function testMysqlConnection(targetConfig) {
     const start = Date.now();
     let conn = null;
@@ -648,6 +658,7 @@ module.exports = {
     ensureMysqlConnected,
     isMysqlConnected,
     getMysqlPool,
+    resetMysqlPool,
     initializeMysqlTables,
     testMysqlConnection,
     parseMysqlUri,

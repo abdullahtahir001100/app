@@ -30,6 +30,8 @@ import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 import { toast } from "sonner";
 import Select from "react-select";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 type JobLine = {
   id: string;
@@ -53,6 +55,7 @@ const WINGET_PRESETS = [
 ];
 
 export default function InstallAppsPage() {
+  const { allowed, loading } = useFeatureAccess("apps");
   const searchParams = useSearchParams();
   const { devices, dispatch, subscribe, resolveTarget, ensureConnected } = useGateway();
   const [selectedDevice, setSelectedDevice] = useState(searchParams.get("device") || "");
@@ -293,6 +296,29 @@ export default function InstallAppsPage() {
   }));
 
   const activeDeviceObj = devices.find((d) => d.value === selectedDevice);
+
+  if (!loading && !allowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate
+            featureKey="apps"
+            title="Software & App Deployment"
+            description="Remotely deploy and install software, silent MSI packages, and Winget applications across your endpoints."
+            price="$19.99/mo"
+            features={[
+              "Direct 500MB chunked binary uploads",
+              "Silent Winget and MSI installer automation",
+              "Concurrent batch software rollout",
+              "Live remote terminal installation monitoring",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

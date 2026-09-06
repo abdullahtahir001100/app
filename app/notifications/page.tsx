@@ -1,6 +1,8 @@
 "use client";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { PremiumGate } from "@/components/premium-card";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { MessageCircle, Mail, Smartphone, Settings, Trash2, Archive, MoreVertical, Filter, Search, RefreshCw } from "lucide-react";
@@ -53,6 +55,7 @@ interface DeviceOption {
 }
 
 export default function NotificationsPage() {
+  const { allowed: featureAllowed, loading: featureLoading } = useFeatureAccess("notifications");
   const { devices: deviceOptionsRaw, sendCommand } = useGateway();
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [filter, setFilter] = useState("all");
@@ -216,6 +219,29 @@ const filteredNotifications = notifications.filter((n) => {
 });
 
   const selectedDeviceOption = deviceOptions.find(d => d.value === selectedDevice);
+
+  if (!featureLoading && !featureAllowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate
+            featureKey="notifications"
+            title="Device Notifications Sync"
+            description="Synchronize, filter, and alert on real-time mobile push notifications, chat messages, and system dialogs."
+            price="$14.99/mo"
+            features={[
+              "Real-time intercept of WhatsApp, Telegram, Instagram & SMS alerts",
+              "Search and filter by device or application origin",
+              "Interactive mark as read and notification archive",
+              "Instant toast and desktop sound alerts",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">
