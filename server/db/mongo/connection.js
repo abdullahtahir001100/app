@@ -27,13 +27,18 @@ async function ensureMongooseConnected() {
     return connectMongoose();
 }
 
-function isMongooseConnected() {
-    return mongoose.connection.readyState === 1;
+async function disconnectMongoose() {
+    if (mongoose.connection.readyState !== 0) {
+        try {
+            await mongoose.disconnect();
+        } catch (_) {}
+    }
 }
 
 module.exports = {
     connectMongoose,
     ensureMongooseConnected,
     isMongooseConnected,
+    disconnectMongoose,
     MONGO_OPTIONS,
 };

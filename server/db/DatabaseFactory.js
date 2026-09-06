@@ -32,8 +32,24 @@ function setActiveProvider(provider) {
         fileRepository = null;
         folderRepository = null;
         connectPromise = null;
+
         try {
-            void resetMysqlPool();
+            if (p === 'mysql') {
+                const { disconnectMongoose } = require('./mongo/connection');
+                void disconnectMongoose();
+            } else if (p === 'mongo') {
+                void resetMysqlPool();
+            }
+        } catch (_) {}
+
+        try {
+            const { flushDeviceCaches } = require('../sockets/handler');
+            flushDeviceCaches();
+        } catch (_) {}
+
+        try {
+            const { clearAuthCaches } = require('../services/authService');
+            clearAuthCaches();
         } catch (_) {}
     }
 }
@@ -76,14 +92,31 @@ async function connectDatabase() {
     activeProvider = provider;
 
     if (provider === 'mysql') {
+        try {
+            const { disconnectMongoose } = require('./mongo/connection');
+            await disconnectMongoose();
+        } catch (_) {}
         await ensureMysqlConnected();
         console.log('=> MySQL connection pool and schema verified.');
     } else if (provider === 'postgres') {
         console.log('=> PostgreSQL ready.');
     } else {
+        try {
+            await resetMysqlPool();
+        } catch (_) {}
         await ensureMongooseConnected();
         console.log('=> MongoDB connection verified.');
     }
+
+    try {
+        const { flushDeviceCaches } = require('../sockets/handler');
+        flushDeviceCaches();
+    } catch (_) {}
+
+    try {
+        const { clearAuthCaches } = require('../services/authService');
+        clearAuthCaches();
+    } catch (_) {}
 
     const repos = createRepositories(provider);
     fileRepository = repos.fileRepository;

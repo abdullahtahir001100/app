@@ -17,6 +17,12 @@ async function resolveUserId(pairingToken, pairingUserId) {
     const uid = String(pairingUserId || '').trim();
     if (!token || !uid) return null;
 
+    const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+    if (isMysql()) {
+        const user = await getMysqlAdapter().findUserByPairing(token, uid);
+        return user?._id || user?.id ? String(user._id || user.id) : null;
+    }
+
     const asNumToken = Number(token);
     const asNumUid = Number(uid);
     const query = {

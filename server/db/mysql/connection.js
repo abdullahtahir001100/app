@@ -512,7 +512,10 @@ async function initializeMysqlTables(targetPool) {
             `ALTER TABLE users ADD COLUMN admin_pin_hash TEXT`,
             `ALTER TABLE users ADD INDEX idx_user_google (google_id)`,
             `ALTER TABLE users ADD INDEX idx_user_pairing (pairing_token, pairing_user_id)`,
-            `ALTER TABLE devices ADD COLUMN cloudinary_enabled TINYINT(1) DEFAULT 1`
+            `ALTER TABLE devices ADD COLUMN cloudinary_enabled TINYINT(1) DEFAULT 1`,
+            `ALTER TABLE activity_logs ADD COLUMN category VARCHAR(128) DEFAULT 'general'`,
+            `ALTER TABLE activity_logs ADD COLUMN app_name VARCHAR(255) DEFAULT ''`,
+            `ALTER TABLE activity_logs ADD COLUMN duration INT DEFAULT 0`
         ];
         for (const migration of migrations) {
             try {

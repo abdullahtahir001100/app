@@ -686,9 +686,11 @@ router.post('/db-config', attachUser, requirePagePermission('settings.custom_db'
             console.warn('Could not update .env file:', fsErr);
         }
 
-        void factory.connectDatabase().catch((cErr) => {
+        try {
+            await factory.connectDatabase();
+        } catch (cErr) {
             console.error(`Database reconnect on switch to ${chosenProvider} failed:`, cErr.message);
-        });
+        }
 
         return res.status(200).json({
             success: true,

@@ -549,14 +549,26 @@ class MysqlModelAdapter {
         const deviceId = String(data.deviceId || '');
         const action = String(data.action || 'system');
         const status = String(data.status || 'info');
+        const category = String(data.category || data.details?.category || 'general');
+        const appName = String(data.appName || data.processName || data.details?.appName || '');
+        const duration = Number(data.duration || data.metadata?.duration || 0) || 0;
         const details = JSON.stringify(data.details || data.metadata || {});
 
-        const [result] = await pool.query(
-            `INSERT INTO activity_logs (user_id, device_id, action, status, details, created_at)
-             VALUES (?, ?, ?, ?, ?, NOW())`,
-            [userId, deviceId, action, status, details]
-        );
-        return { id: result.insertId, userId, deviceId, action, status, createdAt: new Date() };
+        try {
+            const [result] = await pool.query(
+                `INSERT INTO activity_logs (user_id, device_id, action, status, category, app_name, duration, details, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+                [userId, deviceId, action, status, category, appName, duration, details]
+            );
+            return { id: result.insertId, userId, deviceId, action, status, category, appName, duration, createdAt: new Date() };
+        } catch (_) {
+            const [result] = await pool.query(
+                `INSERT INTO activity_logs (user_id, device_id, action, status, details, created_at)
+                 VALUES (?, ?, ?, ?, ?, NOW())`,
+                [userId, deviceId, action, status, details]
+            );
+            return { id: result.insertId, userId, deviceId, action, status, createdAt: new Date() };
+        }
     }
 
     async findActivityLogs(filter = {}, options = {}) {
@@ -602,6 +614,9 @@ class MysqlModelAdapter {
                 deviceId: r.device_id,
                 action: r.action,
                 status: r.status,
+                category: r.category || details?.category || 'general',
+                appName: r.app_name || details?.appName || '',
+                duration: Number(r.duration || details?.duration || 0),
                 details,
                 createdAt: r.created_at,
             };
@@ -1137,6 +1152,334 @@ class MysqlModelAdapter {
             phone: r.phone,
             createdAt: r.created_at,
         }));
+    }
+
+    // ================= ANALYTICS & USAGE OPERATIONS ================= //
+    async aggregateBrowserStats(filter = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const [rows] = await pool.query(
+            `SELECT browser AS _id, COUNT(*) AS count, MAX(visit_time) AS lastVisit
+             FROM browser_histories
+             ${whereClause}
+             GROUP BY browser
+             ORDER BY count DESC`,
+            values
+        );
+
+        return rows.map((r) => ({
+            _id: r._id || 'Unknown',
+            count: Number(r.count || 0),
+            lastVisit: r.lastVisit ? new Date(r.lastVisit).toISOString() : null,
+        }));
+    }
+
+    async aggregateActivityStats(filter = {}) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        let rows = [];
+        try {
+            const [r] = await pool.query(
+                `SELECT COALESCE(NULLIF(category, ''), action) AS _id, COUNT(*) AS count, MAX(created_at) AS lastActivity
+                 FROM activity_logs
+                 ${whereClause}
+                 GROUP BY _id
+                 ORDER BY count DESC`,
+                values
+            );
+            rows = r;
+        } catch (_) {
+            const [r] = await pool.query(
+                `SELECT action AS _id, COUNT(*) AS count, MAX(created_at) AS lastActivity
+                 FROM activity_logs
+                 ${whereClause}
+                 GROUP BY action
+                 ORDER BY count DESC`,
+                values
+            );
+            rows = r;
+        }
+
+        return rows.map((r) => ({
+            _id: r._id || 'system',
+            count: Number(r.count || 0),
+            lastActivity: r.lastActivity ? new Date(r.lastActivity).toISOString() : null,
+        }));
+    }
+
+    async getTopDomains(filter = {}, limit = 20) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        conditions.push("domain IS NOT NULL AND domain != ''");
+        const whereClause = `WHERE ${conditions.join(' AND ')}`;
+        const cappedLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+
+        const [rows] = await pool.query(
+            `SELECT domain AS _id, COUNT(*) AS count, MAX(visit_time) AS lastVisit
+             FROM browser_histories
+             ${whereClause}
+             GROUP BY domain
+             ORDER BY count DESC
+             LIMIT ?`,
+            [...values, cappedLimit]
+        );
+
+        return rows.map((r) => ({
+            _id: r._id,
+            count: Number(r.count || 0),
+            lastVisit: r.lastVisit ? new Date(r.lastVisit).toISOString() : null,
+        }));
+    }
+
+    async getTopApps(filter = {}, limit = 20) {
+        const pool = await this.getPool();
+        const conditions = [];
+        const values = [];
+
+        if (filter.userId) {
+            conditions.push('user_id = ?');
+            values.push(String(filter.userId));
+        }
+        if (filter.deviceId) {
+            conditions.push('device_id = ?');
+            values.push(String(filter.deviceId));
+        }
+
+        conditions.push("app_name IS NOT NULL AND app_name != ''");
+        const whereClause = `WHERE ${conditions.join(' AND ')}`;
+        const cappedLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+
+        const [rows] = await pool.query(
+            `SELECT app_name AS _id, COUNT(*) AS count, MAX(last_opened) AS lastOpened
+             FROM app_histories
+             ${whereClause}
+             GROUP BY app_name
+             ORDER BY count DESC
+             LIMIT ?`,
+            [...values, cappedLimit]
+        );
+
+        return rows.map((r) => ({
+            _id: r._id,
+            count: Number(r.count || 0),
+            lastOpened: r.lastOpened ? new Date(r.lastOpened).toISOString() : null,
+        }));
+    }
+
+    async getUsageData({ userId, deviceId, start, end }) {
+        const pool = await this.getPool();
+        const appConditions = ['user_id = ?', 'last_opened >= ?', 'last_opened <= ?', 'duration > 0', "category != 'usagestats'"];
+        const appValues = [String(userId), start, end];
+        if (deviceId) {
+            appConditions.push('device_id = ?');
+            appValues.push(String(deviceId));
+        }
+
+        const actConditions = ['user_id = ?', 'created_at >= ?', 'created_at <= ?', "action = 'app_closed'"];
+        const actValues = [String(userId), start, end];
+        if (deviceId) {
+            actConditions.push('device_id = ?');
+            actValues.push(String(deviceId));
+        }
+
+        const [appRows] = await pool.query(
+            `SELECT * FROM app_histories WHERE ${appConditions.join(' AND ')} ORDER BY last_opened DESC LIMIT 2000`,
+            appValues
+        );
+
+        let actRows = [];
+        try {
+            const [r] = await pool.query(
+                `SELECT * FROM activity_logs WHERE ${actConditions.join(' AND ')} ORDER BY created_at DESC LIMIT 2000`,
+                actValues
+            );
+            actRows = r;
+        } catch (_) {}
+
+        const byApp = new Map();
+        const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, duration: 0, sessions: 0 }));
+        const timeline = [];
+
+        const add = (name, duration, at) => {
+            const seconds = Math.max(0, Number(duration) || 0);
+            if (seconds <= 0) return;
+            const appName = String(name || 'Unknown').trim() || 'Unknown';
+            const prev = byApp.get(appName) || { appName, duration: 0, sessions: 0, lastOpened: at };
+            prev.duration += seconds;
+            prev.sessions += 1;
+            if (at && (!prev.lastOpened || at > prev.lastOpened)) prev.lastOpened = at;
+            byApp.set(appName, prev);
+            const opened = at ? new Date(at) : null;
+            if (opened && !Number.isNaN(opened.getTime())) {
+                hourly[opened.getHours()].duration += seconds;
+                hourly[opened.getHours()].sessions += 1;
+            }
+            timeline.push({ appName, duration: seconds, lastOpened: at });
+        };
+
+        const closed = actRows.filter((row) => {
+            let meta = {};
+            try {
+                meta = typeof row.details === 'string' ? JSON.parse(row.details) : (row.details || {});
+            } catch (_) {}
+            const seconds = Math.max(0, Number(row.duration) || Number(meta.duration) || 0);
+            return seconds > 0;
+        });
+
+        if (closed.length > 0) {
+            for (const row of closed) {
+                let meta = {};
+                try {
+                    meta = typeof row.details === 'string' ? JSON.parse(row.details) : (row.details || {});
+                } catch (_) {}
+                add(
+                    row.app_name || meta.appName || meta.processName || row.action,
+                    Number(row.duration) || Number(meta.duration) || 0,
+                    row.created_at
+                );
+            }
+        } else {
+            for (const row of appRows) {
+                add(row.app_name, row.duration, row.last_opened);
+            }
+        }
+
+        const apps = [...byApp.values()].sort((a, b) => b.duration - a.duration).slice(0, 40);
+        timeline.sort((a, b) => b.duration - a.duration);
+
+        return {
+            apps,
+            hourly,
+            timeline: timeline.slice(0, 200),
+        };
+    }
+
+    async getUsageDetail({ userId, deviceId, appName, start, end }) {
+        const pool = await this.getPool();
+        const isBrowser = /chrome|edge|firefox|brave|opera|safari|browser|msedge/i.test(appName);
+        const searchPattern = `%${appName}%`;
+
+        let actRows = [];
+        try {
+            const [r] = await pool.query(
+                `SELECT * FROM activity_logs 
+                 WHERE user_id = ? AND device_id = ? AND created_at >= ? AND created_at <= ?
+                   AND (action LIKE ? OR details LIKE ? OR app_name LIKE ?)
+                 ORDER BY created_at DESC LIMIT 300`,
+                [String(userId), String(deviceId), start, end, searchPattern, searchPattern, searchPattern]
+            );
+            actRows = r;
+        } catch (_) {
+            const [r] = await pool.query(
+                `SELECT * FROM activity_logs 
+                 WHERE user_id = ? AND device_id = ? AND created_at >= ? AND created_at <= ?
+                   AND (action LIKE ? OR details LIKE ?)
+                 ORDER BY created_at DESC LIMIT 300`,
+                [String(userId), String(deviceId), start, end, searchPattern, searchPattern]
+            );
+            actRows = r;
+        }
+
+        const [appRows] = await pool.query(
+            `SELECT * FROM app_histories 
+             WHERE user_id = ? AND device_id = ? AND last_opened >= ? AND last_opened <= ?
+               AND app_name LIKE ? AND duration > 0
+             ORDER BY last_opened DESC LIMIT 100`,
+            [String(userId), String(deviceId), start, end, searchPattern]
+        );
+
+        let browserRows = [];
+        if (isBrowser) {
+            const [bRows] = await pool.query(
+                `SELECT * FROM browser_histories 
+                 WHERE user_id = ? AND device_id = ? AND visit_time >= ? AND visit_time <= ?
+                 ORDER BY visit_time DESC LIMIT 200`,
+                [String(userId), String(deviceId), start, end]
+            );
+            browserRows = bRows;
+        }
+
+        const activity = actRows.map((r) => {
+            let details = {};
+            try {
+                details = typeof r.details === 'string' ? JSON.parse(r.details) : (r.details || {});
+            } catch (_) {}
+            return {
+                _id: String(r.id),
+                userId: r.user_id,
+                deviceId: r.device_id,
+                action: r.action,
+                appName: r.app_name || details.appName || '',
+                status: r.status,
+                details,
+                createdAt: r.created_at,
+            };
+        });
+
+        const appSessions = appRows.map((r) => ({
+            _id: String(r.id),
+            userId: r.user_id,
+            deviceId: r.device_id,
+            appName: r.app_name,
+            executablePath: r.executable_path,
+            lastOpened: r.last_opened,
+            duration: r.duration,
+            appType: r.app_type,
+            category: r.category,
+        }));
+
+        const browser = browserRows.map((r) => ({
+            _id: String(r.id),
+            userId: r.user_id,
+            deviceId: r.device_id,
+            browser: r.browser,
+            url: r.url,
+            title: r.title,
+            domain: r.domain,
+            visitTime: r.visit_time,
+            visitCount: r.visit_count,
+        }));
+
+        return {
+            activity,
+            appSessions,
+            browserHistory: browser,
+        };
     }
 }
 

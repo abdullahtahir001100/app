@@ -1440,10 +1440,16 @@ function handleSocketClose(ws) {
     void broadcastDeviceList({ force: true });
 }
 
+function flushDeviceCaches() {
+    ownershipCache.clear();
+    deviceOptionsCache.clear();
+}
+
 module.exports = {
     handleSocketMessage,
     handleSocketClose,
     getLiveDeviceOptions,
     broadcastDeviceList,
+    flushDeviceCaches,
     activeConnections,
 };

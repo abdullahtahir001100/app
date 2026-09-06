@@ -1014,6 +1014,10 @@ async function verifyAdminUnlockPin(userId, pin) {
     return user;
 }
 
+function clearAuthCaches() {
+    agentTokenCache.clear();
+}
+
 module.exports = {
     AUTH_COOKIE,
     authCookieOptions,
@@ -1034,6 +1038,7 @@ module.exports = {
     resetPassword,
     createAgentCredential,
     verifyAgentToken,
+    clearAuthCaches,
     userOwnsDevice,
     listUserDevices,
     ensureDefaultAdmin,

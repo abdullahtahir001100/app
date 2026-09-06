@@ -293,6 +293,16 @@ router.get('/browser-stats', attachUser, requirePagePermission('logs.browser'), 
     try {
         const { deviceId } = req.query;
 
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            const stats = await getMysqlAdapter().aggregateBrowserStats(filter);
+            return res.status(200).json({
+                success: true,
+                stats
+            });
+        }
+
         const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
 
         const stats = await BrowserHistory.aggregate([
@@ -323,6 +333,14 @@ router.get('/browser-stats', attachUser, requirePagePermission('logs.browser'), 
 router.get('/activity-stats', attachUser, requirePagePermission('logs.activity'), requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
+
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            const stats = await getMysqlAdapter().aggregateActivityStats(filter);
+            return res.status(200).json({ success: true, stats });
+        }
+
         const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
 
         const stats = await ActivityLog.aggregate([
@@ -349,6 +367,16 @@ const mongoose = require('mongoose');
 router.get('/top-domains', attachUser, requirePagePermission('logs.browser'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
+
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            const domains = await getMysqlAdapter().getTopDomains(filter, limit);
+            return res.status(200).json({
+                success: true,
+                domains
+            });
+        }
 
         const query = {
             userId: new mongoose.Types.ObjectId(req.user.id)
@@ -388,6 +416,16 @@ router.get('/top-domains', attachUser, requirePagePermission('logs.browser'), re
 router.get('/top-apps', attachUser, requirePagePermission('logs.apps'), requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
+
+        if (isMysql()) {
+            const filter = { userId: req.user.id };
+            if (deviceId) filter.deviceId = deviceId;
+            const apps = await getMysqlAdapter().getTopApps(filter, limit);
+            return res.status(200).json({
+                success: true,
+                apps
+            });
+        }
 
         const query = {
             userId: new mongoose.Types.ObjectId(req.user.id)
@@ -498,6 +536,24 @@ router.get('/usage', attachUser, requirePagePermission('logs.usage'), requireUse
         const { deviceId, from, to } = req.query;
         const start = from ? new Date(String(from)) : new Date(Date.now() - 24 * 60 * 60 * 1000);
         const end = to ? new Date(String(to)) : new Date();
+
+        if (isMysql()) {
+            const result = await getMysqlAdapter().getUsageData({
+                userId: req.user.id,
+                deviceId: deviceId ? String(deviceId) : undefined,
+                start,
+                end,
+            });
+            return res.status(200).json({
+                success: true,
+                from: start.toISOString(),
+                to: end.toISOString(),
+                apps: result.apps,
+                hourly: result.hourly,
+                timeline: result.timeline,
+            });
+        }
+
         const scope = { userId: req.user.id };
         if (deviceId) scope.deviceId = String(deviceId);
 
@@ -583,6 +639,28 @@ router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), req
             ? new Date(String(req.query.from))
             : new Date(Date.now() - 24 * 60 * 60 * 1000);
         const end = req.query.to ? new Date(String(req.query.to)) : new Date();
+
+        if (isMysql()) {
+            const result = await getMysqlAdapter().getUsageDetail({
+                userId: req.user.id,
+                deviceId,
+                appName,
+                start,
+                end,
+            });
+            return res.status(200).json({
+                success: true,
+                appName,
+                deviceId,
+                from: start.toISOString(),
+                to: end.toISOString(),
+                isBrowser: /chrome|edge|firefox|brave|opera|safari|browser|msedge/i.test(appName),
+                activity: result.activity,
+                appSessions: result.appSessions,
+                browserHistory: result.browserHistory,
+            });
+        }
+
         const scope = { userId: req.user.id, deviceId };
         const appRe = new RegExp(appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 

