@@ -462,6 +462,8 @@ export default function LogsPage() {
                 {loading ? 'Fetching...' : 'Fetch Live'}
               </Button>
             </div>
+          </div>
+
           {userProfile && !hasAnyLogsAccess() ? (
             <PremiumGate
               featureKey="logs"
@@ -738,7 +740,7 @@ export default function LogsPage() {
                           </div>
                       </div>
                     </Card>
-                  );
+                  )
                 })
               )
             ) : activeTab === "browser" ? (
