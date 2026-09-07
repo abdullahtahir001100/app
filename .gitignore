@@ -1,0 +1,62 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files
+.env*
+
+# kotlin 
+# Android project
+android-agent-kotlin/.gradle/
+android-agent-kotlin/.idea/
+android-agent-kotlin/**/build/
+android-agent-kotlin/local.properties
+android-agent-kotlin/*.iml
+android-agent-kotlin/.externalNativeBuild/
+android-agent-kotlin/.cxx/
+android-agent-kotlin/captures/
+
+# Signing
+android-agent-kotlin/**/*.jks
+android-agent-kotlin/**/*.keystore
+
+
+
+# Rust
+
+zenvora_agent/target/
+zenvora_agent/target.nosync/
+**/target/
+**/target.nosync/
+
+# Optional
+**/debug/
+**/release/
+# *.exe
+*.pdb
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+zenvora_agent/target/
+zenvora_agent/target.nosync/
+*.nosync
+
+*.app/
+.next/

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Zenvora - Permissions</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary-container": "#888686",
+                      "primary-container": "#1f1f1f",
+                      "on-secondary-fixed-variant": "#474646",
+                      "surface-dim": "#ddd9d8",
+                      "tertiary-fixed": "#e6e2df",
+                      "surface-bright": "#fdf8f8",
+                      "surface-container-highest": "#e5e2e1",
+                      "outline": "#747878",
+                      "secondary-fixed": "#e5e2e1",
+                      "secondary-fixed-dim": "#c9c6c5",
+                      "on-tertiary-container": "#898685",
+                      "tertiary-container": "#201f1e",
+                      "on-surface-variant": "#444748",
+                      "secondary-container": "#e5e2e1",
+                      "on-tertiary-fixed-variant": "#484645",
+                      "error": "#ba1a1a",
+                      "on-tertiary": "#ffffff",
+                      "on-tertiary-fixed": "#1c1b1a",
+                      "tertiary": "#070706",
+                      "surface-variant": "#e5e2e1",
+                      "surface-tint": "#5f5e5e",
+                      "inverse-on-surface": "#f4f0ef",
+                      "surface-container": "#f1edec",
+                      "primary": "#060607",
+                      "on-primary": "#ffffff",
+                      "on-error-container": "#93000a",
+                      "surface-container-low": "#f7f3f2",
+                      "surface-container-lowest": "#ffffff",
+                      "on-secondary": "#ffffff",
+                      "on-background": "#1c1b1b",
+                      "on-secondary-fixed": "#1c1b1b",
+                      "on-primary-fixed-variant": "#474746",
+                      "inverse-surface": "#313030",
+                      "primary-fixed-dim": "#c8c6c5",
+                      "outline-variant": "#c4c7c7",
+                      "primary-fixed": "#e5e2e1",
+                      "secondary": "#5f5e5e",
+                      "surface-container-high": "#ebe7e7",
+                      "error-container": "#ffdad6",
+                      "inverse-primary": "#c8c6c5",
+                      "on-error": "#ffffff",
+                      "on-secondary-container": "#656464",
+                      "on-primary-fixed": "#1b1b1c",
+                      "on-surface": "#1c1b1b",
+                      "tertiary-fixed-dim": "#c9c6c4",
+                      "surface": "#fdf8f8",
+                      "background": "#fdf8f8"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "unit": "4px",
+                      "margin-sm": "16px",
+                      "margin-lg": "48px",
+                      "margin-md": "32px",
+                      "gutter": "16px",
+                      "container-max": "1280px"
+              },
+              "fontFamily": {
+                      "display": [
+                              "Geist"
+                      ],
+                      "code": [
+                              "Geist"
+                      ],
+                      "body-lg": [
+                              "Geist"
+                      ],
+                      "headline-lg": [
+                              "Geist"
+                      ],
+                      "label-md": [
+                              "Geist"
+                      ],
+                      "headline-md": [
+                              "Geist"
+                      ],
+                      "body-md": [
+                              "Geist"
+                      ],
+                      "headline-lg-mobile": [
+                              "Geist"
+                      ]
+              },
+              "fontSize": {
+                      "display": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.04em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "code": [
+                              "13px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-lg": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-lg": [
+                              "32px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "label-md": [
+                              "12px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "0.02em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-lg-mobile": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "500"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+<style>
+        body {
+            background-color: oklch(0.985 0.002 90);
+        }
+      </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="text-on-background font-body-md antialiased min-h-screen flex flex-col">
+<!-- Intent is Linear/Transactional (Onboarding/Permissions). Navigation shell suppressed. -->
+<main class="flex-grow flex flex-col items-center justify-center p-margin-sm md:p-margin-md max-w-container-max mx-auto w-full">
+<div class="w-full max-w-2xl bg-surface border border-outline-variant rounded-lg p-margin-md md:p-margin-lg">
+<header class="text-center mb-margin-md">
+<div class="mb-4 inline-flex items-center justify-center w-12 h-12 text-primary">
+
+</div>
+<h1 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface mb-2 tracking-tight">Enable permissions to connect</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-lg mx-auto">Zenvora requires low-level system access to maintain peak performance and real-time connectivity.</p>
+</header>
+<div class="space-y-unit">
+<h2 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-widest mb-4">Core Requirements</h2>
+<!-- Required Permissions List -->
+<div class="border-t border-outline-variant pt-2">
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="notifications_active">notifications_active</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Notification Access</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">com.zenvora.core.NOTIFY</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="memory">memory</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Foreground Service</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">com.zenvora.core.FOREGROUND</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="wifi">wifi</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Internet Access</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">android.permission.INTERNET</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="power_settings_new">power_settings_new</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Boot Start</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">android.permission.RECEIVE_BOOT_COMPLETED</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="bolt">bolt</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Wake Lock</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">android.permission.WAKE_LOCK</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="folder">folder</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Storage</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">android.permission.READ_EXTERNAL_STORAGE</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="photo_camera">photo_camera</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Camera</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">android.permission.CAMERA</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-surface-container-highest last:border-0 group mb-6">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors" data-icon="screenshot_monitor">screenshot_monitor</span>
+<div>
+<p class="font-body-md text-body-md text-on-surface font-medium">Screen Capture</p>
+<p class="font-code text-code text-on-surface-variant opacity-70">android.permission.PROJECT_MEDIA</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-highest rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+</div>
+<div class="mt-margin-md pt-margin-sm border-t border-outline-variant">
+<button class="w-full bg-[#1F1F1F] text-white font-label-md text-label-md py-4 rounded hover:bg-black transition-colors duration-200">
+                    GRANT ALL &amp; CONTINUE
+                </button>
+<p class="text-center font-code text-code text-on-surface-variant mt-4 opacity-50">By proceeding, you acknowledge the system demands.</p>
+</div>
+</div>
+</main>
+</body></html>

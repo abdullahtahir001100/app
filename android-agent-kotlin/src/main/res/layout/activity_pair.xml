@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/zenvora_bg"
+    android:orientation="vertical">
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:background="@color/zenvora_surface"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_centerInParent="true"
+            android:layout_marginEnd="48dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_zenvora_rings" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:layout_marginStart="28dp"
+            android:text="@string/app_name"
+            android:textColor="@color/zenvora_primary"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+    </RelativeLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/pair_title"
+            android:textColor="@color/zenvora_text"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/pair_subtitle"
+            android:textColor="@color/zenvora_muted"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/pairTokenInput"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="32dp"
+            android:background="@color/zenvora_surface"
+            android:hint="@string/pair_token"
+            android:inputType="number"
+            android:maxLength="6"
+            android:padding="16dp"
+            android:textColor="@color/zenvora_text" />
+
+        <EditText
+            android:id="@+id/pairUserIdInput"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:background="@color/zenvora_surface"
+            android:hint="@string/pair_user_id"
+            android:inputType="number"
+            android:maxLength="6"
+            android:padding="16dp"
+            android:textColor="@color/zenvora_text" />
+
+        <TextView
+            android:id="@+id/pairError"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="#BA1A1A"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/connectButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="24dp"
+            android:backgroundTint="@color/zenvora_primary"
+            android:text="@string/pair_connect"
+            android:textColor="@color/zenvora_on_primary" />
+    </LinearLayout>
+</LinearLayout>

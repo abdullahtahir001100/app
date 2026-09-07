@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zenvora Lite</string>
+    <string name="permissions_subtitle">Grant screen, camera, files, notifications, and accessibility so your dashboard can control this phone. (SMS / Device Admin are Full APK only.)</string>
+</resources>
