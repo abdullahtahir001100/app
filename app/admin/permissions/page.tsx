@@ -391,7 +391,7 @@ export default function AdminPermissionsPage() {
 
         <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
           {/* User List */}
-          <Card className="p-3 space-y-1 max-h-[80vh] overflow-y-auto">
+          <Card className="p-3 space-y-1 sticky top-0 max-h-[80vh] overflow-y-auto">
             <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               Users ({users.length})
             </div>
@@ -399,20 +399,18 @@ export default function AdminPermissionsPage() {
               <button
                 key={user.id}
                 onClick={() => setSelectedUserId(user.id)}
-                className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                  selectedUserId === user.id
-                    ? "bg-primary/10 border border-primary/20 text-primary font-medium"
-                    : "hover:bg-muted/50 border border-transparent"
-                }`}
+                className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${selectedUserId === user.id
+                  ? "bg-primary/10 border border-primary/20 text-primary font-medium"
+                  : "hover:bg-muted/50 border border-transparent"
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-medium truncate">{user.name}</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-mono font-bold ${
-                      user.role === "admin"
-                        ? "bg-rose-500/15 text-rose-600"
-                        : "bg-muted text-muted-foreground"
-                    }`}
+                    className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-mono font-bold ${user.role === "admin"
+                      ? "bg-rose-500/15 text-rose-600"
+                      : "bg-muted text-muted-foreground"
+                      }`}
                   >
                     {user.role}
                   </span>
@@ -519,11 +517,10 @@ export default function AdminPermissionsPage() {
                           return (
                             <label
                               key={key}
-                              className={`flex items-start gap-3 rounded-lg border p-3 transition-all cursor-pointer select-none ${
-                                checked
-                                  ? "border-primary/40 bg-primary/5 shadow-sm"
-                                  : "border-border hover:border-border/80 hover:bg-muted/30"
-                              } ${isGranularTab ? "ml-2 border-dashed" : ""}`}
+                              className={`flex items-start gap-3 rounded-lg border p-3 transition-all cursor-pointer select-none ${checked
+                                ? "border-primary/40 bg-primary/5 shadow-sm"
+                                : "border-border hover:border-border/80 hover:bg-muted/30"
+                                } ${isGranularTab ? "ml-2 border-dashed" : ""}`}
                             >
                               <Checkbox
                                 checked={checked}
