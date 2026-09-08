@@ -544,8 +544,8 @@ export default function CameraPage() {
             setCommandStatus(
               String(
                 metrics.camera_status_message ||
-                  data.message ||
-                  "Camera is in use by another app on this PC. Close Camera app and try again."
+                data.message ||
+                "Camera is in use by another app on this PC. Close Camera app and try again."
               )
             );
           } else if (data.action === "STREAM_LOST") {
@@ -965,7 +965,7 @@ export default function CameraPage() {
 
       <main className="flex-1 sidebar-aware-main overflow-auto">
         <div className="p-6 lg:p-12">
-          
+
           {/* Header */}
           <div className="mb-8 flex justify-between items-start">
             <div>
@@ -983,7 +983,7 @@ export default function CameraPage() {
           {/* Device selector */}
           <div className="mb-8 flex gap-4">
             <div className="w-full relative z-50">
-                <Select<DeviceOption, false>
+              <Select<DeviceOption, false>
                 instanceId="camera-selection-dropdown"
                 value={selectedDeviceOption}
                 onChange={(option) => {
@@ -1011,7 +1011,7 @@ export default function CameraPage() {
             </div>
           </div>
 
-          <div className="mb-8 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground flex flex-wrap items-center gap-3">
+          {/* <div className="mb-8 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground flex flex-wrap items-center gap-3">
             <span className="flex-1 min-w-[12rem]">{commandStatus}</span>
             {isUdpConnected ? (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.2)]">
@@ -1044,7 +1044,7 @@ export default function CameraPage() {
                 Switch to {mediaTransport === "wss" ? "TCP" : "WSS"}
               </Button>
             )}
-          </div>
+          </div> */}
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mb-8">
             <div className="xl:col-span-8 flex flex-col gap-6">
@@ -1074,109 +1074,108 @@ export default function CameraPage() {
                 </Button>
               </div>
 
-          {/* Camera Selection Grid */}
-          {detectedCameras.length === 0 ? (
-            <Card className="border border-dashed border-border bg-card/40 p-6 text-sm text-muted-foreground">
-              No cameras scanned yet. Select your agent, click <strong>Scan Cameras</strong>, then turn the camera on.
-            </Card>
-          ) : (
-            <div className={`grid gap-4 ${detectedCameras.length <= 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"}`}>
-              {detectedCameras.map((cam) => (
-                <button
-                  key={cam.id}
-                  onClick={() => handleCameraFlip(cam)}
-                  disabled={!canControl}
-                  className={`p-4 rounded-lg border-2 transition-all text-left ${
-                    activeCamera === cam.id ? "border-foreground bg-accent/10" : "border-border bg-card hover:border-foreground/50"
-                  } disabled:cursor-not-allowed disabled:opacity-50`}
+              {/* Camera Selection Grid */}
+              {detectedCameras.length === 0 ? (
+                <Card className="border border-dashed border-border bg-card/40 p-6 text-sm text-muted-foreground">
+                  No cameras scanned yet. Select your agent, click <strong>Scan Cameras</strong>, then turn the camera on.
+                </Card>
+              ) : (
+                <div className={`grid gap-4 ${detectedCameras.length <= 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"}`}>
+                  {detectedCameras.map((cam) => (
+                    <button
+                      key={cam.id}
+                      onClick={() => handleCameraFlip(cam)}
+                      disabled={!canControl}
+                      className={`p-4 rounded-lg border-2 transition-all text-left ${activeCamera === cam.id ? "border-foreground bg-accent/10" : "border-border bg-card hover:border-foreground/50"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">{cam.label}</h3>
+                          <p className="text-sm text-muted-foreground mt-1">{cam.resolution}</p>
+                        </div>
+                        <Camera className="w-4 h-4 shrink-0" />
+                      </div>
+                      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                        <span>{cam.fps}</span>
+                        <span className={`rounded-full px-2 py-0.5 ${cam.status === "ACTIVE" ? "bg-emerald-500/15 text-emerald-600" : "bg-accent/20"}`}>
+                          {cam.status}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Full Screen Live Camera Stage */}
+              <div
+                ref={streamStageRef}
+                className="relative h-[62vh] min-h-[420px] w-full overflow-hidden rounded-2xl border border-border bg-black shadow-2xl"
+              >
+                <canvas ref={rgbCanvasRef} className="hidden" aria-hidden />
+                <canvas ref={canvasRef} className="hidden" aria-hidden />
+
+                <div
+                  ref={filterWrapRef}
+                  className="absolute inset-0 z-10 flex h-full w-full items-center justify-center overflow-hidden"
+                  style={{ willChange: "transform, filter" }}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold">{cam.label}</h3>
-                      <p className="text-sm text-muted-foreground mt-1">{cam.resolution}</p>
-                    </div>
-                    <Camera className="w-4 h-4 shrink-0" />
+                  <img
+                    ref={liveImgRef}
+                    alt="Live camera feed"
+                    className="max-h-full max-w-full object-contain transition-opacity duration-200"
+                    style={{ opacity: hasLiveFrame ? 1 : 0 }}
+                  />
+                </div>
+
+                {!hasLiveFrame && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-black p-6 text-center">
+                    <Camera className="w-16 h-16 mb-4 text-white/30 animate-pulse" />
+                    <p className="text-white/70 mb-1">Camera is off — click Turn Camera On to start preview</p>
+                    <p className="text-xs text-white/50 bg-white/10 px-3 py-1 rounded-full flex items-center gap-2 mt-2">
+                      <Cpu className="w-3 h-3" /> Node: {selectedDevice || "No Device Selected"} &bull; Camera: {activeCameraMeta?.label || "Waiting for inventory"} &bull; Frames: {liveFrameCount}
+                    </p>
                   </div>
-                  <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{cam.fps}</span>
-                    <span className={`rounded-full px-2 py-0.5 ${cam.status === "ACTIVE" ? "bg-emerald-500/15 text-emerald-600" : "bg-accent/20"}`}>
-                      {cam.status}
+                )}
+
+                {hasLiveFrame && (
+                  <div className="absolute top-4 right-4 z-30 rounded-full bg-red-600/90 px-3 py-1 text-xs font-mono font-bold text-white">
+                    LIVE &bull; {liveFrameCount}
+                  </div>
+                )}
+
+                {isRecording && (
+                  <div className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-red-600/90 px-3 py-2 rounded-full shadow-lg backdrop-blur-sm">
+                    <span className="w-2.5 h-2.5 bg-white rounded-full animate-ping" />
+                    <span className="text-white text-xs font-mono font-bold">REC RUNNING</span>
+                    <span className="text-white text-xs font-mono bg-black/30 px-2 py-0.5 rounded">
+                      {String(Math.floor(recordingTime / 60)).padStart(2, "0")}:{String(recordingTime % 60).padStart(2, "0")}
                     </span>
                   </div>
-                </button>
-              ))}
-            </div>
-          )}
+                )}
 
-          {/* Full Screen Live Camera Stage */}
-          <div
-            ref={streamStageRef}
-            className="relative h-[62vh] min-h-[420px] w-full overflow-hidden rounded-2xl border border-border bg-black shadow-2xl"
-          >
-            <canvas ref={rgbCanvasRef} className="hidden" aria-hidden />
-            <canvas ref={canvasRef} className="hidden" aria-hidden />
-
-            <div
-              ref={filterWrapRef}
-              className="absolute inset-0 z-10 flex h-full w-full items-center justify-center overflow-hidden"
-              style={{ willChange: "transform, filter" }}
-            >
-              <img
-                ref={liveImgRef}
-                alt="Live camera feed"
-                className="max-h-full max-w-full object-contain transition-opacity duration-200"
-                style={{ opacity: hasLiveFrame ? 1 : 0 }}
-              />
-            </div>
-
-            {!hasLiveFrame && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-black p-6 text-center">
-                <Camera className="w-16 h-16 mb-4 text-white/30 animate-pulse" />
-                <p className="text-white/70 mb-1">Camera is off — click Turn Camera On to start preview</p>
-                <p className="text-xs text-white/50 bg-white/10 px-3 py-1 rounded-full flex items-center gap-2 mt-2">
-                  <Cpu className="w-3 h-3" /> Node: {selectedDevice || "No Device Selected"} &bull; Camera: {activeCameraMeta?.label || "Waiting for inventory"} &bull; Frames: {liveFrameCount}
-                </p>
+                <div className="absolute bottom-4 left-4 z-30 rounded-full bg-black/60 px-3 py-1 text-xs font-mono text-white backdrop-blur-sm">
+                  {telemetry.resolution} &bull; {telemetry.fps} &bull; {telemetry.latency}
+                </div>
               </div>
-            )}
 
-            {hasLiveFrame && (
-              <div className="absolute top-4 right-4 z-30 rounded-full bg-red-600/90 px-3 py-1 text-xs font-mono font-bold text-white">
-                LIVE &bull; {liveFrameCount}
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={handleToggleRecording}
+                  disabled={!canControl || !isCameraOn}
+                  className={`gap-2 transition-all font-medium ${isRecording ? "bg-red-600 hover:bg-red-700 text-white" : "bg-foreground hover:bg-foreground/90 text-background"}`}
+                >
+                  {isRecording ? <><Square className="w-4 h-4" /> Stop Recording</> : <><Video className="w-4 h-4" /> Start Recording</>}
+                </Button>
+
+                <Button onClick={handleCapturePhoto} disabled={!canControl || !isCameraOn} variant="outline" className="border-border hover:bg-accent/10 gap-2">
+                  <Camera className="w-4 h-4" /> Capture Snapshot
+                </Button>
+
+                <Button variant="outline" disabled={!canControl} onClick={() => loadServerGallery()} className="border-border hover:bg-accent/10 gap-2">
+                  <Download className="w-4 h-4" /> Refresh Gallery
+                </Button>
               </div>
-            )}
-
-            {isRecording && (
-              <div className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-red-600/90 px-3 py-2 rounded-full shadow-lg backdrop-blur-sm">
-                <span className="w-2.5 h-2.5 bg-white rounded-full animate-ping" />
-                <span className="text-white text-xs font-mono font-bold">REC RUNNING</span>
-                <span className="text-white text-xs font-mono bg-black/30 px-2 py-0.5 rounded">
-                  {String(Math.floor(recordingTime / 60)).padStart(2, "0")}:{String(recordingTime % 60).padStart(2, "0")}
-                </span>
-              </div>
-            )}
-
-            <div className="absolute bottom-4 left-4 z-30 rounded-full bg-black/60 px-3 py-1 text-xs font-mono text-white backdrop-blur-sm">
-              {telemetry.resolution} &bull; {telemetry.fps} &bull; {telemetry.latency}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Button
-              onClick={handleToggleRecording}
-              disabled={!canControl || !isCameraOn}
-              className={`gap-2 transition-all font-medium ${isRecording ? "bg-red-600 hover:bg-red-700 text-white" : "bg-foreground hover:bg-foreground/90 text-background"}`}
-            >
-              {isRecording ? <><Square className="w-4 h-4" /> Stop Recording</> : <><Video className="w-4 h-4" /> Start Recording</>}
-            </Button>
-
-            <Button onClick={handleCapturePhoto} disabled={!canControl || !isCameraOn} variant="outline" className="border-border hover:bg-accent/10 gap-2">
-              <Camera className="w-4 h-4" /> Capture Snapshot
-            </Button>
-
-            <Button variant="outline" disabled={!canControl} onClick={() => loadServerGallery()} className="border-border hover:bg-accent/10 gap-2">
-              <Download className="w-4 h-4" /> Refresh Gallery
-            </Button>
-          </div>
             </div>
 
             <div className="xl:col-span-4 grid gap-4 content-start">
@@ -1212,7 +1211,7 @@ export default function CameraPage() {
                   <CustomSlider label="Brightness" min={0} max={100} value={brightness} showValue unit="%" onChange={(val) => handleSliderOverdrive("BRIGHTNESS", val)} />
                   <CustomSlider label="Contrast" min={0} max={100} value={contrast} showValue unit="%" onChange={(val) => handleSliderOverdrive("CONTRAST", val)} />
                   <CustomSlider label="Zoom" min={1} max={10} step={0.1} value={zoom} showValue unit="x" onChange={(val) => handleSliderOverdrive("ZOOM", val)} />
-                  
+
                   <div className="flex items-center justify-between border-t border-border/40 pt-4">
                     <span className="text-sm text-muted-foreground">GPIO Flash Emitter Pin</span>
                     <button disabled={!canControl} onClick={toggleFlashEmitter} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 disabled:cursor-not-allowed disabled:opacity-50 ${flashEnabled ? "bg-emerald-500" : "bg-border"}`}>
@@ -1235,7 +1234,7 @@ export default function CameraPage() {
               Loaded from database for agent <span className="font-mono">{selectedDevice || "—"}</span>. New captures appear here only after DB save.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              
+
               {/* Photos Section */}
               <Card className="p-6 border border-border bg-card/40">
                 <h3 className="text-lg font-medium mb-4 flex items-center gap-2">

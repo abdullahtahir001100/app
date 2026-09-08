@@ -77,20 +77,20 @@ const dateOptions = [
 export default function LogsPage() {
   const searchParams = useSearchParams();
   const requestedDevice = searchParams.get("device") || "";
-  const { devices: deviceOptions, sendCommand, subscribe } = useGateway() as any; 
-  
+  const { devices: deviceOptions, sendCommand, subscribe } = useGateway() as any;
+
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [activeTab, setActiveTab] = useState("activity");
   const [filter, setFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState(dateOptions[1]); // Default to 7 days
   const [loading, setLoading] = useState(false);
-  
+
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [liveActivityLogs, setLiveActivityLogs] = useState<ActivityLog[]>([]);
   const [browserHistory, setBrowserHistory] = useState<BrowserEntry[]>([]);
   const [appHistory, setAppHistory] = useState<AppEntry[]>([]);
-  
+
   const [browserFilter, setBrowserFilter] = useState("all");
   const [appFilter, setAppFilter] = useState("all");
 
@@ -123,7 +123,7 @@ export default function LogsPage() {
           }
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const canAccess = (key: string) => {
@@ -326,7 +326,7 @@ export default function LogsPage() {
   const handleLiveFetch = () => {
     if (!selectedDevice || !sendCommand) return;
     setLoading(true);
-    
+
     if (activeTab === "browser") {
       sendCommand(selectedDevice, "SEARCH_BROWSER_HISTORY", {
         query: browserSearchQuery.trim(),
@@ -347,11 +347,11 @@ export default function LogsPage() {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     if (diff < 0) return "just now";
-    
+
     const mins = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    
+
     if (mins < 1) return "now";
     if (mins < 60) return `${mins}m ago`;
     if (hours < 24) return `${hours}h ago`;
@@ -437,7 +437,7 @@ export default function LogsPage() {
                 </a>
               </p>
             </div>
-            
+
             <div className="flex items-center gap-3">
               {/* React Select for Device */}
               <div className="w-64">
@@ -453,7 +453,7 @@ export default function LogsPage() {
               </div>
 
               {/* Single Consolidated Fetch Button */}
-              <Button 
+              <Button
                 onClick={handleLiveFetch}
                 disabled={loading || !selectedDevice}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg gap-2 shadow-md transition-all h-[38px]"
@@ -482,332 +482,327 @@ export default function LogsPage() {
             <>
               {/* Tabs */}
               <div className="mb-6 flex gap-0 border-b border-border">
-            <button
-              onClick={() => setActiveTab("activity")}
-              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
-                activeTab === "activity"
-                  ? "border-b-blue-600 text-blue-600"
-                  : "border-b-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <span>Activity</span>
-              {!canAccess("logs.activity") && (
-                <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("browser")}
-              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
-                activeTab === "browser"
-                  ? "border-b-blue-600 text-blue-600"
-                  : "border-b-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Globe className="w-4 h-4" />
-              <span>Browser History</span>
-              {!canAccess("logs.browser") && (
-                <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("apps")}
-              className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${
-                activeTab === "apps"
-                  ? "border-b-blue-600 text-blue-600"
-                  : "border-b-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Clock className="w-4 h-4" />
-              <span>App History</span>
-              {!canAccess("logs.apps") && (
-                <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              )}
-            </button>
-          </div>
-
-          {/* Filters */}
-          <div className="mb-8 space-y-4">
-            {activeTab === "browser" ? (
-              <div className="space-y-4 p-5 border border-border/80 rounded-2xl bg-gradient-to-b from-card via-card to-card/60 shadow-sm backdrop-blur-sm">
-                {/* Real-time SQL Search Input & Controls */}
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <input
-                      type="text"
-                      placeholder="Search title, URL across Chrome, Edge, Brave, Opera, Opera GX, Vivaldi, Firefox..."
-                      value={browserSearchQuery}
-                      onChange={(e) => setBrowserSearchQuery(e.target.value)}
-                      className="w-full pl-10 pr-10 py-2.5 border border-border rounded-xl bg-background font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                    />
-                    {browserSearchQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setBrowserSearchQuery("")}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Limit Selector */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-muted-foreground uppercase shrink-0">Limit:</span>
-                    <select
-                      value={browserLimit}
-                      onChange={(e) => setBrowserLimit(Number(e.target.value))}
-                      className="h-10 px-3 border border-border rounded-xl bg-background text-xs font-mono font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                    >
-                      <option value={50}>50 rows</option>
-                      <option value={100}>100 rows</option>
-                      <option value={200}>200 rows</option>
-                      <option value={500}>500 rows</option>
-                    </select>
-
-                    {/* Sort Order Toggle */}
-                    <button
-                      type="button"
-                      onClick={() => setSortOrder(sortOrder === "desc" ? "asc" : "desc")}
-                      className="h-10 px-3 border border-border rounded-xl bg-background hover:bg-muted font-mono text-xs flex items-center gap-1.5 transition-colors shrink-0"
-                      title="Toggle Sort Order"
-                    >
-                      <ArrowUpDown className="w-3.5 h-3.5 text-blue-500" />
-                      <span>{sortOrder === "desc" ? "↓ Newest (DESC)" : "↑ Oldest (ASC)"}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Sub-bar: Result Counter Badge + Browser Filter Pills */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border/50">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-mono font-semibold px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-500 border border-blue-500/20">
-                      ⚡ SQL Results: {filteredBrowserHistory.length}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground font-mono">
-                      (Executed directly via SQLite index in &lt; 5ms)
-                    </span>
-                  </div>
-
-                  <div className="flex gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => setBrowserFilter("all")}
-                      className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${
-                        browserFilter === "all"
-                          ? "bg-foreground text-background font-medium"
-                          : "bg-secondary text-foreground hover:bg-muted"
-                      }`}
-                    >
-                      All Browsers
-                    </button>
-                    {getBrowsers().map((browser) => (
-                      <button
-                        key={browser}
-                        onClick={() => setBrowserFilter(browser)}
-                        className={`px-3 py-1 rounded-full text-xs font-mono transition-colors flex items-center gap-1.5 ${
-                          browserFilter === browser
-                            ? "bg-blue-600 text-white font-medium shadow-sm"
-                            : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-                        }`}
-                      >
-                        <BrowserLogo browser={browser} className="w-3.5 h-3.5 shrink-0" />
-                        <span>{browser}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* Search and React-Select date range */}
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <input
-                      type="text"
-                      placeholder="Search..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-12 pr-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                    />
-                  </div>
-
-                  <div className="w-48">
-                    <Select
-                      options={dateOptions}
-                      instanceId="device-selector"
-                      value={dateRange}
-                      onChange={(opt: any) => setDateRange(opt)}
-                      className="react-select-container text-black"
-                      classNamePrefix="react-select"
-                    />
-                  </div>
-                </div>
-
-                {/* Status/Type filter */}
-                <div className="flex gap-2 flex-wrap">
-                  {activeTab === "activity" && (
-                    <>
-                      <button onClick={() => setFilter("all")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "all" ? "bg-foreground text-background" : "bg-secondary text-foreground"}`}>All</button>
-                      <button onClick={() => setFilter("success")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "success" ? "bg-green-600 text-white" : "bg-green-100 text-green-700"}`}>Success</button>
-                      <button onClick={() => setFilter("warning")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "warning" ? "bg-yellow-600 text-white" : "bg-yellow-100 text-yellow-700"}`}>Warning</button>
-                      <button onClick={() => setFilter("error")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "error" ? "bg-red-600 text-white" : "bg-red-100 text-red-700"}`}>Error</button>
-                    </>
+                <button
+                  onClick={() => setActiveTab("activity")}
+                  className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${activeTab === "activity"
+                    ? "border-b-blue-600 text-blue-600"
+                    : "border-b-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  <span>Activity</span>
+                  {!canAccess("logs.activity") && (
+                    <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                   )}
-
-                  {activeTab === "apps" && (
-                    <>
-                      <button onClick={() => setAppFilter("all")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${appFilter === "all" ? "bg-foreground text-background" : "bg-secondary text-foreground"}`}>All Types</button>
-                      {getAppTypes().map(type => (
-                        <button key={type} onClick={() => setAppFilter(type)} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${appFilter === type ? "bg-purple-600 text-white" : "bg-purple-100 text-purple-700"}`}>
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </button>
-                      ))}
-                    </>
+                </button>
+                <button
+                  onClick={() => setActiveTab("browser")}
+                  className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${activeTab === "browser"
+                    ? "border-b-blue-600 text-blue-600"
+                    : "border-b-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  <Globe className="w-4 h-4" />
+                  <span>Browser History</span>
+                  {!canAccess("logs.browser") && (
+                    <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                   )}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Logs Content */}
-          <div className="space-y-3">
-            {activeTab === "activity" && !canAccess("logs.activity") ? (
-              <PremiumGate
-                featureKey="logs.activity"
-                title="Device Activity Stream"
-                description="Real-time timeline of file transfers, screen captures, camera accesses, and administrative changes."
-                price="$4.99/mo"
-                bullets={[
-                  "Chronological activity audit trail with status flags",
-                  "Active window change and title focus recording",
-                  "Administrative audit log for connected targets",
-                  "Live real-time socket events",
-                ]}
-                onUnlocked={() => window.location.reload()}
-              />
-            ) : activeTab === "browser" && !canAccess("logs.browser") ? (
-              <PremiumGate
-                featureKey="logs.browser"
-                title="Browser History Intelligence"
-                description="Deep inspection of visited URLs, page titles, visit counts, and search engine queries across Chrome, Edge, Brave, and Firefox."
-                price="$4.99/mo"
-                bullets={[
-                  "Complete URL history and webpage titles",
-                  "Real-time SQL search across 8 major browsers",
-                  "Visit frequency & exact timestamps",
-                  "Export to CSV/JSON format",
-                ]}
-                onUnlocked={() => window.location.reload()}
-              />
-            ) : activeTab === "apps" && !canAccess("logs.apps") ? (
-              <PremiumGate
-                featureKey="logs.apps"
-                title="App Usage Intelligence"
-                description="Detailed telemetry on application launches, foreground execution times, and desktop productivity."
-                price="$4.99/mo"
-                bullets={[
-                  "App executable paths & launch times",
-                  "Foreground duration tracking in seconds",
-                  "Productivity category tagging",
-                  "Windows user profile association",
-                ]}
-                onUnlocked={() => window.location.reload()}
-              />
-            ) : loading && (activityLogs.length === 0 && liveActivityLogs.length === 0 && browserHistory.length === 0 && appHistory.length === 0) ? (
-              <div className="text-center py-12">
-                <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-500 mb-4" />
-                <p className="text-muted-foreground">Syncing live data from device...</p>
+                </button>
+                <button
+                  onClick={() => setActiveTab("apps")}
+                  className={`px-6 py-3 font-medium transition-all border-b-2 flex items-center gap-2 ${activeTab === "apps"
+                    ? "border-b-blue-600 text-blue-600"
+                    : "border-b-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  <Clock className="w-4 h-4" />
+                  <span>App History</span>
+                  {!canAccess("logs.apps") && (
+                    <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  )}
+                </button>
               </div>
-            ) : activeTab === "activity" ? (
-              uniqueActivityLogs.length === 0 ? (
-                <Card className="p-8 text-center"><p className="text-muted-foreground">No activity logs found</p></Card>
-              ) : (
-                uniqueActivityLogs.map((log) => {
-                  const IconComponent = iconMap[log.action] || Eye;
-                  return (
-                    <Card key={log._id} className="p-4 hover:shadow-md transition-all">
-                      <div className="flex items-start gap-4">
-                        <div className="mt-1 p-2 rounded-lg bg-muted"><IconComponent className="w-5 h-5" /></div>
-                                <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-semibold">{log.appName ? log.appName : actionLabels[log.action] || log.action}</h4>
-                              <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(log.status)}`}>{log.status}</span>
-                            </div>
-                            <p className="text-sm text-muted-foreground mt-1">{log.processName || log.windowTitle || log.device}</p>
-                            {log.details && <p className="text-sm text-muted-foreground mt-1">{log.details}</p>}
-                            <p className="text-xs text-muted-foreground mt-2">{formatTime(log.createdAt)}</p>
-                          </div>
-                      </div>
-                    </Card>
-                  )
-                })
-              )
-            ) : activeTab === "browser" ? (
-              filteredBrowserHistory.length === 0 ? (
-                <Card className="p-8 text-center"><p className="text-muted-foreground">No browser history found</p></Card>
-              ) : (
-                filteredBrowserHistory.map((entry, idx) => (
-                  <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="mt-1 p-2.5 rounded-xl bg-card border border-border/80 flex items-center justify-center shrink-0 shadow-sm">
-                        <BrowserLogo browser={entry.browser} className="w-6 h-6 shrink-0" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center gap-1.5 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium px-2.5 py-0.5 rounded-md border border-blue-500/20">
-                            <BrowserLogo browser={entry.browser} className="w-3.5 h-3.5" />
-                            <span>{entry.browser}</span>
-                          </span>
-                          {entry.browserProfile ? (
-                            <span className="text-xs bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-md">
-                              Profile: {entry.browserProfile}
-                            </span>
-                          ) : null}
-                          {entry.windowsUser ? (
-                            <span className="text-xs bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 px-2 py-0.5 rounded-md">
-                              User: {entry.windowsUser}
-                            </span>
-                          ) : null}
-                        </div>
-                        <h4 className="font-semibold mt-2 truncate text-foreground">{entry.title || "Untitled"}</h4>
-                        {entry.url ? (
-                          <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate block mt-1">{entry.url}</a>
-                        ) : (
-                          <span className="text-sm text-muted-foreground italic block mt-1">No URL available</span>
+
+              {/* Filters */}
+              <div className="mb-8 space-y-4">
+                {activeTab === "browser" ? (
+                  <div className="space-y-4 p-5 border border-border/80 rounded-2xl  from-card via-card to-card/60 ">
+                    {/* Real-time SQL Search Input & Controls */}
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="flex-1 relative">
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="Search title, URL across Chrome, Edge, Brave, Opera, Opera GX, Vivaldi, Firefox..."
+                          value={browserSearchQuery}
+                          onChange={(e) => setBrowserSearchQuery(e.target.value)}
+                          className="w-full pl-10 pr-10 py-2.5 border border-border rounded-xl bg-background font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        />
+                        {browserSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setBrowserSearchQuery("")}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         )}
-                        <p className="text-xs text-muted-foreground mt-2 font-mono">Visited {formatTime(entry.visitTime || (entry as any).visit_time)} • {entry.visitCount || (entry as any).visit_count || 1} times</p>
+                      </div>
+
+                      {/* Limit Selector */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-muted-foreground uppercase shrink-0">Limit:</span>
+                        <select
+                          value={browserLimit}
+                          onChange={(e) => setBrowserLimit(Number(e.target.value))}
+                          className="h-10 px-3 border border-border rounded-xl bg-background text-xs font-mono font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        >
+                          <option value={50}>50 rows</option>
+                          <option value={100}>100 rows</option>
+                          <option value={200}>200 rows</option>
+                          <option value={500}>500 rows</option>
+                        </select>
+
+                        {/* Sort Order Toggle */}
+                        <button
+                          type="button"
+                          onClick={() => setSortOrder(sortOrder === "desc" ? "asc" : "desc")}
+                          className="h-10 px-3 border border-border rounded-xl bg-background hover:bg-muted font-mono text-xs flex items-center gap-1.5 transition-colors shrink-0"
+                          title="Toggle Sort Order"
+                        >
+                          <ArrowUpDown className="w-3.5 h-3.5 text-blue-500" />
+                          <span>{sortOrder === "desc" ? "↓ Newest (DESC)" : "↑ Oldest (ASC)"}</span>
+                        </button>
                       </div>
                     </div>
-                  </Card>
-                ))
-              )
-            ) : activeTab === "apps" ? (
-              filteredAppHistory.length === 0 ? (
-                <Card className="p-8 text-center"><p className="text-muted-foreground">No app history found</p></Card>
-              ) : (
-                filteredAppHistory.map((entry, idx) => (
-                  <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
-                    <div className="flex items-start gap-4">
-                      <div className="mt-1 p-2 rounded-lg bg-muted"><Clock className="w-5 h-5" /></div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-semibold">{entry.appName}</h4>
-                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">{entry.appType}</span>
-                          {entry.windowsUser ? (
-                            <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">User: {entry.windowsUser}</span>
-                          ) : null}
+
+                    {/* Sub-bar: Result Counter Badge + Browser Filter Pills */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border/50">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono font-semibold px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                          {filteredBrowserHistory.length}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground font-mono">
+
+                        </span>
+                      </div>
+
+                      <div className="flex gap-1.5 flex-wrap">
+                        <button
+                          onClick={() => setBrowserFilter("all")}
+                          className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${browserFilter === "all"
+                            ? "bg-foreground text-background font-medium"
+                            : "bg-secondary text-foreground hover:bg-muted"
+                            }`}
+                        >
+                          All Browsers
+                        </button>
+                        {getBrowsers().map((browser) => (
+                          <button
+                            key={browser}
+                            onClick={() => setBrowserFilter(browser)}
+                            className={`px-3 py-1 rounded-full text-xs font-mono transition-colors flex items-center gap-1.5 ${browserFilter === browser
+                              ? "bg-blue-600 text-white font-medium shadow-sm"
+                              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+                              }`}
+                          >
+                            <BrowserLogo browser={browser} className="w-3.5 h-3.5 shrink-0" />
+                            <span>{browser}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Search and React-Select date range */}
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="flex-1 relative">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="Search..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full pl-12 pr-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        />
+                      </div>
+
+                      <div className="w-48">
+                        <Select
+                          options={dateOptions}
+                          instanceId="device-selector"
+                          value={dateRange}
+                          onChange={(opt: any) => setDateRange(opt)}
+                          className="react-select-container text-black"
+                          classNamePrefix="react-select"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Status/Type filter */}
+                    <div className="flex gap-2 flex-wrap">
+                      {activeTab === "activity" && (
+                        <>
+                          <button onClick={() => setFilter("all")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "all" ? "bg-foreground text-background" : "bg-secondary text-foreground"}`}>All</button>
+                          <button onClick={() => setFilter("success")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "success" ? "bg-green-600 text-white" : "bg-green-100 text-green-700"}`}>Success</button>
+                          <button onClick={() => setFilter("warning")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "warning" ? "bg-yellow-600 text-white" : "bg-yellow-100 text-yellow-700"}`}>Warning</button>
+                          <button onClick={() => setFilter("error")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${filter === "error" ? "bg-red-600 text-white" : "bg-red-100 text-red-700"}`}>Error</button>
+                        </>
+                      )}
+
+                      {activeTab === "apps" && (
+                        <>
+                          <button onClick={() => setAppFilter("all")} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${appFilter === "all" ? "bg-foreground text-background" : "bg-secondary text-foreground"}`}>All Types</button>
+                          {getAppTypes().map(type => (
+                            <button key={type} onClick={() => setAppFilter(type)} className={`px-4 py-1.5 rounded-full text-sm transition-colors ${appFilter === type ? "bg-purple-600 text-white" : "bg-purple-100 text-purple-700"}`}>
+                              {type.charAt(0).toUpperCase() + type.slice(1)}
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Logs Content */}
+              <div className="space-y-3">
+                {activeTab === "activity" && !canAccess("logs.activity") ? (
+                  <PremiumGate
+                    featureKey="logs.activity"
+                    title="Device Activity Stream"
+                    description="Real-time timeline of file transfers, screen captures, camera accesses, and administrative changes."
+                    price="$4.99/mo"
+                    bullets={[
+                      "Chronological activity audit trail with status flags",
+                      "Active window change and title focus recording",
+                      "Administrative audit log for connected targets",
+                      "Live real-time socket events",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : activeTab === "browser" && !canAccess("logs.browser") ? (
+                  <PremiumGate
+                    featureKey="logs.browser"
+                    title="Browser History Intelligence"
+                    description="Deep inspection of visited URLs, page titles, visit counts, and search engine queries across Chrome, Edge, Brave, and Firefox."
+                    price="$4.99/mo"
+                    bullets={[
+                      "Complete URL history and webpage titles",
+                      "Real-time SQL search across 8 major browsers",
+                      "Visit frequency & exact timestamps",
+                      "Export to CSV/JSON format",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : activeTab === "apps" && !canAccess("logs.apps") ? (
+                  <PremiumGate
+                    featureKey="logs.apps"
+                    title="App Usage Intelligence"
+                    description="Detailed telemetry on application launches, foreground execution times, and desktop productivity."
+                    price="$4.99/mo"
+                    bullets={[
+                      "App executable paths & launch times",
+                      "Foreground duration tracking in seconds",
+                      "Productivity category tagging",
+                      "Windows user profile association",
+                    ]}
+                    onUnlocked={() => window.location.reload()}
+                  />
+                ) : loading && (activityLogs.length === 0 && liveActivityLogs.length === 0 && browserHistory.length === 0 && appHistory.length === 0) ? (
+                  <div className="text-center py-12">
+                    <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-500 mb-4" />
+                    <p className="text-muted-foreground">Syncing live data from device...</p>
+                  </div>
+                ) : activeTab === "activity" ? (
+                  uniqueActivityLogs.length === 0 ? (
+                    <Card className="p-8 text-center"><p className="text-muted-foreground">No activity logs found</p></Card>
+                  ) : (
+                    uniqueActivityLogs.map((log) => {
+                      const IconComponent = iconMap[log.action] || Eye;
+                      return (
+                        <Card key={log._id} className="p-4 hover:shadow-md transition-all">
+                          <div className="flex items-start gap-4">
+                            <div className="mt-1 p-2 rounded-lg bg-muted"><IconComponent className="w-5 h-5" /></div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-semibold">{log.appName ? log.appName : actionLabels[log.action] || log.action}</h4>
+                                <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(log.status)}`}>{log.status}</span>
+                              </div>
+                              <p className="text-sm text-muted-foreground mt-1">{log.processName || log.windowTitle || log.device}</p>
+                              {log.details && <p className="text-sm text-muted-foreground mt-1">{log.details}</p>}
+                              <p className="text-xs text-muted-foreground mt-2">{formatTime(log.createdAt)}</p>
+                            </div>
+                          </div>
+                        </Card>
+                      )
+                    })
+                  )
+                ) : activeTab === "browser" ? (
+                  filteredBrowserHistory.length === 0 ? (
+                    <Card className="p-8 text-center"><p className="text-muted-foreground">No browser history found</p></Card>
+                  ) : (
+                    filteredBrowserHistory.map((entry, idx) => (
+                      <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className="mt-1 p-2.5 rounded-xl bg-card border border-border/80 flex items-center justify-center shrink-0 shadow-sm">
+                            <BrowserLogo browser={entry.browser} className="w-6 h-6 shrink-0" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1.5 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium px-2.5 py-0.5 rounded-md border border-blue-500/20">
+                                <BrowserLogo browser={entry.browser} className="w-3.5 h-3.5" />
+                                <span>{entry.browser}</span>
+                              </span>
+                              {entry.browserProfile ? (
+                                <span className="text-xs bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-md">
+                                  Profile: {entry.browserProfile}
+                                </span>
+                              ) : null}
+                              {entry.windowsUser ? (
+                                <span className="text-xs bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 px-2 py-0.5 rounded-md">
+                                  User: {entry.windowsUser}
+                                </span>
+                              ) : null}
+                            </div>
+                            <h4 className="font-semibold mt-2 truncate text-foreground">{entry.title || "Untitled"}</h4>
+                            {entry.url ? (
+                              <a href={entry.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate block mt-1">{entry.url}</a>
+                            ) : (
+                              <span className="text-sm text-muted-foreground italic block mt-1">No URL available</span>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-2 font-mono">Visited {formatTime(entry.visitTime || (entry as any).visit_time)} • {entry.visitCount || (entry as any).visit_count || 1} times</p>
+                          </div>
                         </div>
-                        {entry.executablePath && <p className="text-sm text-muted-foreground mt-1 truncate">{entry.executablePath}</p>}
-                        <p className="text-xs text-muted-foreground mt-2">Last opened {formatTime(entry.lastOpened)}</p>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )
-            ) : null}
-          </div>
-          </>
+                      </Card>
+                    ))
+                  )
+                ) : activeTab === "apps" ? (
+                  filteredAppHistory.length === 0 ? (
+                    <Card className="p-8 text-center"><p className="text-muted-foreground">No app history found</p></Card>
+                  ) : (
+                    filteredAppHistory.map((entry, idx) => (
+                      <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className="mt-1 p-2 rounded-lg bg-muted"><Clock className="w-5 h-5" /></div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-semibold">{entry.appName}</h4>
+                              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">{entry.appType}</span>
+                              {entry.windowsUser ? (
+                                <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">User: {entry.windowsUser}</span>
+                              ) : null}
+                            </div>
+                            {entry.executablePath && <p className="text-sm text-muted-foreground mt-1 truncate">{entry.executablePath}</p>}
+                            <p className="text-xs text-muted-foreground mt-2">Last opened {formatTime(entry.lastOpened)}</p>
+                          </div>
+                        </div>
+                      </Card>
+                    ))
+                  )
+                ) : null}
+              </div>
+            </>
           )}
         </div>
       </main>

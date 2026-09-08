@@ -139,7 +139,7 @@ export default function SettingsPage() {
       try {
         const saved = localStorage.getItem("zenvora-workspace-variables");
         if (saved) return { ...DEFAULT_INTEGRATION_VARS, ...JSON.parse(saved) };
-      } catch (_) {}
+      } catch (_) { }
     }
     return DEFAULT_INTEGRATION_VARS;
   });
@@ -346,7 +346,7 @@ export default function SettingsPage() {
             mysqlPassword: prev.mysqlPassword || dbData.mysqlPassword || "",
           }));
         }
-      } catch (_) {}
+      } catch (_) { }
 
       // Load server cloudinary-config
       try {
@@ -358,7 +358,7 @@ export default function SettingsPage() {
             cloudinaryApiKey: prev.cloudinaryApiKey || cloudData.apiKey || "",
           }));
         }
-      } catch (_) {}
+      } catch (_) { }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
     } finally {
@@ -593,17 +593,17 @@ export default function SettingsPage() {
 
       const payload = isParams
         ? {
-            mode: "params",
-            host: hostClean,
-            port: portClean,
-            database: vars.mysqlDatabase.trim(),
-            user: vars.mysqlUser.trim(),
-            password: vars.mysqlPassword,
-          }
+          mode: "params",
+          host: hostClean,
+          port: portClean,
+          database: vars.mysqlDatabase.trim(),
+          user: vars.mysqlUser.trim(),
+          password: vars.mysqlPassword,
+        }
         : {
-            mode: "uri",
-            mysqlUri: vars.mysqlUri.trim(),
-          };
+          mode: "uri",
+          mysqlUri: vars.mysqlUri.trim(),
+        };
 
       const data = await safeFetchJson("/api/integrations/test-mysql", {
         method: "POST",
@@ -806,7 +806,7 @@ export default function SettingsPage() {
                 "radial-gradient(circle at 12% 18%, oklch(0.92 0.01 90), transparent 42%), radial-gradient(circle at 88% 8%, oklch(0.94 0.01 60), transparent 36%)",
             }}
           />
-          <div className="relative p-6 lg:p-12 max-w-4xl">
+          <div className="relative p-6 lg:p-12 max-w-5xl">
             <div className="mb-8">
               <p className="text-xs font-mono uppercase tracking-[0.22em] text-muted-foreground mb-3">
                 Workspace Central
@@ -836,11 +836,10 @@ export default function SettingsPage() {
             <div className="flex flex-wrap gap-2 mb-8 border-b border-border pb-3">
               <button
                 onClick={() => setActiveTab("pairing")}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
-                  activeTab === "pairing"
-                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${activeTab === "pairing"
+                  ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                  : "text-muted-foreground hover:bg-muted"
+                  }`}
               >
                 <KeyRound className="w-4 h-4" />
                 Pairing & Access
@@ -848,11 +847,10 @@ export default function SettingsPage() {
 
               <button
                 onClick={() => setActiveTab("network")}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
-                  activeTab === "network"
-                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${activeTab === "network"
+                  ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                  : "text-muted-foreground hover:bg-muted"
+                  }`}
               >
                 <Network className="w-4 h-4" />
                 Network & Transports
@@ -860,11 +858,10 @@ export default function SettingsPage() {
 
               <button
                 onClick={() => setActiveTab("integrations")}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
-                  activeTab === "integrations"
-                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${activeTab === "integrations"
+                  ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                  : "text-muted-foreground hover:bg-muted"
+                  }`}
               >
                 <Database className="w-4 h-4" />
                 Variables & Storage
@@ -875,11 +872,10 @@ export default function SettingsPage() {
 
               <button
                 onClick={() => setActiveTab("ai")}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${
-                  activeTab === "ai"
-                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${activeTab === "ai"
+                  ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                  : "text-muted-foreground hover:bg-muted"
+                  }`}
               >
                 <Cpu className="w-4 h-4" />
                 AI Engine & Binding
@@ -973,9 +969,8 @@ export default function SettingsPage() {
                           </Label>
                           {pairing.pairingToken && (
                             <span
-                              className={`text-[11px] font-mono flex items-center gap-1 ${
-                                isTokenWeak ? "text-amber-500" : "text-emerald-500"
-                              }`}
+                              className={`text-[11px] font-mono flex items-center gap-1 ${isTokenWeak ? "text-amber-500" : "text-emerald-500"
+                                }`}
                             >
                               {isTokenWeak ? (
                                 <>
@@ -1001,9 +996,8 @@ export default function SettingsPage() {
                                 pairingToken: e.target.value.replace(/\D/g, "").slice(0, 6),
                               }))
                             }
-                            className={`h-12 font-mono text-lg tracking-[0.2em] ${
-                              isTokenWeak ? "border-amber-500 focus-visible:ring-amber-500" : ""
-                            }`}
+                            className={`h-12 font-mono text-lg tracking-[0.2em] ${isTokenWeak ? "border-amber-500 focus-visible:ring-amber-500" : ""
+                              }`}
                             disabled={loading}
                             required
                           />
@@ -1065,11 +1059,10 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => switchTransport("wss")}
-                      className={`group relative p-5 rounded-xl border text-left transition-all duration-200 ${
-                        mediaTransport === "wss"
-                          ? "border-indigo-500/80 bg-indigo-500/[0.07] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/5"
-                          : "border-border bg-card/40 hover:bg-muted/40 hover:border-border/80"
-                      }`}
+                      className={`group relative p-5 rounded-xl border text-left transition-all duration-200 ${mediaTransport === "wss"
+                        ? "border-indigo-500/80 bg-indigo-500/[0.07] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/5"
+                        : "border-border bg-card/40 hover:bg-muted/40 hover:border-border/80"
+                        }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
@@ -1094,11 +1087,10 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => switchTransport("tcp")}
-                      className={`group relative p-5 rounded-xl border text-left transition-all duration-200 ${
-                        mediaTransport === "tcp"
-                          ? "border-indigo-500/80 bg-indigo-500/[0.07] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/5"
-                          : "border-border bg-card/40 hover:bg-muted/40 hover:border-border/80"
-                      }`}
+                      className={`group relative p-5 rounded-xl border text-left transition-all duration-200 ${mediaTransport === "tcp"
+                        ? "border-indigo-500/80 bg-indigo-500/[0.07] ring-1 ring-indigo-500/50 shadow-md shadow-indigo-500/5"
+                        : "border-border bg-card/40 hover:bg-muted/40 hover:border-border/80"
+                        }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
@@ -1195,9 +1187,8 @@ export default function SettingsPage() {
                           Browser Reachability:
                         </span>
                         <span
-                          className={`flex items-center gap-1 font-semibold ${
-                            gatewayProbeResult.browserLive ? "text-emerald-500" : "text-amber-500"
-                          }`}
+                          className={`flex items-center gap-1 font-semibold ${gatewayProbeResult.browserLive ? "text-emerald-500" : "text-amber-500"
+                            }`}
                         >
                           {gatewayProbeResult.browserLive ? (
                             <>
@@ -1217,9 +1208,8 @@ export default function SettingsPage() {
                           Agent Probe (Direct TCP / WS):
                         </span>
                         <span
-                          className={`flex items-center gap-1 font-semibold ${
-                            gatewayProbeResult.agentLive ? "text-emerald-500" : "text-destructive"
-                          }`}
+                          className={`flex items-center gap-1 font-semibold ${gatewayProbeResult.agentLive ? "text-emerald-500" : "text-destructive"
+                            }`}
                         >
                           {gatewayProbeResult.agentLive ? (
                             <>
@@ -1288,540 +1278,530 @@ export default function SettingsPage() {
                 />
               ) : (
                 <form onSubmit={saveVariables} className="space-y-8">
-                {/* Database Engine Section (MongoDB or MySQL - One at a Time) */}
-                <section className="space-y-5 p-5 border border-border rounded-xl bg-card shadow-sm">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/50">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 border border-blue-500/20">
-                        <Database className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h2 className="text-base font-semibold">Primary Database Engine</h2>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                            Active: {vars.activeDbProvider.toUpperCase()}
-                          </span>
+                  {/* Database Engine Section (MongoDB or MySQL - One at a Time) */}
+                  <section className="space-y-5 p-5 border border-border rounded-xl bg-card shadow-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-border/50">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                          <Database className="w-5 h-5" />
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Select your primary database engine. Choose between MySQL and MongoDB (only one engine active at a time).
-                        </p>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h2 className="text-base font-semibold">Primary Database Engine</h2>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                              Active: {vars.activeDbProvider.toUpperCase()}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Select your primary database engine. Choose between MySQL and MongoDB (only one engine active at a time).
+                          </p>
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Active Provider Selector Pills */}
-                    <div className="flex items-center bg-muted/60 p-1 rounded-lg border border-border shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setVars({ ...vars, activeDbProvider: "mongo" })}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${
-                          vars.activeDbProvider === "mongo"
+                      {/* Active Provider Selector Pills */}
+                      <div className="flex items-center bg-muted/60 p-1 rounded-lg border border-border shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setVars({ ...vars, activeDbProvider: "mongo" })}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${vars.activeDbProvider === "mongo"
                             ? "bg-emerald-600 text-white shadow-sm font-bold"
                             : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        <Database className="w-3.5 h-3.5" />
-                        <span>MongoDB</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setVars({ ...vars, activeDbProvider: "mysql" })}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${
-                          vars.activeDbProvider === "mysql"
+                            }`}
+                        >
+                          <Database className="w-3.5 h-3.5" />
+                          <span>MongoDB</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setVars({ ...vars, activeDbProvider: "mysql" })}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${vars.activeDbProvider === "mysql"
                             ? "bg-blue-600 text-white shadow-sm font-bold"
                             : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        <Database className="w-3.5 h-3.5" />
-                        <span>MySQL</span>
-                      </button>
+                            }`}
+                        >
+                          <Database className="w-3.5 h-3.5" />
+                          <span>MySQL</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* 1. MONGODB PANEL (Rendered when activeDbProvider === 'mongo') */}
-                  {vars.activeDbProvider === "mongo" && (
-                    <div className="space-y-4 pt-1 animate-in fade-in duration-200">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-muted-foreground">
-                          Used for fleet telemetry, real-time agent registration, browser/app history, and accounts.
-                        </div>
-                        {mongoTestResult && (
-                          <span
-                            className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
-                              mongoTestResult.success
+                    {/* 1. MONGODB PANEL (Rendered when activeDbProvider === 'mongo') */}
+                    {vars.activeDbProvider === "mongo" && (
+                      <div className="space-y-4 pt-1 animate-in fade-in duration-200">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-muted-foreground">
+                            Used for fleet telemetry, real-time agent registration, browser/app history, and accounts.
+                          </div>
+                          {mongoTestResult && (
+                            <span
+                              className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${mongoTestResult.success
                                 ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
                                 : "bg-destructive/10 text-destructive border border-destructive/20"
-                            }`}
-                          >
-                            {mongoTestResult.success ? `Connected (${mongoTestResult.latencyMs}ms)` : "Failed"}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="mongodbUri" className="text-xs font-mono uppercase tracking-wider">
-                          MongoDB Connection URI
-                        </Label>
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <Input
-                            id="mongodbUri"
-                            type="password"
-                            placeholder="mongodb+srv://username:password@cluster.mongodb.net/zenvora?retryWrites=true&w=majority"
-                            value={vars.mongodbUri}
-                            onChange={(e) => setVars({ ...vars, mongodbUri: e.target.value })}
-                            className="font-mono text-sm flex-1"
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void runMongoTest()}
-                            disabled={testingMongo || !vars.mongodbUri?.trim()}
-                            className="gap-2 shrink-0 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-500 text-xs"
-                          >
-                            <Activity className={`w-3.5 h-3.5 text-emerald-500 ${testingMongo ? "animate-spin" : ""}`} />
-                            {testingMongo ? "Testing…" : "Test MongoDB"}
-                          </Button>
-                        </div>
-                      </div>
-
-                      {mongoTestResult && (
-                        <div
-                          className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
-                            mongoTestResult.success
-                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
-                              : "border-destructive/30 bg-destructive/5 text-destructive"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            {mongoTestResult.success ? (
-                              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                            ) : (
-                              <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
-                            )}
-                            <span className="truncate">{mongoTestResult.message || mongoTestResult.error}</span>
-                          </div>
-                          {mongoTestResult.latencyMs !== undefined && (
-                            <span className="text-[10px] opacity-75 shrink-0 ml-2">{mongoTestResult.latencyMs}ms ping</span>
+                                }`}
+                            >
+                              {mongoTestResult.success ? `Connected (${mongoTestResult.latencyMs}ms)` : "Failed"}
+                            </span>
                           )}
                         </div>
-                      )}
-                    </div>
-                  )}
 
-                  {/* 2. MYSQL PANEL (Rendered when activeDbProvider === 'mysql') */}
-                  {vars.activeDbProvider === "mysql" && (
-                    <div className="space-y-4 pt-1 animate-in fade-in duration-200">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="text-xs text-muted-foreground">
-                          Relational tables (<code className="text-blue-500">users</code>, <code className="text-blue-500">devices</code>, <code className="text-blue-500">permissions</code>, <code className="text-blue-500">activity_logs</code>) with connection pooling.
+                        <div className="space-y-2">
+                          <Label htmlFor="mongodbUri" className="text-xs font-mono uppercase tracking-wider">
+                            MongoDB Connection URI
+                          </Label>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <Input
+                              id="mongodbUri"
+                              type="password"
+                              placeholder="mongodb+srv://username:password@cluster.mongodb.net/zenvora?retryWrites=true&w=majority"
+                              value={vars.mongodbUri}
+                              onChange={(e) => setVars({ ...vars, mongodbUri: e.target.value })}
+                              className="font-mono text-sm flex-1"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void runMongoTest()}
+                              disabled={testingMongo || !vars.mongodbUri?.trim()}
+                              className="gap-2 shrink-0 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-500 text-xs"
+                            >
+                              <Activity className={`w-3.5 h-3.5 text-emerald-500 ${testingMongo ? "animate-spin" : ""}`} />
+                              {testingMongo ? "Testing…" : "Test MongoDB"}
+                            </Button>
+                          </div>
                         </div>
-                        {mysqlTestResult && (
-                          <span
-                            className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium self-start sm:self-auto ${
-                              mysqlTestResult.success
-                                ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
-                                : "bg-destructive/10 text-destructive border border-destructive/20"
-                            }`}
+
+                        {mongoTestResult && (
+                          <div
+                            className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${mongoTestResult.success
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
+                              : "border-destructive/30 bg-destructive/5 text-destructive"
+                              }`}
                           >
-                            {mysqlTestResult.success ? `Connected (${mysqlTestResult.latencyMs}ms)` : "Failed"}
-                          </span>
+                            <div className="flex items-center gap-2 truncate">
+                              {mongoTestResult.success ? (
+                                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                              ) : (
+                                <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                              )}
+                              <span className="truncate">{mongoTestResult.message || mongoTestResult.error}</span>
+                            </div>
+                            {mongoTestResult.latencyMs !== undefined && (
+                              <span className="text-[10px] opacity-75 shrink-0 ml-2">{mongoTestResult.latencyMs}ms ping</span>
+                            )}
+                          </div>
                         )}
                       </div>
+                    )}
 
-                      {/* Mode Selector Tabs: Parameters vs Connection String */}
-                      <div className="flex items-center gap-2 p-1 bg-muted/60 dark:bg-muted/30 rounded-lg border border-border/60 w-fit">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setVars((prev) => {
-                              if (prev.mysqlUri && (!prev.mysqlHost || prev.mysqlHost === "127.0.0.1")) {
-                                const parsed = parseUriToParams(prev.mysqlUri);
-                                if (parsed) {
-                                  return {
-                                    ...prev,
-                                    mysqlMode: "params",
-                                    mysqlHost: parsed.host || prev.mysqlHost,
-                                    mysqlPort: parsed.port || prev.mysqlPort,
-                                    mysqlUser: parsed.user || prev.mysqlUser,
-                                    mysqlPassword: parsed.password || prev.mysqlPassword,
-                                    mysqlDatabase: parsed.database || prev.mysqlDatabase,
-                                  };
-                                }
-                              }
-                              return { ...prev, mysqlMode: "params" };
-                            });
-                          }}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                            vars.mysqlMode === "params"
-                              ? "bg-background text-foreground shadow-sm border border-border/50"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                        >
-                          <Sliders className="w-3.5 h-3.5 text-blue-500" />
-                          <span>Host / Port / Database</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setVars((prev) => {
-                              if (!prev.mysqlUri && prev.mysqlHost) {
-                                const generated = buildMysqlUriStr(prev);
-                                return { ...prev, mysqlMode: "uri", mysqlUri: generated };
-                              }
-                              return { ...prev, mysqlMode: "uri" };
-                            });
-                          }}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                            vars.mysqlMode === "uri"
-                              ? "bg-background text-foreground shadow-sm border border-border/50"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                        >
-                          <Link2 className="w-3.5 h-3.5 text-blue-500" />
-                          <span>Connection String (URL)</span>
-                        </button>
-                      </div>
-
-                      {/* 1. Host / Port / User / Password / Database Mode */}
-                      {vars.mysqlMode === "params" ? (
-                        <div className="space-y-3 bg-muted/20 p-4 rounded-xl border border-border/50">
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div className="space-y-1.5 sm:col-span-2">
-                              <Label htmlFor="mysqlHost" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
-                                <Server className="w-3.5 h-3.5 text-blue-500" />
-                                Host / Server IP
-                              </Label>
-                               <Input
-                                id="mysqlHost"
-                                placeholder="127.0.0.1 or localhost"
-                                value={vars.mysqlHost}
-                                onChange={(e) => {
-                                  let val = e.target.value;
-                                  // If user pasted a full ADO.NET string (e.g. Server=tcp:...;Database=...)
-                                  if (/Server=/i.test(val) || /Initial Catalog=/i.test(val)) {
-                                    const parsed = parseUriToParams(val);
-                                    if (parsed) {
-                                      setVars((prev) => ({
-                                        ...prev,
-                                        mysqlHost: parsed.host,
-                                        mysqlPort: parsed.port,
-                                        mysqlDatabase: parsed.database,
-                                        mysqlUser: parsed.user,
-                                        mysqlPassword: parsed.password,
-                                        mysqlUri: buildMysqlUriStr({ ...prev, ...parsed }),
-                                      }));
-                                      return;
-                                    }
-                                  }
-                                  val = val.replace(/^tcp:/i, "");
-                                  val = val.replace(/(\.(?:net|com|org|io|dev|cloud|windows\.net|azure\.com))127\.0\.0\.1$/i, "$1");
-                                  setVars((prev) => ({
-                                    ...prev,
-                                    mysqlHost: val,
-                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlHost: val }),
-                                  }));
-                                }}
-                                className="font-mono text-sm"
-                              />
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <Label htmlFor="mysqlPort" className="text-xs font-mono uppercase tracking-wider">
-                                Port
-                              </Label>
-                              <Input
-                                id="mysqlPort"
-                                placeholder="3306"
-                                value={vars.mysqlPort}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setVars((prev) => ({
-                                    ...prev,
-                                    mysqlPort: val,
-                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlPort: val }),
-                                  }));
-                                }}
-                                className="font-mono text-sm"
-                              />
-                            </div>
+                    {/* 2. MYSQL PANEL (Rendered when activeDbProvider === 'mysql') */}
+                    {vars.activeDbProvider === "mysql" && (
+                      <div className="space-y-4 pt-1 animate-in fade-in duration-200">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            Relational tables (<code className="text-blue-500">users</code>, <code className="text-blue-500">devices</code>, <code className="text-blue-500">permissions</code>, <code className="text-blue-500">activity_logs</code>) with connection pooling.
                           </div>
+                          {mysqlTestResult && (
+                            <span
+                              className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium self-start sm:self-auto ${mysqlTestResult.success
+                                ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
+                                : "bg-destructive/10 text-destructive border border-destructive/20"
+                                }`}
+                            >
+                              {mysqlTestResult.success ? `Connected (${mysqlTestResult.latencyMs}ms)` : "Failed"}
+                            </span>
+                          )}
+                        </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div className="space-y-1.5">
-                              <Label htmlFor="mysqlDatabase" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
-                                <Database className="w-3.5 h-3.5 text-blue-500" />
-                                Database Name
-                              </Label>
-                              <Input
-                                id="mysqlDatabase"
-                                placeholder="zenvora"
-                                value={vars.mysqlDatabase}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setVars((prev) => ({
-                                    ...prev,
-                                    mysqlDatabase: val,
-                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlDatabase: val }),
-                                  }));
-                                }}
-                                className="font-mono text-sm"
-                              />
-                            </div>
+                        {/* Mode Selector Tabs: Parameters vs Connection String */}
+                        <div className="flex items-center gap-2 p-1 bg-muted/60 dark:bg-muted/30 rounded-lg border border-border/60 w-fit">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVars((prev) => {
+                                if (prev.mysqlUri && (!prev.mysqlHost || prev.mysqlHost === "127.0.0.1")) {
+                                  const parsed = parseUriToParams(prev.mysqlUri);
+                                  if (parsed) {
+                                    return {
+                                      ...prev,
+                                      mysqlMode: "params",
+                                      mysqlHost: parsed.host || prev.mysqlHost,
+                                      mysqlPort: parsed.port || prev.mysqlPort,
+                                      mysqlUser: parsed.user || prev.mysqlUser,
+                                      mysqlPassword: parsed.password || prev.mysqlPassword,
+                                      mysqlDatabase: parsed.database || prev.mysqlDatabase,
+                                    };
+                                  }
+                                }
+                                return { ...prev, mysqlMode: "params" };
+                              });
+                            }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${vars.mysqlMode === "params"
+                              ? "bg-background text-foreground shadow-sm border border-border/50"
+                              : "text-muted-foreground hover:text-foreground"
+                              }`}
+                          >
+                            <Sliders className="w-3.5 h-3.5 text-blue-500" />
+                            <span>Host / Port / Database</span>
+                          </button>
 
-                            <div className="space-y-1.5">
-                              <Label htmlFor="mysqlUser" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
-                                <KeyRound className="w-3.5 h-3.5 text-blue-500" />
-                                Username
-                              </Label>
-                              <Input
-                                id="mysqlUser"
-                                placeholder="root"
-                                value={vars.mysqlUser}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setVars((prev) => ({
-                                    ...prev,
-                                    mysqlUser: val,
-                                    mysqlUri: buildMysqlUriStr({ ...prev, mysqlUser: val }),
-                                  }));
-                                }}
-                                className="font-mono text-sm"
-                              />
-                            </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVars((prev) => {
+                                if (!prev.mysqlUri && prev.mysqlHost) {
+                                  const generated = buildMysqlUriStr(prev);
+                                  return { ...prev, mysqlMode: "uri", mysqlUri: generated };
+                                }
+                                return { ...prev, mysqlMode: "uri" };
+                              });
+                            }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${vars.mysqlMode === "uri"
+                              ? "bg-background text-foreground shadow-sm border border-border/50"
+                              : "text-muted-foreground hover:text-foreground"
+                              }`}
+                          >
+                            <Link2 className="w-3.5 h-3.5 text-blue-500" />
+                            <span>Connection String (URL)</span>
+                          </button>
+                        </div>
 
-                            <div className="space-y-1.5">
-                              <Label htmlFor="mysqlPassword" className="text-xs font-mono uppercase tracking-wider">
-                                Password
-                              </Label>
-                              <div className="relative">
+                        {/* 1. Host / Port / User / Password / Database Mode */}
+                        {vars.mysqlMode === "params" ? (
+                          <div className="space-y-3 bg-muted/20 p-4 rounded-xl border border-border/50">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="space-y-1.5 sm:col-span-2">
+                                <Label htmlFor="mysqlHost" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                                  <Server className="w-3.5 h-3.5 text-blue-500" />
+                                  Host / Server IP
+                                </Label>
                                 <Input
-                                  id="mysqlPassword"
-                                  type={showMysqlPass ? "text" : "password"}
-                                  placeholder="••••••••"
-                                  value={vars.mysqlPassword}
+                                  id="mysqlHost"
+                                  placeholder="127.0.0.1 or localhost"
+                                  value={vars.mysqlHost}
+                                  onChange={(e) => {
+                                    let val = e.target.value;
+                                    // If user pasted a full ADO.NET string (e.g. Server=tcp:...;Database=...)
+                                    if (/Server=/i.test(val) || /Initial Catalog=/i.test(val)) {
+                                      const parsed = parseUriToParams(val);
+                                      if (parsed) {
+                                        setVars((prev) => ({
+                                          ...prev,
+                                          mysqlHost: parsed.host,
+                                          mysqlPort: parsed.port,
+                                          mysqlDatabase: parsed.database,
+                                          mysqlUser: parsed.user,
+                                          mysqlPassword: parsed.password,
+                                          mysqlUri: buildMysqlUriStr({ ...prev, ...parsed }),
+                                        }));
+                                        return;
+                                      }
+                                    }
+                                    val = val.replace(/^tcp:/i, "");
+                                    val = val.replace(/(\.(?:net|com|org|io|dev|cloud|windows\.net|azure\.com))127\.0\.0\.1$/i, "$1");
+                                    setVars((prev) => ({
+                                      ...prev,
+                                      mysqlHost: val,
+                                      mysqlUri: buildMysqlUriStr({ ...prev, mysqlHost: val }),
+                                    }));
+                                  }}
+                                  className="font-mono text-sm"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <Label htmlFor="mysqlPort" className="text-xs font-mono uppercase tracking-wider">
+                                  Port
+                                </Label>
+                                <Input
+                                  id="mysqlPort"
+                                  placeholder="3306"
+                                  value={vars.mysqlPort}
                                   onChange={(e) => {
                                     const val = e.target.value;
                                     setVars((prev) => ({
                                       ...prev,
-                                      mysqlPassword: val,
-                                      mysqlUri: buildMysqlUriStr({ ...prev, mysqlPassword: val }),
+                                      mysqlPort: val,
+                                      mysqlUri: buildMysqlUriStr({ ...prev, mysqlPort: val }),
                                     }));
                                   }}
-                                  className="font-mono text-sm pr-9"
+                                  className="font-mono text-sm"
                                 />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowMysqlPass(!showMysqlPass)}
-                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                >
-                                  {showMysqlPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                </button>
                               </div>
                             </div>
-                          </div>
 
-                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-2 border-t border-border/40">
-                            <span className="text-[11px] font-mono text-muted-foreground truncate max-w-md">
-                              URI Preview: <span className="opacity-75">{buildMysqlUriStr(vars) || "(incomplete)"}</span>
-                            </span>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => void runMysqlTest()}
-                              disabled={testingMysql || !vars.mysqlHost?.trim()}
-                              className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs self-end sm:self-auto"
-                            >
-                              <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
-                              {testingMysql ? "Testing…" : "Test MySQL"}
-                            </Button>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="mysqlDatabase" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                                  <Database className="w-3.5 h-3.5 text-blue-500" />
+                                  Database Name
+                                </Label>
+                                <Input
+                                  id="mysqlDatabase"
+                                  placeholder="zenvora"
+                                  value={vars.mysqlDatabase}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setVars((prev) => ({
+                                      ...prev,
+                                      mysqlDatabase: val,
+                                      mysqlUri: buildMysqlUriStr({ ...prev, mysqlDatabase: val }),
+                                    }));
+                                  }}
+                                  className="font-mono text-sm"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <Label htmlFor="mysqlUser" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                                  <KeyRound className="w-3.5 h-3.5 text-blue-500" />
+                                  Username
+                                </Label>
+                                <Input
+                                  id="mysqlUser"
+                                  placeholder="root"
+                                  value={vars.mysqlUser}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setVars((prev) => ({
+                                      ...prev,
+                                      mysqlUser: val,
+                                      mysqlUri: buildMysqlUriStr({ ...prev, mysqlUser: val }),
+                                    }));
+                                  }}
+                                  className="font-mono text-sm"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <Label htmlFor="mysqlPassword" className="text-xs font-mono uppercase tracking-wider">
+                                  Password
+                                </Label>
+                                <div className="relative">
+                                  <Input
+                                    id="mysqlPassword"
+                                    type={showMysqlPass ? "text" : "password"}
+                                    placeholder="••••••••"
+                                    value={vars.mysqlPassword}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setVars((prev) => ({
+                                        ...prev,
+                                        mysqlPassword: val,
+                                        mysqlUri: buildMysqlUriStr({ ...prev, mysqlPassword: val }),
+                                      }));
+                                    }}
+                                    className="font-mono text-sm pr-9"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowMysqlPass(!showMysqlPass)}
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                  >
+                                    {showMysqlPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-2 border-t border-border/40">
+                              <span className="text-[11px] font-mono text-muted-foreground truncate max-w-md">
+                                URI Preview: <span className="opacity-75">{buildMysqlUriStr(vars) || "(incomplete)"}</span>
+                              </span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => void runMysqlTest()}
+                                disabled={testingMysql || !vars.mysqlHost?.trim()}
+                                className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs self-end sm:self-auto"
+                              >
+                                <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
+                                {testingMysql ? "Testing…" : "Test MySQL"}
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        /* 2. Connection String (URI) Mode */
-                        <div className="space-y-2 bg-muted/20 p-4 rounded-xl border border-border/50">
-                          <Label htmlFor="mysqlUri" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
-                            <Link2 className="w-3.5 h-3.5 text-blue-500" />
-                            MySQL Connection URI / URL
-                          </Label>
-                          <div className="flex flex-col sm:flex-row gap-2">
-                            <div className="relative flex-1">
-                              <Input
-                                id="mysqlUri"
-                                type={showMysqlUri ? "text" : "password"}
-                                placeholder="mysql://username:password@127.0.0.1:3306/zenvora or Azure connection string"
-                                value={vars.mysqlUri}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const parsed = parseUriToParams(val);
-                                  setVars((prev) => ({
-                                    ...prev,
-                                    mysqlUri: val,
-                                    ...(parsed
-                                      ? {
+                        ) : (
+                          /* 2. Connection String (URI) Mode */
+                          <div className="space-y-2 bg-muted/20 p-4 rounded-xl border border-border/50">
+                            <Label htmlFor="mysqlUri" className="text-xs font-mono uppercase tracking-wider flex items-center gap-1.5">
+                              <Link2 className="w-3.5 h-3.5 text-blue-500" />
+                              MySQL Connection URI / URL
+                            </Label>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <div className="relative flex-1">
+                                <Input
+                                  id="mysqlUri"
+                                  type={showMysqlUri ? "text" : "password"}
+                                  placeholder="mysql://username:password@127.0.0.1:3306/zenvora or Azure connection string"
+                                  value={vars.mysqlUri}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const parsed = parseUriToParams(val);
+                                    setVars((prev) => ({
+                                      ...prev,
+                                      mysqlUri: val,
+                                      ...(parsed
+                                        ? {
                                           mysqlHost: parsed.host,
                                           mysqlPort: parsed.port,
                                           mysqlDatabase: parsed.database,
                                           mysqlUser: parsed.user,
                                           mysqlPassword: parsed.password,
                                         }
-                                      : {}),
-                                  }));
-                                }}
-                                className="font-mono text-sm pr-9"
-                              />
-                              <button
+                                        : {}),
+                                    }));
+                                  }}
+                                  className="font-mono text-sm pr-9"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowMysqlUri(!showMysqlUri)}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                >
+                                  {showMysqlUri ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                              </div>
+                              <Button
                                 type="button"
-                                onClick={() => setShowMysqlUri(!showMysqlUri)}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                variant="outline"
+                                onClick={() => void runMysqlTest()}
+                                disabled={testingMysql || !vars.mysqlUri?.trim()}
+                                className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
                               >
-                                {showMysqlUri ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                              </button>
+                                <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
+                                {testingMysql ? "Testing…" : "Test MySQL"}
+                              </Button>
                             </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => void runMysqlTest()}
-                              disabled={testingMysql || !vars.mysqlUri?.trim()}
-                              className="gap-2 shrink-0 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
-                            >
-                              <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingMysql ? "animate-spin" : ""}`} />
-                              {testingMysql ? "Testing…" : "Test MySQL"}
-                            </Button>
+                            <p className="text-[11px] text-muted-foreground">
+                              Format: <code className="text-blue-500">mysql://[user]:[password]@[host]:[port]/[database]</code>
+                            </p>
                           </div>
-                          <p className="text-[11px] text-muted-foreground">
-                            Format: <code className="text-blue-500">mysql://[user]:[password]@[host]:[port]/[database]</code>
-                          </p>
-                        </div>
-                      )}
+                        )}
 
-                      {mysqlTestResult && (
-                        <div
-                          className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
-                            mysqlTestResult.success
+                        {mysqlTestResult && (
+                          <div
+                            className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${mysqlTestResult.success
                               ? "border-blue-500/30 bg-blue-500/5 text-blue-600 dark:text-blue-400"
                               : "border-destructive/30 bg-destructive/5 text-destructive"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            {mysqlTestResult.success ? (
-                              <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-500" />
-                            ) : (
-                              <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                              }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              {mysqlTestResult.success ? (
+                                <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-500" />
+                              ) : (
+                                <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                              )}
+                              <span className="truncate">{mysqlTestResult.message || mysqlTestResult.error}</span>
+                            </div>
+                            {mysqlTestResult.version && (
+                              <span className="text-[10px] opacity-75 shrink-0 ml-2">v{mysqlTestResult.version}</span>
                             )}
-                            <span className="truncate">{mysqlTestResult.message || mysqlTestResult.error}</span>
                           </div>
-                          {mysqlTestResult.version && (
-                            <span className="text-[10px] opacity-75 shrink-0 ml-2">v{mysqlTestResult.version}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </section>
-
-                {/* Cloudinary Section */}
-                <section className="space-y-4 p-5 border border-border rounded-xl bg-card shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Cloud className="w-5 h-5 text-blue-500" />
-                      <div>
-                        <h2 className="text-base font-semibold">Media Storage (Cloudinary)</h2>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          High-resolution remote screen captures, camera recordings, and media telemetry storage.
-                        </p>
+                        )}
                       </div>
-                    </div>
-                    {cloudinaryTestResult && (
-                      <span
-                        className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${
-                          cloudinaryTestResult.success
+                    )}
+                  </section>
+
+                  {/* Cloudinary Section */}
+                  <section className="space-y-4 p-5 border border-border rounded-xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Cloud className="w-5 h-5 text-blue-500" />
+                        <div>
+                          <h2 className="text-base font-semibold">Media Storage (Cloudinary)</h2>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            High-resolution remote screen captures, camera recordings, and media telemetry storage.
+                          </p>
+                        </div>
+                      </div>
+                      {cloudinaryTestResult && (
+                        <span
+                          className={`text-xs px-2.5 py-1 rounded-md font-mono font-medium ${cloudinaryTestResult.success
                             ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
                             : "bg-destructive/10 text-destructive border border-destructive/20"
-                        }`}
-                      >
-                        {cloudinaryTestResult.success ? `Verified (${cloudinaryTestResult.latencyMs}ms)` : "Failed"}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-3 pt-1">
-                    <div className="space-y-2">
-                      <Label htmlFor="cloudName" className="text-xs font-mono uppercase tracking-wider">
-                        Cloud Name
-                      </Label>
-                      <Input
-                        id="cloudName"
-                        placeholder="my-cloud"
-                        value={vars.cloudinaryCloudName}
-                        onChange={(e) => setVars({ ...vars, cloudinaryCloudName: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="cloudKey" className="text-xs font-mono uppercase tracking-wider">
-                        API Key
-                      </Label>
-                      <Input
-                        id="cloudKey"
-                        placeholder="1234567890"
-                        value={vars.cloudinaryApiKey}
-                        onChange={(e) => setVars({ ...vars, cloudinaryApiKey: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="cloudSecret" className="text-xs font-mono uppercase tracking-wider">
-                        API Secret
-                      </Label>
-                      <Input
-                        id="cloudSecret"
-                        type="password"
-                        placeholder="••••••••••••"
-                        value={vars.cloudinaryApiSecret}
-                        onChange={(e) => setVars({ ...vars, cloudinaryApiSecret: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void runCloudinaryTest()}
-                      disabled={testingCloudinary || !vars.cloudinaryCloudName?.trim() || !vars.cloudinaryApiKey?.trim()}
-                      className="gap-2 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
-                    >
-                      <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingCloudinary ? "animate-spin" : ""}`} />
-                      {testingCloudinary ? "Testing Cloudinary…" : "Test Cloudinary Credentials"}
-                    </Button>
-
-                    <Button type="submit" disabled={saving} className="gap-2 h-9 px-5">
-                      <Save className="w-4 h-4" />
-                      {saving ? "Saving…" : "Save Variables"}
-                    </Button>
-                  </div>
-
-                  {cloudinaryTestResult && (
-                    <div
-                      className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${
-                        cloudinaryTestResult.success
-                          ? "border-blue-500/30 bg-blue-500/5 text-blue-600 dark:text-blue-400"
-                          : "border-destructive/30 bg-destructive/5 text-destructive"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        {cloudinaryTestResult.success ? (
-                          <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-500" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
-                        )}
-                        <span className="truncate">{cloudinaryTestResult.message || cloudinaryTestResult.error}</span>
-                      </div>
-                      {cloudinaryTestResult.latencyMs !== undefined && (
-                        <span className="text-[10px] opacity-75 shrink-0 ml-2">{cloudinaryTestResult.latencyMs}ms</span>
+                            }`}
+                        >
+                          {cloudinaryTestResult.success ? `Verified (${cloudinaryTestResult.latencyMs}ms)` : "Failed"}
+                        </span>
                       )}
                     </div>
-                  )}
-                </section>
-              </form>
+
+                    <div className="grid gap-4 sm:grid-cols-3 pt-1">
+                      <div className="space-y-2">
+                        <Label htmlFor="cloudName" className="text-xs font-mono uppercase tracking-wider">
+                          Cloud Name
+                        </Label>
+                        <Input
+                          id="cloudName"
+                          placeholder="my-cloud"
+                          value={vars.cloudinaryCloudName}
+                          onChange={(e) => setVars({ ...vars, cloudinaryCloudName: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="cloudKey" className="text-xs font-mono uppercase tracking-wider">
+                          API Key
+                        </Label>
+                        <Input
+                          id="cloudKey"
+                          placeholder="1234567890"
+                          value={vars.cloudinaryApiKey}
+                          onChange={(e) => setVars({ ...vars, cloudinaryApiKey: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="cloudSecret" className="text-xs font-mono uppercase tracking-wider">
+                          API Secret
+                        </Label>
+                        <Input
+                          id="cloudSecret"
+                          type="password"
+                          placeholder="••••••••••••"
+                          value={vars.cloudinaryApiSecret}
+                          onChange={(e) => setVars({ ...vars, cloudinaryApiSecret: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void runCloudinaryTest()}
+                        disabled={testingCloudinary || !vars.cloudinaryCloudName?.trim() || !vars.cloudinaryApiKey?.trim()}
+                        className="gap-2 border-blue-500/30 hover:bg-blue-500/10 hover:text-blue-500 text-xs"
+                      >
+                        <Activity className={`w-3.5 h-3.5 text-blue-500 ${testingCloudinary ? "animate-spin" : ""}`} />
+                        {testingCloudinary ? "Testing Cloudinary…" : "Test Cloudinary Credentials"}
+                      </Button>
+
+                      <Button type="submit" disabled={saving} className="gap-2 h-9 px-5">
+                        <Save className="w-4 h-4" />
+                        {saving ? "Saving…" : "Save Variables"}
+                      </Button>
+                    </div>
+
+                    {cloudinaryTestResult && (
+                      <div
+                        className={`p-3 rounded-lg border text-xs font-mono flex items-center justify-between ${cloudinaryTestResult.success
+                          ? "border-blue-500/30 bg-blue-500/5 text-blue-600 dark:text-blue-400"
+                          : "border-destructive/30 bg-destructive/5 text-destructive"
+                          }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          {cloudinaryTestResult.success ? (
+                            <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-500" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                          )}
+                          <span className="truncate">{cloudinaryTestResult.message || cloudinaryTestResult.error}</span>
+                        </div>
+                        {cloudinaryTestResult.latencyMs !== undefined && (
+                          <span className="text-[10px] opacity-75 shrink-0 ml-2">{cloudinaryTestResult.latencyMs}ms</span>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                </form>
               )
             )}
 
@@ -1836,166 +1816,164 @@ export default function SettingsPage() {
                 />
               ) : (
                 <div className="space-y-8">
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="w-5 h-5 text-purple-500" />
-                    <div>
-                      <h2 className="text-lg font-display tracking-tight">AI Engines & Telemetry Auditor</h2>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Configure your AI keys in one central location. All chatbot, AI Ops, and agent automated
-                        self-healing use the keys configured here.
-                      </p>
+                  <section className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-5 h-5 text-purple-500" />
+                      <div>
+                        <h2 className="text-lg font-display tracking-tight">AI Engines & Telemetry Auditor</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Configure your AI keys in one central location. All chatbot, AI Ops, and agent automated
+                          self-healing use the keys configured here.
+                        </p>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2">
-                    {PROVIDER_OPTIONS.map((p) => {
-                      const isSelected = selectedAiProvider === p.key;
-                      const hasKey = Boolean(apiConfig.providers.find((item) => item.provider === p.key)?.apiKey?.trim());
-                      return (
-                        <button
-                          key={p.key}
-                          type="button"
-                          onClick={() => {
-                            setSelectedAiProvider(p.key);
-                            setActiveProvider(p.key);
-                            setAiTestResult(null);
-                          }}
-                          className={`flex flex-col items-center justify-center p-3 border rounded-xl transition-all ${
-                            isSelected
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2">
+                      {PROVIDER_OPTIONS.map((p) => {
+                        const isSelected = selectedAiProvider === p.key;
+                        const hasKey = Boolean(apiConfig.providers.find((item) => item.provider === p.key)?.apiKey?.trim());
+                        return (
+                          <button
+                            key={p.key}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAiProvider(p.key);
+                              setActiveProvider(p.key);
+                              setAiTestResult(null);
+                            }}
+                            className={`flex flex-col items-center justify-center p-3 border rounded-xl transition-all ${isSelected
                               ? "border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400 font-semibold ring-1 ring-purple-500/50 shadow-sm"
                               : "border-border bg-card text-muted-foreground hover:bg-muted"
-                          }`}
-                        >
-                          <span className="text-xs">{p.label}</span>
-                          <span className={`text-[10px] mt-1 font-mono ${hasKey ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>
-                            {hasKey ? "Key Configured" : "No Key"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {activeProviderConfig && (
-                    <div className="space-y-4 p-5 border border-border rounded-xl bg-card shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-semibold flex items-center gap-2">
-                          <span>{activeProviderConfig.label} Configuration</span>
-                          {selectedAiProvider === "gemini" && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
-                              Recommended
+                              }`}
+                          >
+                            <span className="text-xs">{p.label}</span>
+                            <span className={`text-[10px] mt-1 font-mono ${hasKey ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>
+                              {hasKey ? "Key Configured" : "No Key"}
                             </span>
-                          )}
-                        </h3>
-                        <span className="text-xs font-mono uppercase text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                          Active Provider
-                        </span>
-                      </div>
+                          </button>
+                        );
+                      })}
+                    </div>
 
-                      <div className="space-y-2">
-                        <Label className="text-xs font-mono uppercase tracking-wider">
-                          API Key
-                        </Label>
-                        <Input
-                          type="password"
-                          placeholder={`Enter ${activeProviderConfig.label} API Key`}
-                          value={activeProviderConfig.apiKey}
-                          onChange={(e) => {
-                            setProviderApiKey(selectedAiProvider, e.target.value);
-                            setAiTestResult(null);
-                          }}
-                          className="font-mono text-sm"
-                        />
-                      </div>
+                    {activeProviderConfig && (
+                      <div className="space-y-4 p-5 border border-border rounded-xl ">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-semibold flex items-center gap-2">
+                            <span>{activeProviderConfig.label} Configuration</span>
+                            {selectedAiProvider === "gemini" && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
+                                Recommended
+                              </span>
+                            )}
+                          </h3>
+                          <span className="text-xs font-mono uppercase text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                            Active Provider
+                          </span>
+                        </div>
 
-                      <div className="space-y-2">
-                        <Label className="text-xs font-mono uppercase tracking-wider">
-                          Model
-                        </Label>
-                        <select
-                          value={activeProviderConfig.model}
-                          onChange={(e) => setProviderModel(selectedAiProvider, e.target.value)}
-                          className="w-full h-10 px-3 border border-border rounded-md bg-background text-sm font-mono"
-                        >
-                          {PROVIDER_OPTIONS.find((p) => p.key === selectedAiProvider)?.models.map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs font-mono uppercase tracking-wider">
+                            API Key
+                          </Label>
+                          <Input
+                            type="password"
+                            placeholder={`Enter ${activeProviderConfig.label} API Key`}
+                            value={activeProviderConfig.apiKey}
+                            onChange={(e) => {
+                              setProviderApiKey(selectedAiProvider, e.target.value);
+                              setAiTestResult(null);
+                            }}
+                            className="font-mono text-sm"
+                          />
+                        </div>
 
-                      {/* Test API Key Button */}
-                      <div className="pt-2 flex flex-wrap items-center gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => void runAiTest()}
-                          disabled={testingAiKey || !activeProviderConfig.apiKey?.trim()}
-                          className="gap-2 border-purple-500/30 hover:bg-purple-500/10 hover:text-purple-400 text-xs h-9 px-4"
-                        >
-                          <Activity className={`w-3.5 h-3.5 text-purple-500 ${testingAiKey ? "animate-spin" : ""}`} />
-                          {testingAiKey ? `Verifying ${activeProviderConfig.label} Key…` : `Test ${activeProviderConfig.label} API Key`}
-                        </Button>
-                      </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs font-mono uppercase tracking-wider">
+                            Model
+                          </Label>
+                          <select
+                            value={activeProviderConfig.model}
+                            onChange={(e) => setProviderModel(selectedAiProvider, e.target.value)}
+                            className="w-full h-10 px-3 border border-border rounded-md bg-background text-sm font-mono"
+                          >
+                            {PROVIDER_OPTIONS.find((p) => p.key === selectedAiProvider)?.models.map((m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                      {/* Test API Key Result Banner */}
-                      {aiTestResult && (
-                        <div
-                          className={`p-3.5 rounded-lg border text-xs font-mono flex items-center justify-between ${
-                            aiTestResult.success
+                        {/* Test API Key Button */}
+                        <div className="pt-2 flex flex-wrap items-center gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void runAiTest()}
+                            disabled={testingAiKey || !activeProviderConfig.apiKey?.trim()}
+                            className="gap-2 border-purple-500/30 hover:bg-purple-500/10 hover:text-purple-400 text-xs h-9 px-4"
+                          >
+                            <Activity className={`w-3.5 h-3.5 text-purple-500 ${testingAiKey ? "animate-spin" : ""}`} />
+                            {testingAiKey ? `Verifying ${activeProviderConfig.label} Key…` : `Test ${activeProviderConfig.label} API Key`}
+                          </Button>
+                        </div>
+
+                        {/* Test API Key Result Banner */}
+                        {aiTestResult && (
+                          <div
+                            className={`p-3.5 rounded-lg border text-xs font-mono flex items-center justify-between ${aiTestResult.success
                               ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
                               : "border-destructive/30 bg-destructive/5 text-destructive"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            {aiTestResult.success ? (
-                              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                            ) : (
-                              <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                              }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              {aiTestResult.success ? (
+                                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                              ) : (
+                                <AlertCircle className="w-4 h-4 shrink-0 text-destructive" />
+                              )}
+                              <span className="truncate">{aiTestResult.message || aiTestResult.error}</span>
+                            </div>
+                            {aiTestResult.latencyMs !== undefined && (
+                              <span className="text-[10px] opacity-75 shrink-0 ml-2 font-mono">
+                                {aiTestResult.latencyMs}ms RTT
+                              </span>
                             )}
-                            <span className="truncate">{aiTestResult.message || aiTestResult.error}</span>
                           </div>
-                          {aiTestResult.latencyMs !== undefined && (
-                            <span className="text-[10px] opacity-75 shrink-0 ml-2 font-mono">
-                              {aiTestResult.latencyMs}ms RTT
-                            </span>
-                          )}
-                        </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Bind AI to Agents button */}
+                    <div className="p-5 border border-purple-500/30 rounded-xl bg-purple-500/5 space-y-3 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <Bot className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                        <h3 className="text-sm font-semibold">Bind AI Key Directly to Agents</h3>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Pushes your selected AI configuration ({selectedAiProvider.toUpperCase()}) directly to all active agents.
+                        The agent uses this key locally to verify data delivery integrity (notifications, app history, browser history)
+                        and apply autonomous self-healing.
+                      </p>
+
+                      <Button
+                        type="button"
+                        onClick={() => void bindAiToAgents()}
+                        disabled={bindingAi || !activeProviderConfig?.apiKey.trim()}
+                        className="gap-2 bg-purple-600 hover:bg-purple-700 text-white text-xs h-9 px-4"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${bindingAi ? "animate-spin" : ""}`} />
+                        {bindingAi ? "Binding to agents…" : "Bind AI to Connected Agents"}
+                      </Button>
+
+                      {aiBindingStatus && (
+                        <p className="text-xs font-mono text-purple-600 dark:text-purple-300 mt-2">
+                          {aiBindingStatus}
+                        </p>
                       )}
                     </div>
-                  )}
-
-                  {/* Bind AI to Agents button */}
-                  <div className="p-5 border border-purple-500/30 rounded-xl bg-purple-500/5 space-y-3 shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <Bot className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                      <h3 className="text-sm font-semibold">Bind AI Key Directly to Agents</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Pushes your selected AI configuration ({selectedAiProvider.toUpperCase()}) directly to all active agents.
-                      The agent uses this key locally to verify data delivery integrity (notifications, app history, browser history)
-                      and apply autonomous self-healing.
-                    </p>
-
-                    <Button
-                      type="button"
-                      onClick={() => void bindAiToAgents()}
-                      disabled={bindingAi || !activeProviderConfig?.apiKey.trim()}
-                      className="gap-2 bg-purple-600 hover:bg-purple-700 text-white text-xs h-9 px-4"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${bindingAi ? "animate-spin" : ""}`} />
-                      {bindingAi ? "Binding to agents…" : "Bind AI to Connected Agents"}
-                    </Button>
-
-                    {aiBindingStatus && (
-                      <p className="text-xs font-mono text-purple-600 dark:text-purple-300 mt-2">
-                        {aiBindingStatus}
-                      </p>
-                    )}
-                  </div>
-                </section>
-              </div>
+                  </section>
+                </div>
               )
             )}
           </div>
