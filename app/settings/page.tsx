@@ -91,7 +91,7 @@ const DEFAULT_INTEGRATION_VARS: IntegrationVariables = {
   directLanPreferred: true,
 };
 
-type TabKey = "pairing" | "network" | "integrations" | "ai";
+type TabKey = "pairing" | "network" | "integrations" | "ai" | "diagnostics";
 
 function isWeakCode(code: string): boolean {
   if (!/^\d{6}$/.test(code)) return true;
@@ -115,6 +115,9 @@ export default function SettingsPage() {
   const [rotating, setRotating] = useState(false);
   const [bindingAi, setBindingAi] = useState(false);
   const [aiBindingStatus, setAiBindingStatus] = useState<string | null>(null);
+  const [runningDiagnostics, setRunningDiagnostics] = useState(false);
+  const [runningAutoRecover, setRunningAutoRecover] = useState(false);
+  const [diagResult, setDiagResult] = useState<any>(null);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -790,6 +793,64 @@ export default function SettingsPage() {
     }
   };
 
+  useEffect(() => {
+    if (!gatewayClient || typeof gatewayClient.subscribe !== "function") return;
+    const unsub = gatewayClient.subscribe((evt) => {
+      if (evt.type === "json" && evt.packet) {
+        const p = evt.packet as any;
+        if (p.type === "heal_result" || p.diagnosis || p.analysis) {
+          setDiagResult(p.diagnosis || p.analysis || p);
+          setSuccessMsg("Agent diagnostic report received!");
+        }
+      }
+    });
+    return () => {
+      if (typeof unsub === "function") unsub();
+    };
+  }, []);
+
+  const runDiagnostics = async () => {
+    setRunningDiagnostics(true);
+    setDiagResult(null);
+    setError("");
+    try {
+      if (typeof gatewayClient?.broadcast === "function") {
+        gatewayClient.broadcast({
+          action: "HEAL_DEEP_DIAGNOSE",
+          symptom: "system_permissions_and_environment",
+          auto_fix: false,
+        });
+        setSuccessMsg("Diagnostic command dispatched to connected agents.");
+      } else {
+        setError("Gateway client offline. Make sure agents are connected.");
+      }
+    } catch (err) {
+      setError("Failed to run diagnostics: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setRunningDiagnostics(false);
+    }
+  };
+
+  const runAutoRecover = async () => {
+    setRunningAutoRecover(true);
+    setError("");
+    try {
+      if (typeof gatewayClient?.broadcast === "function") {
+        gatewayClient.broadcast({
+          action: "HEAL_FIX",
+          topic: "environment",
+        });
+        setSuccessMsg("Auto-Recovery pass dispatched! Agents are re-requesting missing permissions and restoring health.");
+      } else {
+        setError("Gateway client offline.");
+      }
+    } catch (err) {
+      setError("Failed to run auto-recovery: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setRunningAutoRecover(false);
+    }
+  };
+
   const activeProviderConfig = apiConfig.providers.find(
     (p) => p.provider === selectedAiProvider
   );
@@ -882,6 +943,17 @@ export default function SettingsPage() {
                 {!aiAccess.allowed && !aiAccess.loading && (
                   <Lock className="w-3 h-3 text-amber-500 shrink-0" />
                 )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab("diagnostics")}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-mono tracking-wider uppercase transition-colors rounded-md ${activeTab === "diagnostics"
+                  ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                  : "text-muted-foreground hover:bg-muted"
+                  }`}
+              >
+                <Activity className="w-4 h-4" />
+                Diagnostics & Auto-Recovery
               </button>
             </div>
 
@@ -1975,6 +2047,109 @@ export default function SettingsPage() {
                   </section>
                 </div>
               )
+            )}
+
+            {/* Tab 5: Diagnostics & Auto-Recovery */}
+            {activeTab === "diagnostics" && (
+              <div className="space-y-8">
+                <section className="space-y-6">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Activity className="w-5 h-5 text-emerald-500" />
+                      <h2 className="text-xl font-display tracking-tight">System Diagnostics & Auto-Recovery</h2>
+                    </div>
+                    <p className="text-sm text-muted-foreground max-w-xl">
+                      Fully dynamic diagnostic suite for connected agents. Inspects macOS/Windows system permissions,
+                      Screen Recording entitlements, background services, network latency, and camera hardware status.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      type="button"
+                      onClick={() => void runDiagnostics()}
+                      disabled={runningDiagnostics}
+                      className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-9 px-4"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${runningDiagnostics ? "animate-spin" : ""}`} />
+                      {runningDiagnostics ? "Running Diagnostic Pass…" : "Run System Diagnostics"}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void runAutoRecover()}
+                      disabled={runningAutoRecover}
+                      className="gap-2 border-emerald-500/40 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs h-9 px-4"
+                    >
+                      <Zap className={`w-3.5 h-3.5 text-amber-500 ${runningAutoRecover ? "animate-bounce" : ""}`} />
+                      {runningAutoRecover ? "Auto-Recovering…" : "Auto-Recover / Fix System Issues"}
+                    </Button>
+                  </div>
+
+                  {/* Live Diagnostic Audit Results Card */}
+                  {diagResult ? (
+                    <div className="p-6 rounded-xl border border-border bg-card/50 space-y-4">
+                      <div className="flex items-center justify-between border-b border-border pb-3">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                          <h3 className="text-sm font-mono font-semibold uppercase tracking-wider">
+                            Diagnostic Audit Report
+                          </h3>
+                        </div>
+                        <span className="text-xs font-mono text-muted-foreground">
+                          {diagResult.diagnosedAt || "Just now"}
+                        </span>
+                      </div>
+
+                      {/* Permissions Grid */}
+                      {diagResult.permissions && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                          <div className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
+                            diagResult.permissions.screenRecording
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                              : "border-destructive/30 bg-destructive/5 text-destructive"
+                          }`}>
+                            <span className="font-mono">Screen Recording</span>
+                            <span className="font-semibold">{diagResult.permissions.screenRecording ? "Granted" : "Missing"}</span>
+                          </div>
+
+                          <div className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
+                            diagResult.permissions.accessibility
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                              : "border-destructive/30 bg-destructive/5 text-destructive"
+                          }`}>
+                            <span className="font-mono">Accessibility</span>
+                            <span className="font-semibold">{diagResult.permissions.accessibility ? "Granted" : "Missing"}</span>
+                          </div>
+
+                          <div className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
+                            diagResult.permissions.fullDiskAccess
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                              : "border-amber-500/30 bg-amber-500/5 text-amber-500"
+                          }`}>
+                            <span className="font-mono">Full Disk Access</span>
+                            <span className="font-semibold">{diagResult.permissions.fullDiskAccess ? "Granted" : "Optional"}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Raw Audit Logs */}
+                      <div className="rounded-lg bg-black/80 p-4 font-mono text-xs text-emerald-400 overflow-x-auto max-h-80">
+                        <pre>{JSON.stringify(diagResult, null, 2)}</pre>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-8 rounded-xl border border-dashed border-border text-center space-y-2">
+                      <Activity className="w-8 h-8 text-muted-foreground mx-auto opacity-50" />
+                      <p className="text-sm font-medium">No diagnostic report loaded yet.</p>
+                      <p className="text-xs text-muted-foreground">
+                        Click "Run System Diagnostics" to trigger live inspection across all connected agents.
+                      </p>
+                    </div>
+                  )}
+                </section>
+              </div>
             )}
           </div>
         </div>

@@ -276,9 +276,6 @@ fn open_camera(inner: &mut WorkerInner, device_index: CameraIndex) -> Result<Cam
 fn release_camera(inner: &mut WorkerInner) {
     if let Some(mut cam) = inner.camera.take() {
         let _ = cam.stop_stream();
-        thread::sleep(Duration::from_millis(200));
-        let _ = cam.stop_stream();
-        thread::sleep(Duration::from_millis(200));
         drop(cam);
     }
 }

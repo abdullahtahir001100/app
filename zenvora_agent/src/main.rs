@@ -574,9 +574,8 @@ fn run_async_main(args: &[String]) {
                     }
                     #[cfg(target_os = "macos")]
                     {
-                        println!("[INSTALL] Prompting for macOS System Permissions (Screen Recording & Accessibility)...");
-                        platform::request_screen_capture_permission();
-                        platform::request_accessibility_permission();
+                        println!("[INSTALL] Prompting upfront for all macOS System Permissions (Screen Capture, Accessibility, Camera, Microphone)...");
+                        platform::request_all_permissions_upfront();
                     }
                     println!("[INSTALL] Installing background service (launchd/systemd)...");
                     match service::install_service() {

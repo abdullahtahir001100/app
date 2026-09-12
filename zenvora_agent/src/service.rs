@@ -524,8 +524,71 @@ mod unix {
     }
 
     #[cfg(target_os = "macos")]
+    pub fn ensure_macos_app_bundle() -> Result<PathBuf, String> {
+        let current_exe = env::current_exe().map_err(|e| e.to_string())?;
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        let app_dir = home.join("Applications").join("ZenvoraAgent.app");
+        let contents_dir = app_dir.join("Contents");
+        let macos_dir = contents_dir.join("MacOS");
+        let target_exe = macos_dir.join("ZenvoraAgent");
+        let info_plist = contents_dir.join("Info.plist");
+
+        let _ = fs::create_dir_all(&macos_dir);
+
+        let copy_needed = match fs::metadata(&target_exe) {
+            Ok(m_target) => match fs::metadata(&current_exe) {
+                Ok(m_curr) => m_curr.len() != m_target.len(),
+                Err(_) => false,
+            },
+            Err(_) => true,
+        };
+
+        if copy_needed && current_exe != target_exe {
+            let _ = fs::remove_file(&target_exe);
+            fs::copy(&current_exe, &target_exe).map_err(|e| format!("Failed to copy binary to app bundle: {e}"))?;
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&target_exe) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(&target_exe, perms);
+            }
+        }
+
+        let plist_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>ZenvoraAgent</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.zenvora.agent</string>
+    <key>CFBundleName</key>
+    <string>ZenvoraAgent</string>
+    <key>CFBundleDisplayName</key>
+    <string>Zenvora</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Zenvora requires Screen Recording permission for screen streaming.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Zenvora requires Camera permission for camera streaming.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Zenvora requires Microphone permission for audio streaming.</string>
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>"#;
+
+        let _ = fs::write(&info_plist, plist_content);
+
+        Ok(target_exe)
+    }
+
+    #[cfg(target_os = "macos")]
     pub fn install_service() -> Result<(), String> {
-        let exe = env::current_exe().map_err(|e| e.to_string())?;
+        let exe = ensure_macos_app_bundle().unwrap_or_else(|_| env::current_exe().unwrap_or_default());
         let exe_str = exe.to_string_lossy();
         let plist_p = plist_path();
         if let Some(parent) = plist_p.parent() {
@@ -538,6 +601,8 @@ mod unix {
 <dict>
     <key>Label</key>
     <string>com.zenvora.agent</string>
+    <key>BundleProgram</key>
+    <string>{}</string>
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
@@ -552,7 +617,7 @@ mod unix {
     <key>StandardOutPath</key>
     <string>/tmp/zenvora_agent.out</string>
 </dict>
-</plist>"#, exe_str);
+</plist>"#, exe_str, exe_str);
 
         fs::write(&plist_p, plist_content).map_err(|e| e.to_string())?;
         let _ = Command::new("launchctl").args(["unload", plist_p.to_str().unwrap()]).output();
@@ -585,6 +650,8 @@ mod unix {
 
     #[cfg(target_os = "macos")]
     pub fn uninstall_service() {
+        let flag = crate::paths::agent_dir().join(".uninstall_in_progress");
+        let _ = fs::write(flag, "1");
         stop_service();
         let plist_p = plist_path();
         let _ = fs::remove_file(plist_p);

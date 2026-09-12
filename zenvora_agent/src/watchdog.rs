@@ -87,6 +87,14 @@ pub fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
+pub fn is_uninstall_in_progress() -> bool {
+    crate::paths::agent_dir().join(".uninstall_in_progress").exists()
+}
+
+pub fn is_update_in_progress() -> bool {
+    crate::paths::agent_dir().join(".update_in_progress").exists()
+}
+
 /// Run as the companion watchdog supervisor.
 /// Continuously monitors the target agent PID and restarts it if killed.
 pub fn run_supervisor_loop(initial_target_pid: u32, agent_exe: PathBuf) {
@@ -95,6 +103,17 @@ pub fn run_supervisor_loop(initial_target_pid: u32, agent_exe: PathBuf) {
 
     loop {
         thread::sleep(Duration::from_millis(1500));
+
+        if is_uninstall_in_progress() {
+            println!("[SUPERVISOR] Uninstall signal detected. Exiting watchdog supervisor gracefully.");
+            break;
+        }
+
+        if is_update_in_progress() {
+            println!("[SUPERVISOR] Update in progress. Pausing watchdog supervision temporarily...");
+            thread::sleep(Duration::from_secs(5));
+            continue;
+        }
 
         if monitored_pid == 0 || !is_pid_alive(monitored_pid) {
             eprintln!("[SUPERVISOR] Agent PID {monitored_pid} died or killed! Self-healing relaunch triggered...");

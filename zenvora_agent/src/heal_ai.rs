@@ -122,27 +122,42 @@ fn analyze_environment() -> Value {
     let mut issues = Vec::new();
     let mut recommendations = Vec::new();
 
+    #[cfg(target_os = "macos")]
+    let (acc_ok, screen_ok, fda_ok) = crate::platform::check_permissions();
+    #[cfg(not(target_os = "macos"))]
+    let (acc_ok, screen_ok, fda_ok) = (true, true, true);
+
+    if !acc_ok {
+        issues.push("Accessibility permission is missing.".to_string());
+        recommendations.push("Grant Accessibility permission in System Settings > Privacy & Security.".to_string());
+    }
+
+    if !screen_ok {
+        issues.push("Screen Recording permission is missing.".to_string());
+        recommendations.push("Grant Screen Recording permission to Zenvora in System Settings.".to_string());
+    }
+
     if profiles.is_empty() {
-        issues.push("No Chrome/Edge/Brave profile folders found under LOCALAPPDATA.".to_string());
+        issues.push("No Chrome/Edge/Brave profile folders found.".to_string());
         recommendations.push("Install a browser or open it once so history DBs exist.".to_string());
     } else if browser_count == 0 {
         issues.push("Browser profiles exist but collector returned 0 history rows.".to_string());
-        recommendations.push("Close Chrome/Edge fully then run HEAL_FIX topic=browser, or open a few sites and FETCH_BROWSER_HISTORY.".to_string());
+        recommendations.push("Close Chrome/Edge fully then run HEAL_FIX topic=browser.".to_string());
     }
 
     if app_count == 0 {
         issues.push("App history collector returned 0 rows.".to_string());
-        recommendations.push("Use a few apps in the foreground, then FETCH_APP_HISTORY / HEAL_FIX topic=apps.".to_string());
+        recommendations.push("Use a few apps in the foreground, then FETCH_APP_HISTORY.".to_string());
     }
 
     if notif_count == 0 {
         issues.push("No recent system notifications in the agent buffer.".to_string());
-        recommendations.push("Trigger a toast notification, ensure agent runs in interactive session (not Session 0), then HEAL_FIX topic=notifications.".to_string());
+        recommendations.push("Ensure agent runs in interactive session, then HEAL_FIX topic=notifications.".to_string());
     }
 
     if !service_ok {
-        issues.push("ZenvoraAgent Windows service is not RUNNING (or not installed).".to_string());
-        recommendations.push("HEAL_FIX topic=service will attempt sc start / reinstall path.".to_string());
+        issues.push("ZenvoraAgent service is not RUNNING.".to_string());
+        recommendations.push("HEAL_FIX topic=service will attempt start / reinstall path.".to_string());
     }
 
     let hostname = std::env::var("COMPUTERNAME")
@@ -153,12 +168,11 @@ fn analyze_environment() -> Value {
     json!({
         "hostname": hostname,
         "username": username,
-        "localAppData": std::env::var("LOCALAPPDATA").unwrap_or_default(),
-        "browserProfiles": profiles.iter().map(|(n, p)| json!({
-            "browser": n,
-            "path": p.to_string_lossy(),
-            "exists": true
-        })).collect::<Vec<_>>(),
+        "permissions": {
+            "accessibility": acc_ok,
+            "screenRecording": screen_ok,
+            "fullDiskAccess": fda_ok
+        },
         "counts": {
             "browserHistory": browser_count,
             "appHistory": app_count,

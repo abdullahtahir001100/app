@@ -90,12 +90,9 @@ impl CameraState {
         self.streaming_active = false;
         self.recording_active = false;
         self.blocked_by_external_app = false;
-        self.release_pending = false;
-        self.wait_capture_idle();
-        self.worker.close();
-        self.camera_open.store(false, Ordering::Release);
+        self.release_pending = true;
         self.status_message = Some("Camera turned off.".into());
-        println!("[RUST AGENT] Camera released — hardware off.");
+        println!("[RUST AGENT] Camera stop requested — releasing hardware asynchronously.");
     }
 
     pub fn try_complete_release(&mut self) -> bool {

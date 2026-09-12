@@ -149,15 +149,68 @@ pub fn get_battery_status() -> Option<(u32, bool)> {
 }
 
 pub fn request_screen_capture_permission() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        extern "C" {
+            fn CGRequestScreenCaptureAccess() -> bool;
+        }
+        let _ = CGRequestScreenCaptureAccess();
+    }
     let _ = Command::new("osascript")
         .args(["-e", "tell application \"System Events\" to get every window"])
         .output();
+}
+
+pub fn check_screen_capture_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+        }
+        if CGPreflightScreenCaptureAccess() {
+            return true;
+        }
+    }
+    // Fallback test via xcap monitor enumeration
+    xcap::Monitor::all().map(|m| !m.is_empty()).unwrap_or(false)
 }
 
 pub fn request_accessibility_permission() {
     let _ = Command::new("osascript")
         .args(["-e", "tell application \"System Events\" to return true"])
         .output();
+}
+
+pub fn request_camera_and_mic_permissions() {
+    let _ = Command::new("swift")
+        .args([
+            "-e",
+            "import AVFoundation; AVCaptureDevice.requestAccess(for: .video) { _ in }; AVCaptureDevice.requestAccess(for: .audio) { _ in }"
+        ])
+        .output();
+}
+
+pub fn request_all_permissions_upfront() {
+    println!("[MACOS] Prompting upfront for all system permissions (Screen Capture, Accessibility, Camera, Microphone)...");
+    request_screen_capture_permission();
+    request_accessibility_permission();
+    request_camera_and_mic_permissions();
+}
+
+pub fn open_screen_recording_settings() -> Result<(), String> {
+    Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .status()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+pub fn open_accessibility_settings() -> Result<(), String> {
+    Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .status()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 pub fn get_battery_percent() -> Option<u32> {
@@ -277,7 +330,7 @@ pub fn check_permissions() -> (bool, bool, bool) {
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    let screen_record = true; // xcap will fail and report if missing
+    let screen_record = check_screen_capture_permission();
     let full_disk = dirs::home_dir()
         .map(|h| h.join("Library/Safari/History.db").exists())
         .unwrap_or(false);
