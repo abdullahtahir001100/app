@@ -91,16 +91,38 @@ function androidApkCandidates(flavor = 'lite') {
     ].filter(Boolean);
 }
 
-function macAgentCandidates(_preferZip = false) {
+function macAgentCandidates(preferZip = false, preferBinary = false) {
     const cwd = process.cwd();
+    if (preferBinary) {
+        return [
+            process.env.AGENT_MACOS_BINARY_PATH,
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
+            path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.dmg'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.dmg'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
+        ].filter(Boolean);
+    }
+    if (preferZip) {
+        return [
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.dmg'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.dmg'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
+            process.env.AGENT_MACOS_BINARY_PATH,
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
+            path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
+        ].filter(Boolean);
+    }
     return [
-        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.dmg'),
-        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.dmg'),
-        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
         process.env.AGENT_MACOS_BINARY_PATH,
         path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
         path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
         path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.dmg'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.dmg'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
     ].filter(Boolean);
 }
 
@@ -115,10 +137,10 @@ function linuxAgentCandidates() {
     ].filter(Boolean);
 }
 
-function findAgentBinary(platform = 'windows', preferZip = false) {
+function findAgentBinary(platform = 'windows', preferZip = false, preferBinary = false) {
     let list = candidatePaths();
     if (platform === 'mac' || platform === 'macos' || platform === 'darwin') {
-        list = macAgentCandidates(preferZip);
+        list = macAgentCandidates(preferZip, preferBinary);
     } else if (platform === 'linux') {
         list = linuxAgentCandidates();
     }
@@ -247,8 +269,9 @@ router.get('/download', (req, res) => {
         flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'full' : 'lite';
     const isMac = platform === 'mac' || platform === 'macos' || platform === 'darwin';
     const isLinux = platform === 'linux';
-    const preferZip = isMac && format !== 'binary';
-    const filePath = isAndroid ? findAndroidApk(resolvedFlavor) : findAgentBinary(platform, preferZip);
+    const preferBinary = format === 'binary' || format === 'raw';
+    const preferZip = isMac && !preferBinary;
+    const filePath = isAndroid ? findAndroidApk(resolvedFlavor) : findAgentBinary(platform, preferZip, preferBinary);
     if (!filePath) {
         liveLogBus.push({
             channel: 'http',
