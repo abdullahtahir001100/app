@@ -10,10 +10,18 @@ function getGatewaySocket(deviceId, activeConnections) {
     const agentKey = `AGENT_${id}`;
     const deviceKey = `DEVICE_${id}`;
     const socket = activeConnections.get(agentKey) || activeConnections.get(deviceKey);
-    if (!socket || socket.readyState !== 1) return null;
-    // Placeholder entry for control-only agents — send() is intentionally a no-op.
-    if (socket._placeholder === true) return null;
-    return socket;
+    if (socket && socket.readyState === 1 && !socket._placeholder) return socket;
+
+    const lowerId = id.toLowerCase();
+    for (const [key, sock] of activeConnections.entries()) {
+        if ((key.startsWith('AGENT_') || key.startsWith('DEVICE_')) && sock.readyState === 1 && !sock._placeholder) {
+            const devId = key.replace(/^AGENT_|^DEVICE_/, '');
+            if (devId.toLowerCase() === lowerId) {
+                return sock;
+            }
+        }
+    }
+    return null;
 }
 
 function isCommandReady(deviceId, activeConnections) {

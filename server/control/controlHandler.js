@@ -20,7 +20,18 @@ const {
 const controlAgents = new Map();
 
 function getControlAgent(deviceId) {
-    return controlAgents.get(String(deviceId || ''));
+    const id = String(deviceId || '').trim();
+    if (!id) return null;
+    let agent = controlAgents.get(id);
+    if (agent && agent.socket && !agent.socket.destroyed) return agent;
+
+    const lowerId = id.toLowerCase();
+    for (const [key, meta] of controlAgents.entries()) {
+        if (key.toLowerCase() === lowerId && meta.socket && !meta.socket.destroyed) {
+            return meta;
+        }
+    }
+    return null;
 }
 
 function rememberAgent(deviceId, meta) {
