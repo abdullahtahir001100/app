@@ -85,13 +85,38 @@ function wrapBinaryForDevice(deviceId, frameBuffer) {
  * Broadcast binary only to the agent's owner dashboards, with device envelope.
  */
 function broadcastOwnerBinary(ws, frameBuffer, activeConnections) {
-    const ownerUserId = extractOwnerUserId(ws);
+    let ownerUserId = extractOwnerUserId(ws);
     const deviceId = extractDeviceIdFromAgentSocket(ws);
-    if (!ownerUserId || !deviceId) {
-        return 0;
+    if (!deviceId) return 0;
+
+    if (!ownerUserId) {
+        for (const [uid, entry] of ownershipCache.entries()) {
+            if (entry.devices && entry.devices.has(deviceId)) {
+                ownerUserId = uid;
+                if (ws.authContext) ws.authContext.userId = uid;
+                break;
+            }
+        }
     }
+
     const wrapped = wrapBinaryForDevice(deviceId, frameBuffer);
-    return sendToOwnerDashboards(activeConnections, ownerUserId, wrapped, { binary: true });
+
+    if (ownerUserId) {
+        const sent = sendToOwnerDashboards(activeConnections, ownerUserId, wrapped, { binary: true });
+        if (sent > 0) return sent;
+    }
+
+    // Fallback: relay binary frame to active authenticated dashboard sockets
+    let sent = 0;
+    activeConnections.forEach((clientSocket, key) => {
+        if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
+        if (clientSocket.authContext?.kind !== 'user') return;
+        try {
+            clientSocket.send(wrapped, { binary: true });
+            sent++;
+        } catch (_) {}
+    });
+    return sent;
 }
 
 /**

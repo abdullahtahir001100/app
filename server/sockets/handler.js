@@ -338,9 +338,34 @@ function pushLiveDeviceSnapshot(userId) {
 }
 
 function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
-    const owner = String(ownerUserId || '');
-    if (!owner) return;
-    sendToOwnerDashboards(activeConnections, owner, packet);
+    let owner = String(ownerUserId || '').trim();
+    const deviceId = String(packet?.deviceId || packet?.senderAgentId || packet?.id || '').trim();
+
+    if (!owner && deviceId) {
+        for (const [uid, entry] of ownershipCache.entries()) {
+            if (entry.devices && entry.devices.has(deviceId)) {
+                owner = uid;
+                break;
+            }
+        }
+    }
+
+    if (owner) {
+        const sent = sendToOwnerDashboards(activeConnections, owner, packet);
+        if (sent > 0) return sent;
+    }
+
+    // Fallback: send JSON packet to all authenticated open dashboard sockets
+    let sent = 0;
+    activeConnections.forEach((clientSocket, key) => {
+        if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
+        if (clientSocket.authContext?.kind !== 'user') return;
+        try {
+            clientSocket.send(typeof packet === 'string' ? packet : JSON.stringify(packet));
+            sent++;
+        } catch (_) {}
+    });
+    return sent;
 }
 
 function getShellResponsePayload(packet) {
