@@ -601,8 +601,6 @@ mod unix {
 <dict>
     <key>Label</key>
     <string>com.zenvora.agent</string>
-    <key>BundleProgram</key>
-    <string>{}</string>
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
@@ -616,16 +614,27 @@ mod unix {
     <string>/tmp/zenvora_agent.err</string>
     <key>StandardOutPath</key>
     <string>/tmp/zenvora_agent.out</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
 </dict>
-</plist>"#, exe_str, exe_str);
+</plist>"#, exe_str);
 
         fs::write(&plist_p, plist_content).map_err(|e| e.to_string())?;
+        let uid = unsafe { libc::getuid() };
+        let gui_target = format!("gui/{}", uid);
+        let _ = Command::new("launchctl").args(["bootout", &gui_target, "com.zenvora.agent"]).output();
         let _ = Command::new("launchctl").args(["unload", plist_p.to_str().unwrap()]).output();
-        let out = Command::new("launchctl").args(["load", "-w", plist_p.to_str().unwrap()]).output().map_err(|e| e.to_string())?;
-        if out.status.success() {
+        let out = Command::new("launchctl").args(["bootstrap", &gui_target, plist_p.to_str().unwrap()]).output();
+        if let Ok(o) = out {
+            if o.status.success() {
+                return Ok(());
+            }
+        }
+        let legacy_out = Command::new("launchctl").args(["load", "-w", plist_p.to_str().unwrap()]).output().map_err(|e| e.to_string())?;
+        if legacy_out.status.success() {
             Ok(())
         } else {
-            Err(String::from_utf8_lossy(&out.stderr).to_string())
+            Err(String::from_utf8_lossy(&legacy_out.stderr).to_string())
         }
     }
 
