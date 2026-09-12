@@ -609,13 +609,6 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
 
     if (isMysql()) {
         const adapter = getMysqlAdapter();
-        const existing = await adapter.findAgentCredential(cleanDeviceId);
-        if (existing && String(existing.userId) !== String(userId)) {
-            const error = new Error('This device is already registered to another account.');
-            error.status = 409;
-            throw error;
-        }
-
         const agentToken = generateAgentToken();
         const tokenHash = await bcrypt.hash(agentToken, 12);
 
@@ -636,13 +629,6 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
         await adapter.deleteDevices({ deviceId: cleanDeviceId, notUserId: userId });
 
         return { credential: doc, agentToken };
-    }
-
-    const existing = await AgentCredential.findOne({ deviceId: cleanDeviceId });
-    if (existing && String(existing.userId) !== String(userId)) {
-        const error = new Error('This device is already registered to another account.');
-        error.status = 409;
-        throw error;
     }
 
     const agentToken = generateAgentToken();
@@ -798,20 +784,6 @@ async function pairAgent(body, req) {
 
     if (isMysql()) {
         const adapter = getMysqlAdapter();
-        const existingCred = await adapter.findAgentCredential(deviceId);
-        if (existingCred && String(existingCred.userId) !== userIdStr) {
-            const error = new Error('This device is already paired to another account.');
-            error.status = 409;
-            throw error;
-        }
-
-        const existingDevice = await adapter.findDeviceById(deviceId);
-        if (existingDevice && String(existingDevice.userId) !== userIdStr) {
-            const error = new Error('This device is already paired to another account.');
-            error.status = 409;
-            throw error;
-        }
-
         const agentToken = crypto.randomBytes(32).toString('hex');
         const tokenHash = await bcrypt.hash(agentToken, 12);
 
@@ -844,20 +816,6 @@ async function pairAgent(body, req) {
             agentToken,
             gatewayUrl,
         };
-    }
-
-    const existingCred = await AgentCredential.findOne({ deviceId }).lean();
-    if (existingCred && String(existingCred.userId) !== String(user._id)) {
-        const error = new Error('This device is already paired to another account.');
-        error.status = 409;
-        throw error;
-    }
-
-    const existingDevice = await Device.findOne({ deviceId }).lean();
-    if (existingDevice && String(existingDevice.userId) !== String(user._id)) {
-        const error = new Error('This device is already paired to another account.');
-        error.status = 409;
-        throw error;
     }
 
     const agentToken = crypto.randomBytes(32).toString('hex');
