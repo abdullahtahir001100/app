@@ -220,7 +220,7 @@ function buildBashInstallScript(ticket, platform = 'mac') {
         '    <string>com.zenvora.agent</string>',
         '    <key>ProgramArguments</key>',
         '    <array>',
-        '        <string>'"$AGENT_BIN"'</string>',
+        '        <string>$AGENT_BIN</string>',
         '        <string>--run-agent</string>',
         '    </array>',
         '    <key>RunAtLoad</key>',
