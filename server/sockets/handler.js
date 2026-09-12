@@ -339,16 +339,6 @@ function pushLiveDeviceSnapshot(userId) {
 
 function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
     let owner = String(ownerUserId || '').trim();
-    const deviceId = String(packet?.deviceId || packet?.senderAgentId || packet?.id || '').trim();
-
-    if (!owner && deviceId) {
-        for (const [uid, entry] of ownershipCache.entries()) {
-            if (entry.devices && entry.devices.has(deviceId)) {
-                owner = uid;
-                break;
-            }
-        }
-    }
 
     if (owner) {
         const sent = sendToOwnerDashboards(activeConnections, owner, packet);

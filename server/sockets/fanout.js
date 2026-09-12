@@ -85,19 +85,9 @@ function wrapBinaryForDevice(deviceId, frameBuffer) {
  * Broadcast binary only to the agent's owner dashboards, with device envelope.
  */
 function broadcastOwnerBinary(ws, frameBuffer, activeConnections) {
-    let ownerUserId = extractOwnerUserId(ws);
+    const ownerUserId = extractOwnerUserId(ws);
     const deviceId = extractDeviceIdFromAgentSocket(ws);
     if (!deviceId) return 0;
-
-    if (!ownerUserId) {
-        for (const [uid, entry] of ownershipCache.entries()) {
-            if (entry.devices && entry.devices.has(deviceId)) {
-                ownerUserId = uid;
-                if (ws.authContext) ws.authContext.userId = uid;
-                break;
-            }
-        }
-    }
 
     const wrapped = wrapBinaryForDevice(deviceId, frameBuffer);
 
