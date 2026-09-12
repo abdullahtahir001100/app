@@ -47,29 +47,16 @@ function androidCandidates(flavor: string): string[] {
   ].filter(Boolean) as string[];
 }
 
-function macCandidates(preferZip = false): string[] {
+function macCandidates(_preferZip = false): string[] {
   const cwd = process.cwd();
-  if (preferZip) {
-    return [
-      path.join(cwd, "public", "downloads", "ZenvoraAgent-mac.zip"),
-      process.env.AGENT_MACOS_BINARY_PATH,
-      path.join(cwd, "public", "downloads", "ZenvoraAgent-mac"),
-      path.join(cwd, "public", "downloads", "ZenvoraAgent"),
-      path.join(cwd, "zenvora_agent", "target", "release", "ZenvoraAgent"),
-      path.join(cwd, "zenvora_agent", "target", "debug", "ZenvoraAgent"),
-      path.join(cwd, "zenvora_agent", "target.nosync", "release", "ZenvoraAgent"),
-      path.join(cwd, "zenvora_agent", "target.nosync", "debug", "ZenvoraAgent"),
-    ].filter(Boolean) as string[];
-  }
   return [
+    path.join(cwd, "public", "downloads", "ZenvoraAgent.dmg"),
+    path.join(cwd, "public", "downloads", "ZenvoraAgent-mac.dmg"),
+    path.join(cwd, "public", "downloads", "ZenvoraAgent-mac.zip"),
     process.env.AGENT_MACOS_BINARY_PATH,
     path.join(cwd, "public", "downloads", "ZenvoraAgent-mac"),
     path.join(cwd, "public", "downloads", "ZenvoraAgent"),
-    path.join(cwd, "public", "downloads", "ZenvoraAgent-mac.zip"),
     path.join(cwd, "zenvora_agent", "target", "release", "ZenvoraAgent"),
-    path.join(cwd, "zenvora_agent", "target", "debug", "ZenvoraAgent"),
-    path.join(cwd, "zenvora_agent", "target.nosync", "release", "ZenvoraAgent"),
-    path.join(cwd, "zenvora_agent", "target.nosync", "debug", "ZenvoraAgent"),
   ].filter(Boolean) as string[];
 }
 
@@ -120,7 +107,7 @@ export async function GET(req: NextRequest) {
             ? "Lite APK missing. Run: gradlew assembleLiteRelease — copy to public/downloads/Zenvora-lite.apk"
             : "Full APK missing. Run: gradlew assembleFullRelease — copy to public/downloads/Zenvora-full.apk"
           : isMac
-          ? "macOS binary not found. Place ZenvoraAgent-mac in public/downloads/ or build in zenvora_agent."
+          ? "macOS binary not found. Place ZenvoraAgent.dmg in public/downloads/ or build in zenvora_agent."
           : isLinux
           ? "Linux binary not found. Place ZenvoraAgent-linux in public/downloads/ or build in zenvora_agent."
           : "Agent binary not found. Place ZenvoraAgent.exe in public/downloads/ or set AGENT_BINARY_PATH.",
@@ -131,11 +118,12 @@ export async function GET(req: NextRequest) {
 
   const data = await readFile(filePath);
   const isZip = filePath.endsWith(".zip");
+  const isDmg = filePath.endsWith(".dmg");
   const filename = isAndroid
     ? flavor === "lite"
       ? "Zenvora-lite.apk"
       : "Zenvora-full.apk"
-    : isZip
+    : isZip || isDmg
     ? path.basename(filePath)
     : isMac || isLinux
     ? "ZenvoraAgent"
@@ -143,6 +131,8 @@ export async function GET(req: NextRequest) {
 
   const contentType = isAndroid
     ? "application/vnd.android.package-archive"
+    : isDmg
+    ? "application/x-apple-diskimage"
     : isZip
     ? "application/zip"
     : "application/octet-stream";

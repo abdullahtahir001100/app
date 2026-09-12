@@ -91,29 +91,16 @@ function androidApkCandidates(flavor = 'lite') {
     ].filter(Boolean);
 }
 
-function macAgentCandidates(preferZip = false) {
+function macAgentCandidates(_preferZip = false) {
     const cwd = process.cwd();
-    if (preferZip) {
-        return [
-            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
-            process.env.AGENT_MACOS_BINARY_PATH,
-            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
-            path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
-            path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
-            path.join(cwd, 'zenvora_agent', 'target', 'debug', 'ZenvoraAgent'),
-            path.join(cwd, 'zenvora_agent', 'target.nosync', 'release', 'ZenvoraAgent'),
-            path.join(cwd, 'zenvora_agent', 'target.nosync', 'debug', 'ZenvoraAgent'),
-        ].filter(Boolean);
-    }
     return [
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent.dmg'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.dmg'),
+        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
         process.env.AGENT_MACOS_BINARY_PATH,
         path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac'),
         path.join(cwd, 'public', 'downloads', 'ZenvoraAgent'),
-        path.join(cwd, 'public', 'downloads', 'ZenvoraAgent-mac.zip'),
         path.join(cwd, 'zenvora_agent', 'target', 'release', 'ZenvoraAgent'),
-        path.join(cwd, 'zenvora_agent', 'target', 'debug', 'ZenvoraAgent'),
-        path.join(cwd, 'zenvora_agent', 'target.nosync', 'release', 'ZenvoraAgent'),
-        path.join(cwd, 'zenvora_agent', 'target.nosync', 'debug', 'ZenvoraAgent'),
     ].filter(Boolean);
 }
 
