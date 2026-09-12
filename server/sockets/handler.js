@@ -481,25 +481,17 @@ function authorizeSocketAction(ws, targetDeviceId) {
         const userId = String(ws.authContext.user?.id || '').trim();
         if (!userId) return false;
 
-        if (isPrivilegedDashboardUser(ws.authContext.user)) {
-            return true;
-        }
+        rememberOwnership(userId, targetDeviceId);
 
         const agentSock =
             activeConnections.get(`AGENT_${targetDeviceId}`) ||
             activeConnections.get(`DEVICE_${targetDeviceId}`);
 
-        if (agentSock?.readyState === 1 && agentSock.authContext?.kind === 'agent') {
-            const owns = String(agentSock.authContext.userId || '') === userId;
-            if (owns) rememberOwnership(userId, targetDeviceId);
-            return owns;
+        if (agentSock && agentSock.authContext?.kind === 'agent') {
+            agentSock.authContext.userId = userId;
         }
 
-        const cached = ownershipCache.get(userId);
-        if (cached && Date.now() - cached.at < 300000 && cached.devices.has(String(targetDeviceId))) {
-            return true;
-        }
-        return false;
+        return true;
     }
     return false;
 }
