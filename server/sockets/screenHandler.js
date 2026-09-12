@@ -164,13 +164,25 @@ function handleScreenTelemetry(ws, packet, activeConnections) {
     }
 
     const ownerUserId = extractOwnerUserId(ws);
+    const senderId = extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN';
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
     delete metrics.live_frame_b64;
 
+    try {
+        const liveLogBus = require('../services/liveLogBus');
+        liveLogBus.push({
+            channel: 'agent',
+            level: 'info',
+            message: `[SCREEN:STREAM] ${senderId} → ${packet.last_action || 'FRAME'} (${packet.frame_bytes || 0} bytes)`,
+            deviceId: senderId,
+            meta: { action: packet.last_action, bytes: packet.frame_bytes }
+        });
+    } catch (_) {}
+
     forwardPacketToDashboards({
         type: 'screen_telemetry_stream',
-        senderAgentId: extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN',
+        senderAgentId: senderId,
         metrics,
         message: packet.message || null,
         action: packet.last_action,

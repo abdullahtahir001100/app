@@ -31,7 +31,7 @@ function requireUserFast(req, res, next) {
     return next();
 }
 
-router.get('/', attachUser, requirePagePermission('console'), (req, res) => {
+router.get('/', requireUserFast, (req, res) => {
     const limit = Number(req.query.limit) || 400;
     const channel = req.query.channel ? String(req.query.channel) : null;
     const registry = getConnectionRegistry();

@@ -123,6 +123,17 @@ function handleCameraTelemetry(ws, packet, activeConnections) {
     delete metrics.live_frame;
     delete metrics.live_frame_b64;
 
+    try {
+        const liveLogBus = require('../services/liveLogBus');
+        liveLogBus.push({
+            channel: 'agent',
+            level: 'info',
+            message: `[CAMERA:STREAM] ${senderAgentId} → ${packet.last_action || 'FRAME'} (${packet.frame_bytes || 0} bytes)`,
+            deviceId: senderAgentId,
+            meta: { action: packet.last_action, bytes: packet.frame_bytes }
+        });
+    } catch (_) {}
+
     forwardPacketToDashboards({
         type: 'camera_telemetry_stream',
         senderAgentId,

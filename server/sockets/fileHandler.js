@@ -135,6 +135,17 @@ function handleFileTelemetry(ws, packet, activeConnections) {
 
     resolveFileOpWaiters(packet);
 
+    try {
+        const liveLogBus = require('../services/liveLogBus');
+        liveLogBus.push({
+            channel: 'agent',
+            level: packet.status === 'ERROR' || packet.status === 'FAIL' ? 'warn' : 'info',
+            message: `[FILE:TELEMETRY] ${senderId} → ${action || 'FILE_OP'} (${packet.status || 'OK'})`,
+            deviceId: senderId,
+            meta: { action, status: packet.status, fileResult }
+        });
+    } catch (_) {}
+
     forwardPacketToDashboards({
         type: 'file_telemetry_stream',
         senderAgentId: senderId,

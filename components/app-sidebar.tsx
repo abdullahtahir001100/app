@@ -380,6 +380,7 @@ function AppSidebarContent() {
     { icon: Eye, label: "Screen Monitor", href: "/screen", page: "screen" },
     { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
     { icon: FileText, label: "File Manager", href: "/files", page: "files" },
+    { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
     { icon: Settings, label: "Settings", href: "/settings", page: "settings" },

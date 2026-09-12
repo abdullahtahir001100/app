@@ -37,7 +37,16 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
     const act = String(action || '').trim();
     if (!id || !act) return { ok: false, reason: 'missing' };
 
+    const liveLogBus = require('../services/liveLogBus');
+
     if (sendCommandToAgent(id, act, payload)) {
+        liveLogBus.push({
+            channel: 'agent',
+            level: 'info',
+            message: `[DISPATCH:TCP/Control] Device ${id} ← ${act}`,
+            deviceId: id,
+            meta: { action: act, transport: 'control' }
+        });
         return { ok: true, transport: 'control' };
     }
 
@@ -49,11 +58,26 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
                 payload: payload || {},
                 timestamp: new Date().toISOString(),
             }));
+            liveLogBus.push({
+                channel: 'agent',
+                level: 'info',
+                message: `[DISPATCH:WS/Gateway] Device ${id} ← ${act}`,
+                deviceId: id,
+                meta: { action: act, transport: 'gateway' }
+            });
             return { ok: true, transport: 'gateway' };
         } catch (_) {
             // fall through
         }
     }
+
+    liveLogBus.push({
+        channel: 'agent',
+        level: 'warn',
+        message: `[DISPATCH:FAIL] Device ${id} is OFFLINE for action ${act}`,
+        deviceId: id,
+        meta: { action: act, reason: 'offline' }
+    });
     return { ok: false, reason: 'offline' };
 }
 
