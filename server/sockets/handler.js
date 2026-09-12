@@ -121,21 +121,32 @@ async function upsertDeviceExclusive(deviceId, update, ownerUserId) {
     const id = String(deviceId || '');
     if (!id) return;
     const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+    const dbType = isMysql() ? 'MySQL' : 'MongoDB';
     if (isMysql()) {
         const setDoc = { ...update };
         if (ownerUserId) setDoc.userId = ownerUserId;
         await getMysqlAdapter().upsertDevice(id, setDoc);
-        return;
+    } else {
+        const setDoc = { ...update, deviceId: id };
+        if (ownerUserId) setDoc.userId = ownerUserId;
+        await Device.updateOne({ deviceId: id }, { $set: setDoc }, { upsert: true });
+        if (ownerUserId) {
+            await Device.deleteMany({
+                deviceId: id,
+                userId: { $ne: ownerUserId },
+            }).catch(() => {});
+        }
     }
-    const setDoc = { ...update, deviceId: id };
-    if (ownerUserId) setDoc.userId = ownerUserId;
-    await Device.updateOne({ deviceId: id }, { $set: setDoc }, { upsert: true });
-    if (ownerUserId) {
-        await Device.deleteMany({
+    try {
+        require('../services/liveLogBus').push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Upsert device ${id}: status=${update.status || 'online'} platform=${update.platform || '-'} cpu=${update.cpu || '-'} bat=${update.battery ?? '-'}% [${dbType}]`,
             deviceId: id,
-            userId: { $ne: ownerUserId },
-        }).catch(() => {});
-    }
+            userId: ownerUserId || null,
+            meta: { platform: update.platform, status: update.status, db: dbType }
+        });
+    } catch (_) {}
 }
 
 /**
@@ -339,14 +350,17 @@ function pushLiveDeviceSnapshot(userId) {
 
 function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
     let owner = String(ownerUserId || '').trim();
+    let sent = 0;
 
     if (owner) {
-        const sent = sendToOwnerDashboards(activeConnections, owner, packet);
-        if (sent > 0) return sent;
+        sent = sendToOwnerDashboards(activeConnections, owner, packet);
+        if (sent > 0) {
+            logDashboardFanout(packet, owner, sent);
+            return sent;
+        }
     }
 
     // Fallback: send JSON packet to all authenticated open dashboard sockets
-    let sent = 0;
     activeConnections.forEach((clientSocket, key) => {
         if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
         if (clientSocket.authContext?.kind !== 'user') return;
@@ -355,7 +369,26 @@ function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null
             sent++;
         } catch (_) {}
     });
+    logDashboardFanout(packet, owner, sent);
     return sent;
+}
+
+function logDashboardFanout(packet, owner, count) {
+    if (!count || count <= 0) return;
+    const type = packet?.type || packet?.action || 'telemetry';
+    // Skip high frequency stream frames to avoid noisy logs
+    if (type === 'screen_telemetry_stream' || type === 'camera_telemetry_stream') return;
+    try {
+        const deviceId = packet?.deviceId || packet?.senderAgentId || packet?.senderId || null;
+        require('../services/liveLogBus').push({
+            channel: 'node',
+            level: 'info',
+            message: `[NODE:REACT] Fanout ${type} from device ${deviceId || 'agent'} to ${count} dashboard(s)`,
+            deviceId,
+            userId: owner || null,
+            meta: { type, recipients: count }
+        });
+    } catch (_) {}
 }
 
 function getShellResponsePayload(packet) {
@@ -655,6 +688,15 @@ async function handleSocketMessage(ws, message) {
             const deviceOrPanelId = String(packet.id || '').trim();
 
             if (role === 'AGENT' || role === 'DEVICE') {
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'agent',
+                        level: 'info',
+                        message: `[AGENT:RECV] register_channel: role=${role} deviceId=${deviceOrPanelId} platform=${packet.platform || '-'}`,
+                        deviceId: deviceOrPanelId,
+                    });
+                } catch (_) {}
+
                 if (!deviceOrPanelId) {
                     ws.send(JSON.stringify({
                         type: 'sys_ack',
@@ -682,6 +724,14 @@ async function handleSocketMessage(ws, message) {
 
                     if (!credential) {
                         logMsg(Z.AUTH_REJECTED, `invalid credentials device=${deviceOrPanelId}`);
+                        try {
+                            require('../services/liveLogBus').push({
+                                channel: 'node',
+                                level: 'error',
+                                message: `[NODE:REACT] Agent registration rejected: device=${deviceOrPanelId} (invalid credentials)`,
+                                deviceId: deviceOrPanelId,
+                            });
+                        } catch (_) {}
                         ws.send(JSON.stringify({
                             type: 'sys_ack',
                             status: 'auth_failed',
@@ -778,6 +828,14 @@ async function handleSocketMessage(ws, message) {
                         `[GW-DEBUG] drop duplicate agent device=${deviceOrPanelId} existingAge=${ageMs}ms silent=${silentMs}ms`
                     );
                     try {
+                        require('../services/liveLogBus').push({
+                            channel: 'node',
+                            level: 'warn',
+                            message: `[NODE:REACT] Dropped duplicate agent: device=${deviceOrPanelId} (existing is alive, silent=${silentMs}ms)`,
+                            deviceId: deviceOrPanelId,
+                        });
+                    } catch (_) {}
+                    try {
                         ws.send(JSON.stringify({
                             type: 'sys_ack',
                             status: 'duplicate',
@@ -867,9 +925,9 @@ async function handleSocketMessage(ws, message) {
                 pushLiveDeviceSnapshot(userIdForList);
                 try {
                     require('../services/liveLogBus').push({
-                        channel: 'agent',
-                        level: 'info',
-                        message: `agent registered ${deviceOrPanelId}`,
+                        channel: 'node',
+                        level: 'ok',
+                        message: `[NODE:REACT] Agent registered successfully: device ${deviceOrPanelId} (owner: ${userIdForList}, online: ${getLiveDeviceOptions(userIdForList).length})`,
                         deviceId: deviceOrPanelId,
                         userId: userIdForList,
                         route: '/ws/gateway',
@@ -919,7 +977,19 @@ async function handleSocketMessage(ws, message) {
             const deviceId = extractDeviceIdFromAgentSocket(ws);
             if (ownerUserId && deviceId && packet.payload) {
                 const notif = packet.payload;
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'agent',
+                        level: 'info',
+                        message: `[AGENT:RECV] Notification from ${deviceId}: app="${notif.app || notif.title || 'System'}" title="${notif.title || '-'}"`,
+                        deviceId,
+                        userId: ownerUserId,
+                        meta: { title: notif.title, app: notif.app }
+                    });
+                } catch (_) {}
+
                 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+                const dbType = isMysql() ? 'MySQL' : 'MongoDB';
                 if (isMysql()) {
                     getMysqlAdapter().createNotification({
                         deviceId,
@@ -941,6 +1011,16 @@ async function handleSocketMessage(ws, message) {
                     }).catch(() => {});
                 }
 
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'db',
+                        level: 'ok',
+                        message: `[DB:PERSIST] Saved notification for device ${deviceId} (title="${notif.title || '-'}") in ${dbType}`,
+                        deviceId,
+                        userId: ownerUserId,
+                    });
+                } catch (_) {}
+
                 forwardPacketToDashboards(packet, activeConnections, ownerUserId);
             }
             return;
@@ -951,7 +1031,19 @@ async function handleSocketMessage(ws, message) {
             if (shellPayload) {
                 packet.shell = shellPayload;
             }
-            forwardPacketToDashboards(packet, activeConnections, extractOwnerUserId(ws));
+            const deviceId = extractDeviceIdFromAgentSocket(ws);
+            const ownerUserId = extractOwnerUserId(ws);
+            try {
+                require('../services/liveLogBus').push({
+                    channel: 'agent',
+                    level: (shellPayload?.exit_code === 0 || shellPayload?.exit_code == null) ? 'ok' : 'warn',
+                    message: `[AGENT:RECV] Shell result from ${deviceId}: cmd="${shellPayload?.command || '-'}" exit=${shellPayload?.exit_code ?? 0} out=${(shellPayload?.stdout || '').length}b err=${(shellPayload?.stderr || '').length}b`,
+                    deviceId,
+                    userId: ownerUserId || null,
+                    meta: { command: shellPayload?.command, exit_code: shellPayload?.exit_code }
+                });
+            } catch (_) {}
+            forwardPacketToDashboards(packet, activeConnections, ownerUserId);
             return;
         }
 
@@ -968,6 +1060,15 @@ async function handleSocketMessage(ws, message) {
         ) {
             const ownerUserId = extractOwnerUserId(ws);
             const senderAgentId = extractDeviceIdFromAgentSocket(ws);
+            try {
+                require('../services/liveLogBus').push({
+                    channel: 'agent',
+                    level: 'info',
+                    message: `[AGENT:RECV] Audio ack from ${senderAgentId}: action=${packet.action || 'AUDIO'} devices=${packet.metrics?.audio_devices?.length ?? 'ok'}`,
+                    deviceId: senderAgentId,
+                    userId: ownerUserId || null,
+                });
+            } catch (_) {}
             forwardPacketToDashboards(
                 {
                     ...packet,
@@ -985,6 +1086,15 @@ async function handleSocketMessage(ws, message) {
             if (isAgent) {
                 const ownerUserId = extractOwnerUserId(ws);
                 const senderAgentId = extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN';
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'agent',
+                        level: 'info',
+                        message: `[AGENT:RECV] WebRTC signal from ${senderAgentId}: stream=${packet.stream_type || 'screen'}`,
+                        deviceId: senderAgentId,
+                        userId: ownerUserId || null,
+                    });
+                } catch (_) {}
                 forwardPacketToDashboards({
                     type: 'webrtc_signal',
                     senderAgentId,
@@ -994,6 +1104,14 @@ async function handleSocketMessage(ws, message) {
             } else {
                 const targetDeviceId = packet.targetDeviceId;
                 if (targetDeviceId) {
+                    try {
+                        require('../services/liveLogBus').push({
+                            channel: 'node',
+                            level: 'info',
+                            message: `[NODE:REACT] Routing WebRTC signal from dashboard to device ${targetDeviceId}`,
+                            deviceId: targetDeviceId,
+                        });
+                    } catch (_) {}
                     const { dispatchAgentCommand } = require('./dispatchAgent');
                     dispatchAgentCommand(
                         targetDeviceId,
@@ -1078,6 +1196,16 @@ async function handleSocketMessage(ws, message) {
         if (packet.type === 'dispatch_control') {
             packet.targetDeviceId =
                 packet.targetDeviceId || packet.target_device_id || packet.targetDevice;
+
+            try {
+                require('../services/liveLogBus').push({
+                    channel: 'node',
+                    level: 'info',
+                    message: `[NODE:REACT] Dashboard requested control: action=${packet.action} target=${packet.targetDeviceId}`,
+                    deviceId: packet.targetDeviceId || null,
+                    meta: { action: packet.action, targetDeviceId: packet.targetDeviceId }
+                });
+            } catch (_) {}
 
             if (!authorizeSocketAction(ws, packet.targetDeviceId)) {
                 ws.send(JSON.stringify({
@@ -1204,6 +1332,17 @@ function handleDeviceStatusUpdate(ws, packet, activeConnections) {
         metricsDbFlushTimer = setTimeout(() => { void flushPendingMetricsDb(); }, 5000);
     }
 
+    try {
+        require('../services/liveLogBus').push({
+            channel: 'agent',
+            level: 'info',
+            message: `[AGENT:RECV] Status update from ${deviceId}: status=${status} platform=${platform} ip=${localIp || '-'} bat=${battery ?? '-'}% cpu=${cpu || '-'}`,
+            deviceId,
+            userId: ownerUserId || null,
+            meta: { status, platform, localIp, battery, cpu, ram }
+        });
+    } catch (_) {}
+
     if (hostname && ws.authContext) ws.authContext.hostname = hostname;
     if (ownerUserId) rememberOwnership(ownerUserId, deviceId);
 
@@ -1224,6 +1363,16 @@ function handleDeviceStatusUpdate(ws, packet, activeConnections) {
         hostname, username, osVersion, architecture, cpu, ram,
         lastSeen: lastSeen.toISOString(),
     });
+
+    try {
+        require('../services/liveLogBus').push({
+            channel: 'node',
+            level: 'info',
+            message: `[NODE:REACT] Fanout status update for device ${deviceId} to dashboard(s)`,
+            deviceId,
+            userId: ownerUserId || null,
+        });
+    } catch (_) {}
 }
 
 async function flushPendingMetricsDb() {
@@ -1273,6 +1422,17 @@ function persistHardwareMetrics(ws, packet, activeConnections) {
             void flushPendingMetricsDb();
         }, 30000);
     }
+
+    try {
+        require('../services/liveLogBus').push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Queued hardware metrics update for device ${deviceId} (bat=${battery ?? '-'}%, status=${status})`,
+            deviceId,
+            userId: ownerUserId || null,
+            meta: { battery, storage, status }
+        });
+    } catch (_) {}
 
     // Throttle dashboard status push (max 1 per device / 5s).
     const now = Date.now();
@@ -1327,6 +1487,17 @@ function handleActivityLog(ws, packet, activeConnections) {
         log: liveLog,
     });
 
+    try {
+        require('../services/liveLogBus').push({
+            channel: 'agent',
+            level: 'info',
+            message: `[AGENT:RECV] Activity event from ${deviceId}: action=${liveLog.action} app="${appName || processName || '-'}" win="${windowTitle || '-'}"`,
+            deviceId,
+            userId,
+            meta: { action: liveLog.action, app: appName || processName }
+        });
+    } catch (_) {}
+
     if (looksAndroidDevice(deviceId, packet.platform)) {
         void recordAndroidBeat(deviceId, { userId, platform: 'android' });
     }
@@ -1335,6 +1506,7 @@ function handleActivityLog(ws, packet, activeConnections) {
     writeQueue.enqueue(async () => {
         const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
         const durationValue = Math.max(0, Number(metadata.duration || packet.duration || 0));
+        const dbType = isMysql() ? 'MySQL' : 'MongoDB';
 
         if (isMysql()) {
             await getMysqlAdapter().createActivityLog({
@@ -1371,6 +1543,17 @@ function handleActivityLog(ws, packet, activeConnections) {
             });
             await log.save();
         }
+
+        try {
+            require('../services/liveLogBus').push({
+                channel: 'db',
+                level: 'ok',
+                message: `[DB:PERSIST] Saved activity log for device ${deviceId}: action=${liveLog.action} app="${appName || processName || '-'}" in ${dbType}`,
+                deviceId,
+                userId,
+                meta: { action: liveLog.action, app: appName || processName, db: dbType }
+            });
+        } catch (_) {}
 
         const duration = durationValue;
         const closed = String(liveLog.action) === 'app_closed';
@@ -1411,6 +1594,14 @@ function handleSocketBinary(ws, message) {
         const inner = message.slice(2 + idLen);
         if (!authorizeSocketAction(ws, deviceId)) return;
         if (inner[0] !== FRAME_AUDIO_PLAY) return;
+        try {
+            require('../services/liveLogBus').push({
+                channel: 'node',
+                level: 'info',
+                message: `[NODE:REACT] Relaying audio play frame (${inner.length} bytes) to device ${deviceId} speakers`,
+                deviceId,
+            });
+        } catch (_) {}
         const { getGatewaySocket } = require('./dispatchAgent');
         const target = getGatewaySocket(deviceId, activeConnections);
         if (target && target.readyState === 1) {

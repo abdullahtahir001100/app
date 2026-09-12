@@ -4,6 +4,7 @@ const Notification = require('../models/Notification');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const syncManager = require('./syncManager');
 const { userHasFeatureAccess } = require('./adminAuthService');
+const liveLogBus = require('./liveLogBus');
 
 function parseFlexibleDate(value) {
     if (!value && value !== 0) return new Date();
@@ -130,6 +131,16 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
     }
 
     void syncManager.syncBrowserHistory(deviceId, docs, userId).catch(() => {});
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced browser history (+${count} saved / ${docs.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: docs.length, table: 'browser_history' }
+        });
+    } catch (_) {}
     return { count };
 }
 
@@ -216,6 +227,16 @@ async function syncAppHistory(deviceId, entries, userId = null) {
     }
 
     void syncManager.syncAppHistory(deviceId, docs, userId).catch(() => {});
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced app history (+${count} saved / ${docs.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: docs.length, table: 'app_history' }
+        });
+    } catch (_) {}
     return { count };
 }
 
@@ -295,6 +316,16 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
         count++;
     }
 
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced system notifications (+${count} saved / ${entries.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: entries.length, table: 'notifications' }
+        });
+    } catch (_) {}
     return { count };
 }
 
@@ -359,6 +390,16 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
         }
         count += 1;
     }
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced activity logs batch (+${count} saved / ${entries.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: entries.length, table: 'activity_logs' }
+        });
+    } catch (_) {}
     return { count };
 }
 
@@ -447,6 +488,16 @@ async function syncCallLogs(deviceId, entries, userId = null) {
     }
 
     void syncManager.syncCallLogs(deviceId, entries, userId).catch(() => {});
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced call logs (+${count} saved / ${entries.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: entries.length, table: 'call_logs' }
+        });
+    } catch (_) {}
     return { count };
 }
 
@@ -492,6 +543,16 @@ async function syncSmsMessages(deviceId, entries, userId = null) {
     }
 
     void syncManager.syncSmsMessages(deviceId, entries, userId).catch(() => {});
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced SMS messages (+${count} saved / ${entries.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: entries.length, table: 'sms_messages' }
+        });
+    } catch (_) {}
     return { count };
 }
 
@@ -530,6 +591,16 @@ async function syncContacts(deviceId, entries, userId = null) {
     }
 
     void syncManager.syncContacts(deviceId, entries, userId).catch(() => {});
+    try {
+        liveLogBus.push({
+            channel: 'db',
+            level: 'ok',
+            message: `[DB:PERSIST] Synced contacts (+${count} saved / ${entries.length} incoming) for device ${deviceId} [${isMysql() ? 'MySQL' : 'MongoDB'}]`,
+            deviceId,
+            userId,
+            meta: { count, total: entries.length, table: 'contacts' }
+        });
+    } catch (_) {}
     return { count };
 }
 

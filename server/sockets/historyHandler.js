@@ -53,6 +53,26 @@ function handleHistoryAgentResponse(ws, packet, activeConnections) {
         syncedAt: new Date().toISOString(),
     });
 
+    try {
+        const liveLogBus = require('../services/liveLogBus');
+        liveLogBus.push({
+            channel: 'agent',
+            level: 'info',
+            message: `[AGENT:RECV] History payload from ${deviceId}: command=${packet.command} (${entries.length} items)`,
+            deviceId,
+            userId,
+            meta: { command: packet.command, count: entries.length }
+        });
+        liveLogBus.push({
+            channel: 'node',
+            level: 'info',
+            message: `[NODE:REACT] Relayed history telemetry (${packet.command}, +${entries.length}) for device ${deviceId} to dashboard`,
+            deviceId,
+            userId,
+            meta: { command: packet.command, count: entries.length }
+        });
+    } catch (_) {}
+
     writeQueue.enqueue(async () => {
         await persistHistoryPayload(deviceId, { ...packet, userId, data: entries });
     });

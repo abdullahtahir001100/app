@@ -52,9 +52,9 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
             };
             socket.send(JSON.stringify(outboundPacket));
             liveLogBus.push({
-                channel: 'agent',
+                channel: 'node',
                 level: 'info',
-                message: `[DISPATCH:WS/Gateway] Device ${id} ← ${act}`,
+                message: `[NODE:REACT] Dispatched ${act} to device ${id} via Gateway WS`,
                 deviceId: id,
                 meta: { action: act, transport: 'gateway' }
             });
@@ -67,9 +67,9 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
     // 2. Fallback to Control Plane (for TCP-only agents or history sync actions)
     if (sendCommandToAgent(id, act, payload)) {
         liveLogBus.push({
-            channel: 'agent',
+            channel: 'node',
             level: 'info',
-            message: `[DISPATCH:TCP/Control] Device ${id} ← ${act}`,
+            message: `[NODE:REACT] Dispatched ${act} to device ${id} via TCP Control`,
             deviceId: id,
             meta: { action: act, transport: 'control' }
         });
@@ -77,9 +77,9 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
     }
 
     liveLogBus.push({
-        channel: 'agent',
+        channel: 'node',
         level: 'warn',
-        message: `[DISPATCH:FAIL] Device ${id} is OFFLINE for action ${act}`,
+        message: `[NODE:REACT] Dispatch failed for device ${id} (${act}) — device is OFFLINE`,
         deviceId: id,
         meta: { action: act, reason: 'offline' }
     });

