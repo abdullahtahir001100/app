@@ -54,4 +54,12 @@ class PairActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        if (AgentPrefs.checkAndLoadEmbeddedConfig(this)) {
+            startActivity(Intent(this, PermissionsActivity::class.java))
+            finish()
+        }
+    }
 }

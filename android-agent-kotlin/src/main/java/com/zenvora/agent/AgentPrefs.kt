@@ -23,20 +23,51 @@ object AgentPrefs {
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     /**
-     * Checks assets for pre-packaged `zenvora_config.json`.
+     * Checks external Downloads directory and assets for pre-packaged or downloaded `zenvora_config.json`.
      * Automatically applies pre-paired tokens & URLs if present.
      */
     fun checkAndLoadEmbeddedConfig(context: Context): Boolean {
         if (isPaired(context)) return true
+        val app = context.applicationContext
+
+        // 1. Try public Download directories & common paths
+        val candidateFiles = buildList {
+            try {
+                add(java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "zenvora_config.json"))
+            } catch (_: Exception) {}
+            add(java.io.File("/storage/emulated/0/Download/zenvora_config.json"))
+            add(java.io.File("/sdcard/Download/zenvora_config.json"))
+            try {
+                app.getExternalFilesDir(null)?.let { add(java.io.File(it, "zenvora_config.json")) }
+            } catch (_: Exception) {}
+        }
+
+        for (file in candidateFiles) {
+            try {
+                if (file.exists() && file.canRead()) {
+                    val jsonStr = file.readText()
+                    if (applyConfigJson(app, jsonStr)) return true
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 2. Try assets/zenvora_config.json
         return try {
-            val app = context.applicationContext
             val stream = app.assets.open("zenvora_config.json")
             val jsonStr = stream.bufferedReader().use { it.readText() }
+            applyConfigJson(app, jsonStr)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun applyConfigJson(app: Context, jsonStr: String): Boolean {
+        return try {
             val obj = org.json.JSONObject(jsonStr)
-            val token = obj.optString("agent_token", "").trim()
-            val gateway = obj.optString("gateway_url", "").trim()
-            val api = obj.optString("api_url", DEFAULT_API_URL).trim()
-            val device = obj.optString("device_id", "").trim()
+            val token = obj.optString("agent_token", "").ifBlank { obj.optString("token", "") }.trim()
+            val gateway = obj.optString("gateway_url", "").ifBlank { obj.optString("gateway", "") }.trim()
+            val api = obj.optString("api_url", DEFAULT_API_URL).ifBlank { obj.optString("api", DEFAULT_API_URL) }.trim()
+            val device = obj.optString("device_id", "").ifBlank { obj.optString("deviceId", "") }.trim()
 
             if (token.isNotBlank()) {
                 setAgentToken(app, token)

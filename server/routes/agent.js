@@ -290,6 +290,33 @@ router.get('/download', (req, res) => {
     stream.pipe(res);
 });
 
+/**
+ * Stream pre-configured zenvora_config.json file for zero-touch Android pairing.
+ */
+router.get('/config', (req, res) => {
+    const token = String(req.query?.token || req.query?.pairingToken || '').trim();
+    const code = String(req.query?.code || '').trim();
+    let ticket = code ? getTicket(code) : null;
+    
+    const apiBase = resolvePublicApiBase(req, req.query?.apiBase);
+    const gatewayUrl = resolvePublicGatewayUrl(req, req.query?.gatewayUrl);
+    const agentToken = token || ticket?.pairingToken || '';
+
+    const configObj = {
+        agent_token: agentToken,
+        gateway_url: gatewayUrl,
+        api_url: apiBase,
+        device_id: String(req.query?.deviceId || ticket?.sessionId || '').trim()
+    };
+
+    const jsonStr = JSON.stringify(configObj, null, 2);
+    res.status(200);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="zenvora_config.json"');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(jsonStr);
+});
+
 function getApiKeyForProvider(settings = {}, providerKey = 'gemini') {
     const direct = typeof settings.apiKey === 'string' ? settings.apiKey.trim() : '';
     if (direct) return direct;
