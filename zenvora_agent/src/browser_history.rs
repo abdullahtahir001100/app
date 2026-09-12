@@ -148,15 +148,16 @@ impl BrowserHistoryCollector {
 
     /// Incremental: only visits newer than the given Chromium / Firefox / Safari high-water marks.
     /// Returns (entries, max_chromium_time, max_firefox_time, max_safari_time).
-    /// When cursors are 0 (first run), seeds to current MAX and returns empty — no full dump.
+    /// When cursors are 0 (first run), returns initial 500 records and seeds high-water marks.
     pub fn collect_since(
         min_chromium_time: i64,
         min_firefox_time: i64,
         min_safari_time: i64,
     ) -> (Vec<BrowserHistory>, i64, i64, i64) {
         if min_chromium_time <= 0 && min_firefox_time <= 0 && min_safari_time <= 0 {
+            let initial = Self::search("", 500, "desc");
             let (max_chrome, max_ff, max_safari) = Self::discover_high_water();
-            return (Vec::new(), max_chrome, max_ff, max_safari);
+            return (initial, max_chrome, max_ff, max_safari);
         }
 
         let mut all_history = Vec::new();

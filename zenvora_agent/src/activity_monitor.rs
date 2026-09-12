@@ -103,12 +103,15 @@ async fn foreground_window_monitor() {
         };
 
         #[cfg(target_os = "macos")]
+        let mac_info = crate::platform::macos::get_active_browser_info();
+
+        #[cfg(target_os = "macos")]
         {
-            if let Some((app_name, title, url)) = crate::platform::macos::get_active_browser_info() {
-                if !url.is_empty() && url != last_browser_url {
+            if let Some((ref app_name, ref title, ref url)) = mac_info {
+                if !url.is_empty() && url != &last_browser_url {
                     logger.log_website(
-                        &app_name,
-                        &url,
+                        app_name,
+                        url,
                         json!({
                             "title": title,
                             "visitTime": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -117,17 +120,31 @@ async fn foreground_window_monitor() {
                             "browserProfile": "Default",
                         }),
                     );
-                    last_browser_url = url;
+                    last_browser_url = url.clone();
                 }
             }
         }
 
-        if let Some((window_title, process_path)) = get_active_window_info() {
+        #[cfg(target_os = "macos")]
+        let active_window = mac_info.map(|(app, win, _)| (win, app));
+        #[cfg(not(target_os = "macos"))]
+        let active_window = get_active_window_info();
+
+        if let Some((window_title, process_path)) = active_window {
             if window_title != last_window {
+                let display_app = process_path
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or(process_path.as_str())
+                    .to_string();
                 logger.log_window_changed(
                     platform_os_name(),
                     &window_title,
-                    json!({"process": process_path.clone()}),
+                    json!({
+                        "process": process_path.clone(),
+                        "appName": display_app,
+                        "windowTitle": window_title.clone(),
+                    }),
                 );
                 last_window = window_title.clone();
             }
@@ -155,10 +172,19 @@ async fn foreground_window_monitor() {
                         }),
                     );
                 }
+                let display_app = process_path
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or(process_path.as_str())
+                    .to_string();
                 logger.log_app_opened(
                     platform_os_name(),
                     &process_path,
-                    json!({"windowTitle": window_title.clone()}),
+                    json!({
+                        "process": process_path.clone(),
+                        "appName": display_app,
+                        "windowTitle": window_title.clone(),
+                    }),
                 );
                 last_process = process_path;
                 session_start = Instant::now();

@@ -1460,14 +1460,35 @@ function handleActivityLog(ws, packet, activeConnections) {
 
     const metadata = packet.metadata || {};
     const details = String(packet.details || '');
-    const processName = String(metadata.process || metadata.processName || '');
-    const windowTitle = String(metadata.windowTitle || '');
-    const appName = String(metadata.app || metadata.appName || metadata.title || metadata.windowTitle || '');
+    const action = String(packet.action || 'unknown');
+
+    let windowTitle = String(metadata.windowTitle || metadata.window_title || packet.windowTitle || packet.window_title || '');
+    let processName = String(metadata.process || metadata.processName || metadata.process_name || packet.processName || packet.process_name || '');
+    let appName = String(metadata.app || metadata.appName || metadata.app_name || metadata.title || packet.appName || packet.app_name || '');
+    let executablePath = String(metadata.executablePath || metadata.executable_path || metadata.path || packet.executablePath || packet.executable_path || '');
+
+    if (action === 'window_changed') {
+        if (!windowTitle && details) windowTitle = details;
+        if (!appName && processName) {
+            appName = processName.split(/[\\/]/).pop().replace(/\.app$/, '').replace(/\.exe$/i, '');
+        }
+        if (!appName && windowTitle) {
+            appName = windowTitle.split(/[—\-|]/)[0].trim();
+        }
+    } else if (action === 'app_opened' || action === 'app_closed' || action === 'app_session') {
+        if (!processName && details) processName = details;
+        if (!appName) {
+            const raw = processName || details;
+            appName = raw.split(/[\\/]/).pop().replace(/\.app$/, '').replace(/\.exe$/i, '');
+        }
+        if (!executablePath) executablePath = processName || details;
+    }
+
     const createdAt = packet.createdAt || new Date().toISOString();
 
     const liveLog = {
         _id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        action: String(packet.action || 'unknown'),
+        action,
         category: String(packet.category || 'system'),
         device: String(packet.device || ''),
         details,
@@ -1476,7 +1497,7 @@ function handleActivityLog(ws, packet, activeConnections) {
         appName,
         processName,
         windowTitle,
-        executablePath: String(metadata.executablePath || metadata.path || details || ''),
+        executablePath: executablePath || processName || details,
         createdAt,
     };
 

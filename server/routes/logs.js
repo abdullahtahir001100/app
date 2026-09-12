@@ -1,11 +1,30 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const ActivityLog = require('../models/ActivityLog');
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
 const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const syncManager = require('../services/syncManager');
+
+function toObjectId(id) {
+    if (!id) return id;
+    if (id instanceof mongoose.Types.ObjectId) return id;
+    if (typeof id === 'string' && mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
+        try {
+            return new mongoose.Types.ObjectId(id);
+        } catch (_) {
+            return id;
+        }
+    }
+    return id;
+}
+
+function userQuery(userId) {
+    const oid = toObjectId(userId);
+    return oid ? { $in: [oid, String(userId)] } : userId;
+}
 
 // Get activity logs with filters
 router.get('/activity', attachUser, requirePagePermission('logs.activity'), requireUserIdOwnership, async (req, res) => {
@@ -29,7 +48,7 @@ router.get('/activity', attachUser, requirePagePermission('logs.activity'), requ
             });
         }
 
-        const query = { userId: req.user.id };
+        const query = { userId: userQuery(req.user.id) };
         if (deviceId) query.deviceId = deviceId;
         if (category) query.category = category;
         if (status) query.status = status;
@@ -82,7 +101,7 @@ router.get('/browser-history', attachUser, requirePagePermission('logs.browser')
             });
         }
 
-        const query = { userId: req.user.id };
+        const query = { userId: userQuery(req.user.id) };
         if (deviceId) query.deviceId = deviceId;
         if (browser) query.browser = browser;
         if (domain) query.domain = domain;
@@ -136,7 +155,7 @@ router.get('/app-history', attachUser, requirePagePermission('logs.apps'), requi
             });
         }
 
-        const query = { userId: req.user.id };
+        const query = { userId: userQuery(req.user.id) };
         if (deviceId) query.deviceId = deviceId;
         if (appType) query.appType = appType;
 
@@ -173,7 +192,7 @@ router.post('/activity', attachUser, requirePagePermission('logs.activity'), req
 
         const logData = {
             deviceId,
-            userId: req.user.id,
+            userId: toObjectId(req.user.id),
             action,
             category: category || 'device',
             device,
@@ -184,7 +203,7 @@ router.post('/activity', attachUser, requirePagePermission('logs.activity'), req
 
         let log;
         if (isMysql()) {
-            log = await getMysqlAdapter().createActivityLog(logData);
+            log = await getMysqlAdapter().createActivityLog({ ...logData, userId: String(req.user.id) });
         } else {
             log = new ActivityLog(logData);
             await log.save();
@@ -224,7 +243,7 @@ router.post('/browser-history', attachUser, requirePagePermission('logs.browser'
 
         const historyEntries = entries.map(entry => ({
             deviceId,
-            userId: req.user.id,
+            userId: toObjectId(req.user.id),
             browser: entry.browser,
             url: entry.url,
             title: entry.title,
@@ -268,7 +287,7 @@ router.post('/app-history', attachUser, requirePagePermission('logs.apps'), requ
 
         const appEntries = entries.map(entry => ({
             deviceId,
-            userId: req.user.id,
+            userId: toObjectId(req.user.id),
             appName: entry.appName,
             executablePath: entry.executablePath,
             lastOpened: entry.lastOpened ? new Date(entry.lastOpened) : new Date(),
@@ -303,7 +322,8 @@ router.get('/browser-stats', attachUser, requirePagePermission('logs.browser'), 
             });
         }
 
-        const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
+        const query = { userId: userQuery(req.user.id) };
+        if (deviceId) query.deviceId = deviceId;
 
         const stats = await BrowserHistory.aggregate([
             { $match: query },
@@ -341,7 +361,8 @@ router.get('/activity-stats', attachUser, requirePagePermission('logs.activity')
             return res.status(200).json({ success: true, stats });
         }
 
-        const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
+        const query = { userId: userQuery(req.user.id) };
+        if (deviceId) query.deviceId = deviceId;
 
         const stats = await ActivityLog.aggregate([
             { $match: query },
@@ -361,9 +382,6 @@ router.get('/activity-stats', attachUser, requirePagePermission('logs.activity')
     }
 });
 
-
-const mongoose = require('mongoose');
-
 router.get('/top-domains', attachUser, requirePagePermission('logs.browser'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
@@ -379,7 +397,7 @@ router.get('/top-domains', attachUser, requirePagePermission('logs.browser'), re
         }
 
         const query = {
-            userId: new mongoose.Types.ObjectId(req.user.id)
+            userId: userQuery(req.user.id)
         };
 
         if (deviceId) {

@@ -151,10 +151,15 @@ async fn run_session(
                         MsgType::Command => {
                             if let Ok(body) = serde_json::from_slice::<Value>(&frame.payload) {
                                 let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                                if action == "FETCH_BROWSER_HISTORY_DELTA" || action == "FETCH_BROWSER_HISTORY" {
+                                if action == "FETCH_BROWSER_HISTORY" || action == "FETCH_ALL_HISTORY" {
+                                    let _ = push_full_history_batches(&write_tx, seq_out, cursors);
+                                } else if action == "FETCH_BROWSER_HISTORY_DELTA" {
                                     let _ = push_browser_delta(&write_tx, seq_out, cursors);
                                 }
-                                if action == "FETCH_APP_HISTORY_DELTA" || action == "FETCH_APP_HISTORY" {
+
+                                if action == "FETCH_APP_HISTORY" || action == "FETCH_ALL_HISTORY" {
+                                    let _ = push_full_history_batches(&write_tx, seq_out, cursors);
+                                } else if action == "FETCH_APP_HISTORY_DELTA" {
                                     let _ = push_app_delta(&write_tx, seq_out, cursors);
                                 }
                             }

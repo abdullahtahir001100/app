@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
 const Notification = require('../models/Notification');
@@ -5,6 +6,19 @@ const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const syncManager = require('./syncManager');
 const { userHasFeatureAccess } = require('./adminAuthService');
 const liveLogBus = require('./liveLogBus');
+
+function toObjectId(id) {
+    if (!id) return id;
+    if (id instanceof mongoose.Types.ObjectId) return id;
+    if (typeof id === 'string' && mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
+        try {
+            return new mongoose.Types.ObjectId(id);
+        } catch (_) {
+            return id;
+        }
+    }
+    return id;
+}
 
 function parseFlexibleDate(value) {
     if (!value && value !== 0) return new Date();
@@ -45,7 +59,7 @@ function normalizeAppType(value) {
 
 /**
  * Upsert only — never delete existing history.
- * Dedupes on device + user + browser + url + visitTime + windowsUser + profile.
+ * Dedupes on device + user + browser + url + windowsUser + profile.
  */
 async function syncBrowserHistory(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries) || !userId) {
@@ -63,14 +77,16 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
         return { count: 0, quarantined: true };
     }
 
+    const effectiveUserId = toObjectId(userId);
+
     const docs = entries.map((entry) => ({
         deviceId,
-        userId,
+        userId: effectiveUserId,
         browser: normalizeBrowser(entry.browser),
         url: String(entry.url || ''),
         title: String(entry.title || entry.url || 'Untitled'),
         visitTime: parseFlexibleDate(entry.visitTime),
-        visitCount: Number(entry.visitCount) || 1,
+        visitCount: Math.max(1, Number(entry.visitCount) || 1),
         domain: extractDomain(entry.url),
         windowsUser: String(entry.windowsUser || entry.windows_user || ''),
         browserProfile: String(entry.browserProfile || entry.browser_profile || entry.profile || '')
@@ -94,13 +110,13 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
                     userId: doc.userId,
                     browser: doc.browser,
                     url: doc.url,
-                    visitTime: doc.visitTime,
                     windowsUser: doc.windowsUser,
                     browserProfile: doc.browserProfile
                 },
                 update: {
                     $set: {
                         title: doc.title,
+                        visitTime: doc.visitTime,
                         visitCount: doc.visitCount,
                         domain: doc.domain
                     },
@@ -109,7 +125,6 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
                         userId: doc.userId,
                         browser: doc.browser,
                         url: doc.url,
-                        visitTime: doc.visitTime,
                         windowsUser: doc.windowsUser,
                         browserProfile: doc.browserProfile
                     }
@@ -120,12 +135,20 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
 
         try {
             const result = await BrowserHistory.bulkWrite(ops, { ordered: false });
-            count = (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0);
+            count = (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0) + (result.insertedCount || 0);
         } catch (err) {
-            if (err?.result) {
+            count = (err?.upsertedCount || 0) + (err?.modifiedCount || 0) + (err?.matchedCount || 0) + (err?.insertedCount || 0);
+            if (!count && err?.result) {
                 count = (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0);
-            } else {
+            }
+            if (!count) {
                 console.warn('[HISTORY-SYNC] Mongo browser history bulkWrite error:', err.message);
+                try {
+                    const insertRes = await BrowserHistory.insertMany(docs, { ordered: false });
+                    count = insertRes.length;
+                } catch (insErr) {
+                    count = insErr?.insertedDocs?.length || insErr?.result?.nInserted || 0;
+                }
             }
         }
     }
@@ -163,9 +186,11 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         return { count: 0, quarantined: true };
     }
 
+    const effectiveUserId = toObjectId(userId);
+
     const docs = entries.map((entry) => ({
         deviceId,
-        userId,
+        userId: effectiveUserId,
         appName: String(entry.appName || entry.app_name || 'Unknown'),
         executablePath: String(entry.executablePath || entry.executable_path || ''),
         lastOpened: parseFlexibleDate(entry.lastOpened || entry.last_opened),
@@ -191,11 +216,11 @@ async function syncAppHistory(deviceId, entries, userId = null) {
                     userId: doc.userId,
                     appName: doc.appName,
                     executablePath: doc.executablePath,
-                    lastOpened: doc.lastOpened,
                     windowsUser: doc.windowsUser
                 },
                 update: {
                     $set: {
+                        lastOpened: doc.lastOpened,
                         appType: doc.appType,
                         duration: doc.duration,
                         ...(doc.category ? { category: doc.category } : {})
@@ -205,9 +230,7 @@ async function syncAppHistory(deviceId, entries, userId = null) {
                         userId: doc.userId,
                         appName: doc.appName,
                         executablePath: doc.executablePath,
-                        lastOpened: doc.lastOpened,
-                        windowsUser: doc.windowsUser,
-                        duration: doc.duration
+                        windowsUser: doc.windowsUser
                     }
                 },
                 upsert: true
@@ -216,12 +239,20 @@ async function syncAppHistory(deviceId, entries, userId = null) {
 
         try {
             const result = await AppHistory.bulkWrite(ops, { ordered: false });
-            count = (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0);
+            count = (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0) + (result.insertedCount || 0);
         } catch (err) {
-            if (err?.result) {
+            count = (err?.upsertedCount || 0) + (err?.modifiedCount || 0) + (err?.matchedCount || 0) + (err?.insertedCount || 0);
+            if (!count && err?.result) {
                 count = (err.result.nUpserted || 0) + (err.result.nModified || 0) + (err.result.nMatched || 0);
-            } else {
+            }
+            if (!count) {
                 console.warn('[HISTORY-SYNC] Mongo app history bulkWrite error:', err.message);
+                try {
+                    const insertRes = await AppHistory.insertMany(docs, { ordered: false });
+                    count = insertRes.length;
+                } catch (insErr) {
+                    count = insErr?.insertedDocs?.length || insErr?.result?.nInserted || 0;
+                }
             }
         }
     }
@@ -253,13 +284,14 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
         }
     }
 
+    const effectiveUserId = toObjectId(userId);
     let count = 0;
 
     for (const entry of entries) {
         if (isMysql()) {
             try {
                 await getMysqlAdapter().createNotification({
-                    userId,
+                    userId: String(userId || ''),
                     title: String(entry.title || "Notification"),
                     message: String(entry.message || ""),
                     type: String(entry.category || "other"),
@@ -272,7 +304,7 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
             await Notification.updateOne(
                 {
                     deviceId,
-                    userId,
+                    userId: effectiveUserId,
                     app: String(entry.app || "System"),
                     title: String(entry.title || "Notification"),
                     message: String(entry.message || "")
@@ -280,7 +312,7 @@ async function syncSystemNotifications(deviceId, entries, userId = null) {
                 {
                     $setOnInsert: {
                         deviceId,
-                        userId,
+                        userId: effectiveUserId,
                         app: String(entry.app || "System"),
                         title: String(entry.title || "Notification"),
                         message: String(entry.message || ""),
@@ -342,33 +374,62 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
         return { count: 0, quarantined: true };
     }
 
+    const effectiveUserId = toObjectId(userId);
     const ActivityLog = require('../models/ActivityLog');
     let count = 0;
     for (const entry of entries) {
         const action = String(entry.action || entry.event || entry.type || '').trim();
         if (!action) continue;
-        const duration = Math.max(0, Number(entry.duration) || Number(entry.metadata?.duration) || 0);
+        const meta = entry.metadata || {};
+        const details = String(entry.details || entry.message || '');
+        const duration = Math.max(0, Number(entry.duration) || Number(meta.duration) || 0);
+
+        let windowTitle = String(entry.windowTitle || entry.window_title || meta.windowTitle || meta.window_title || '');
+        let processName = String(entry.processName || entry.process_name || meta.process || meta.processName || meta.process_name || '');
+        let appName = String(entry.appName || entry.app_name || meta.appName || meta.app_name || meta.app || meta.title || '');
+        let executablePath = String(entry.executablePath || entry.executable_path || meta.executablePath || meta.path || '');
+
+        if (action === 'window_changed') {
+            if (!windowTitle && details) windowTitle = details;
+            if (!appName && processName) {
+                appName = processName.split(/[\\/]/).pop().replace(/\.app$/, '').replace(/\.exe$/i, '');
+            }
+            if (!appName && windowTitle) {
+                appName = windowTitle.split(/[—\-|]/)[0].trim();
+            }
+        } else if (action === 'app_opened' || action === 'app_closed' || action === 'app_session') {
+            if (!processName && details) processName = details;
+            if (!appName) {
+                const raw = processName || details;
+                appName = raw.split(/[\\/]/).pop().replace(/\.app$/, '').replace(/\.exe$/i, '');
+            }
+            if (!executablePath) executablePath = processName || details;
+        }
+
         const logData = {
             deviceId,
-            userId,
+            userId: effectiveUserId,
             action,
             category: String(entry.category || 'system'),
-            appName: String(entry.appName || entry.app_name || ''),
-            processName: String(entry.processName || entry.process_name || ''),
-            executablePath: String(entry.executablePath || entry.executable_path || ''),
-            windowTitle: String(entry.windowTitle || entry.window_title || ''),
-            url: String(entry.url || ''),
-            domain: String(entry.domain || ''),
+            appName,
+            processName,
+            executablePath: executablePath || processName,
+            windowTitle,
+            url: String(entry.url || meta.url || ''),
+            domain: String(entry.domain || meta.domain || ''),
             device: String(entry.device || deviceId),
-            details: String(entry.details || entry.message || ''),
+            details,
             status: String(entry.status || 'success'),
             duration,
-            metadata: entry.metadata || entry,
+            metadata: meta,
         };
 
         if (isMysql()) {
             try {
-                await getMysqlAdapter().createActivityLog(logData);
+                await getMysqlAdapter().createActivityLog({
+                    ...logData,
+                    userId: String(userId || ''),
+                });
             } catch (mErr) {
                 console.warn('[HISTORY-SYNC] MySQL activity log error:', mErr.message);
             }
@@ -380,8 +441,8 @@ async function syncActivityLogs(deviceId, entries, userId = null) {
 
         if (action === 'app_closed' && duration > 0) {
             await syncAppHistory(deviceId, [{
-                appName: String(entry.appName || entry.app_name || entry.processName || 'Unknown'),
-                executablePath: String(entry.executablePath || entry.executable_path || entry.processName || ''),
+                appName: appName || 'Unknown',
+                executablePath: executablePath || processName || '',
                 lastOpened: entry.lastOpened || entry.timestamp || new Date(),
                 duration,
                 appType: 'app',
@@ -456,6 +517,7 @@ async function syncCallLogs(deviceId, entries, userId = null) {
         return { count: 0, quarantined: true };
     }
 
+    const effectiveUserId = toObjectId(userId);
     let count = 0;
 
     if (isMysql()) {
@@ -472,14 +534,14 @@ async function syncCallLogs(deviceId, entries, userId = null) {
             const number = String(entry.number || '');
             if (!number && !entry.name) continue;
             await CallLog.updateOne(
-                { deviceId, userId, number, timestamp },
+                { deviceId, userId: effectiveUserId, number, timestamp },
                 {
                     $set: {
                         name: String(entry.name || ''),
                         type: Number(entry.type) || 0,
                         duration: Number(entry.duration) || 0
                     },
-                    $setOnInsert: { deviceId, userId, number, timestamp }
+                    $setOnInsert: { deviceId, userId: effectiveUserId, number, timestamp }
                 },
                 { upsert: true }
             );
@@ -511,6 +573,7 @@ async function syncSmsMessages(deviceId, entries, userId = null) {
         return { count: 0, quarantined: true };
     }
 
+    const effectiveUserId = toObjectId(userId);
     let count = 0;
 
     if (isMysql()) {
@@ -528,13 +591,13 @@ async function syncSmsMessages(deviceId, entries, userId = null) {
             const body = String(entry.body || '');
             if (!address && !body) continue;
             await SmsMessage.updateOne(
-                { deviceId, userId, address, body, timestamp },
+                { deviceId, userId: effectiveUserId, address, body, timestamp },
                 {
                     $set: {
                         type: Number(entry.type) || 0,
                         read: Boolean(entry.read)
                     },
-                    $setOnInsert: { deviceId, userId, address, body, timestamp }
+                    $setOnInsert: { deviceId, userId: effectiveUserId, address, body, timestamp }
                 },
                 { upsert: true }
             );
@@ -566,6 +629,7 @@ async function syncContacts(deviceId, entries, userId = null) {
         return { count: 0, quarantined: true };
     }
 
+    const effectiveUserId = toObjectId(userId);
     let count = 0;
 
     if (isMysql()) {
@@ -582,8 +646,8 @@ async function syncContacts(deviceId, entries, userId = null) {
             const phone = String(entry.phone || entry.number || '');
             if (!name && !phone) continue;
             await Contact.updateOne(
-                { deviceId, userId, name, phone },
-                { $setOnInsert: { deviceId, userId, name, phone } },
+                { deviceId, userId: effectiveUserId, name, phone },
+                { $setOnInsert: { deviceId, userId: effectiveUserId, name, phone } },
                 { upsert: true }
             );
             count += 1;
