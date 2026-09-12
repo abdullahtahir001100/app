@@ -245,9 +245,10 @@ router.get('/download', (req, res) => {
 
     const stat = fs.statSync(filePath);
     const isZip = filePath.endsWith('.zip');
+    const isDmg = filePath.endsWith('.dmg');
     const filename = isAndroid
         ? (flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'Zenvora-full.apk' : 'Zenvora-lite.apk')
-        : isZip
+        : isZip || isDmg
         ? path.basename(filePath)
         : isMac || isLinux
         ? 'ZenvoraAgent'
@@ -262,7 +263,13 @@ router.get('/download', (req, res) => {
     res.status(200);
     res.setHeader(
         'Content-Type',
-        isAndroid ? 'application/vnd.android.package-archive' : isZip ? 'application/zip' : 'application/octet-stream'
+        isAndroid
+            ? 'application/vnd.android.package-archive'
+            : isDmg
+            ? 'application/x-apple-diskimage'
+            : isZip
+            ? 'application/zip'
+            : 'application/octet-stream'
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', String(stat.size));
