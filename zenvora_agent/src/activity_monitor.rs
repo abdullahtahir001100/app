@@ -80,9 +80,19 @@ pub fn start_activity_monitor(logger: Arc<ActivityLogger>) {
     tokio::spawn(screenshot_monitor());
 }
 
+fn platform_os_name() -> &'static str {
+    #[cfg(target_os = "macos")]
+    { "macOS" }
+    #[cfg(target_os = "windows")]
+    { "Windows" }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    { "Linux" }
+}
+
 async fn foreground_window_monitor() {
     let mut last_window = String::new();
     let mut last_process = String::new();
+    let mut last_browser_url = String::new();
     let mut session_start = Instant::now();
     let mut last_usage_flush = Instant::now();
 
@@ -91,10 +101,31 @@ async fn foreground_window_monitor() {
             sleep(Duration::from_secs(1)).await;
             continue;
         };
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Some((app_name, title, url)) = crate::platform::macos::get_active_browser_info() {
+                if !url.is_empty() && url != last_browser_url {
+                    logger.log_website(
+                        &app_name,
+                        &url,
+                        json!({
+                            "title": title,
+                            "visitTime": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                            "visitCount": 1,
+                            "windowsUser": whoami::username(),
+                            "browserProfile": "Default",
+                        }),
+                    );
+                    last_browser_url = url;
+                }
+            }
+        }
+
         if let Some((window_title, process_path)) = get_active_window_info() {
             if window_title != last_window {
                 logger.log_window_changed(
-                    "Windows",
+                    platform_os_name(),
                     &window_title,
                     json!({"process": process_path.clone()}),
                 );
@@ -113,7 +144,7 @@ async fn foreground_window_monitor() {
                         "app_closed",
                         "application",
                         "success",
-                        "Windows",
+                        platform_os_name(),
                         &last_process,
                         json!({
                             "process": last_process,
@@ -125,7 +156,7 @@ async fn foreground_window_monitor() {
                     );
                 }
                 logger.log_app_opened(
-                    "Windows",
+                    platform_os_name(),
                     &process_path,
                     json!({"windowTitle": window_title.clone()}),
                 );
@@ -145,7 +176,7 @@ async fn foreground_window_monitor() {
                     "app_session",
                     "application",
                     "success",
-                    "Windows",
+                    platform_os_name(),
                     &last_process,
                     json!({
                         "process": last_process,
@@ -175,7 +206,7 @@ async fn usb_monitor() {
 
         for drive in current.difference(&connected) {
             logger.log_usb_connected(
-                "Windows",
+                platform_os_name(),
                 drive,
                 json!({"drive": drive}),
             );
@@ -183,7 +214,7 @@ async fn usb_monitor() {
 
         for drive in connected.difference(&current) {
             logger.log_usb_disconnected(
-                "Windows",
+                platform_os_name(),
                 drive,
                 json!({"drive": drive}),
             );
@@ -202,9 +233,10 @@ async fn browser_monitor() {
             sleep(Duration::from_secs(1)).await;
             continue;
         };
-        let (entries, new_chrome, new_ff) = BrowserHistoryCollector::collect_since(
+        let (entries, new_chrome, new_ff, new_safari) = BrowserHistoryCollector::collect_since(
             cursors.browser_chromium_time,
             cursors.browser_firefox_time,
+            cursors.browser_safari_time,
         );
 
         if new_chrome > cursors.browser_chromium_time {
@@ -212,6 +244,9 @@ async fn browser_monitor() {
         }
         if new_ff > cursors.browser_firefox_time {
             cursors.browser_firefox_time = new_ff;
+        }
+        if new_safari > cursors.browser_safari_time {
+            cursors.browser_safari_time = new_safari;
         }
         cursors.save();
 
@@ -379,9 +414,9 @@ async fn network_monitor() {
 
         let current_vpn = is_vpn_connected();
         if current_vpn && !last_vpn {
-            logger.log_vpn_connected("Windows", "VPN connected", json!({}));
+            logger.log_vpn_connected(platform_os_name(), "VPN connected", json!({}));
         } else if !current_vpn && last_vpn {
-            logger.log_vpn_disconnected("Windows", "VPN disconnected", json!({}));
+            logger.log_vpn_disconnected(platform_os_name(), "VPN disconnected", json!({}));
         }
         last_vpn = current_vpn;
 
@@ -399,10 +434,10 @@ async fn bluetooth_monitor() {
         };
         let current_devices = get_bluetooth_devices();
         for device in current_devices.difference(&last_devices) {
-            logger.log_bluetooth_connected("Windows", device, json!({"device": device}));
+            logger.log_bluetooth_connected(platform_os_name(), device, json!({"device": device}));
         }
         for device in last_devices.difference(&current_devices) {
-            logger.log_bluetooth_disconnected("Windows", device, json!({"device": device}));
+            logger.log_bluetooth_disconnected(platform_os_name(), device, json!({"device": device}));
         }
         last_devices = current_devices;
         sleep(Duration::from_secs(6)).await;
@@ -419,10 +454,10 @@ async fn camera_monitor() {
         };
         let current_camera = get_camera_processes();
         for proc in current_camera.difference(&seen_camera) {
-            logger.log_camera_started("Windows", proc, json!({"source": "process-scan"}));
+            logger.log_camera_started(platform_os_name(), proc, json!({"source": "process-scan"}));
         }
         for proc in seen_camera.difference(&current_camera) {
-            logger.log_camera_stopped("Windows", proc, json!({"source": "process-scan"}));
+            logger.log_camera_stopped(platform_os_name(), proc, json!({"source": "process-scan"}));
         }
         seen_camera = current_camera;
         sleep(Duration::from_secs(5)).await;
@@ -439,10 +474,10 @@ async fn microphone_monitor() {
         };
         let current_mic = get_microphone_processes();
         for proc in current_mic.difference(&seen_microphone) {
-            logger.log_microphone_started("Windows", proc, json!({"source": "process-scan"}));
+            logger.log_microphone_started(platform_os_name(), proc, json!({"source": "process-scan"}));
         }
         for proc in seen_microphone.difference(&current_mic) {
-            logger.log_microphone_stopped("Windows", proc, json!({"source": "process-scan"}));
+            logger.log_microphone_stopped(platform_os_name(), proc, json!({"source": "process-scan"}));
         }
         seen_microphone = current_mic;
         sleep(Duration::from_secs(5)).await;

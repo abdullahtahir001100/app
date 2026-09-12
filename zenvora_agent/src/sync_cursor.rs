@@ -12,6 +12,9 @@ pub struct SyncCursors {
     pub browser_chromium_time: i64,
     /// Firefox last_visit_date (µs since epoch) high-water mark.
     pub browser_firefox_time: i64,
+    /// Safari visit_time (µs since 2001-01-01) high-water mark.
+    #[serde(default)]
+    pub browser_safari_time: i64,
     /// App history last_opened ISO string (lexicographic).
     pub app_last_opened: String,
     /// Notification sequence / timestamp.
@@ -28,6 +31,14 @@ fn cursor_path() -> PathBuf {
         let dir = PathBuf::from(program_data).join(crate::paths::AGENT_DIR_NAME);
         let _ = fs::create_dir_all(&dir);
         return dir.join("sync_cursors.dat");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            let dir = home.join("Library").join("Application Support").join(crate::paths::AGENT_DIR_NAME);
+            let _ = fs::create_dir_all(&dir);
+            return dir.join("sync_cursors.dat");
+        }
     }
     PathBuf::from("sync_cursors.dat")
 }

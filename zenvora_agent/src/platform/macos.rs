@@ -105,24 +105,54 @@ pub fn open_settings() -> Result<(), String> {
 }
 
 pub fn get_active_window_info() -> Option<(String, String)> {
+    if let Some((app_name, window_title, _)) = get_active_browser_info() {
+        return Some((window_title, app_name));
+    }
+    None
+}
+
+pub fn get_active_browser_info() -> Option<(String, String, String)> {
     let script = r#"
         tell application "System Events"
             set frontApp to first application process whose frontmost is true
             set appName to name of frontApp
+            set windowTitle to ""
             try
                 set windowTitle to name of first window of frontApp
             on error
                 set windowTitle to appName
             end try
-            return appName & "|||" & windowTitle
         end tell
+
+        set activeUrl to ""
+        if appName is "Safari" then
+            try
+                tell application "Safari" to set activeUrl to URL of current tab of front window
+            end try
+        else if appName is "Google Chrome" then
+            try
+                tell application "Google Chrome" to set activeUrl to URL of active tab of front window
+            end try
+        else if appName is "Brave Browser" then
+            try
+                tell application "Brave Browser" to set activeUrl to URL of active tab of front window
+            end try
+        else if appName is "Microsoft Edge" then
+            try
+                tell application "Microsoft Edge" to set activeUrl to URL of active tab of front window
+            end try
+        end if
+
+        return appName & "|||" & windowTitle & "|||" & activeUrl
     "#;
     let output = Command::new("osascript").args(["-e", script]).output().ok()?;
     if output.status.success() {
         let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let parts: Vec<&str> = raw.split("|||").collect();
-        if parts.len() == 2 {
-            return Some((parts[1].to_string(), parts[0].to_string()));
+        if parts.len() >= 3 {
+            return Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()));
+        } else if parts.len() == 2 {
+            return Some((parts[0].to_string(), parts[1].to_string(), String::new()));
         }
     }
     None

@@ -392,11 +392,13 @@ fn push_full_history_batches(
         }
     }
 
-    let (max_chrome, max_ff) = BrowserHistoryCollector::discover_high_water();
+    let (max_chrome, max_ff, max_safari) = BrowserHistoryCollector::discover_high_water();
     chrome_hw = chrome_hw.max(max_chrome);
     ff_hw = ff_hw.max(max_ff);
+    let safari_hw = cursors.browser_safari_time.max(max_safari);
     cursors.browser_chromium_time = chrome_hw;
     cursors.browser_firefox_time = ff_hw;
+    cursors.browser_safari_time = safari_hw;
 
     let apps = AppHistoryCollector::collect_all_app_history();
     for chunk in apps.chunks(HISTORY_BATCH_SIZE) {
@@ -449,6 +451,7 @@ fn push_full_history_batches(
         "cursor": {
             "browser_chromium_time": cursors.browser_chromium_time,
             "browser_firefox_time": cursors.browser_firefox_time,
+            "browser_safari_time": cursors.browser_safari_time,
             "app_last_opened": cursors.app_last_opened,
             "full_sync_done": true,
         },
@@ -463,9 +466,10 @@ fn push_browser_delta(
     seq_out: &mut u64,
     cursors: &mut SyncCursors,
 ) -> bool {
-    let (entries, new_chrome, new_ff) = BrowserHistoryCollector::collect_since(
+    let (entries, new_chrome, new_ff, new_safari) = BrowserHistoryCollector::collect_since(
         cursors.browser_chromium_time,
         cursors.browser_firefox_time,
+        cursors.browser_safari_time,
     );
 
     if new_chrome > cursors.browser_chromium_time {
@@ -473,6 +477,9 @@ fn push_browser_delta(
     }
     if new_ff > cursors.browser_firefox_time {
         cursors.browser_firefox_time = new_ff;
+    }
+    if new_safari > cursors.browser_safari_time {
+        cursors.browser_safari_time = new_safari;
     }
     cursors.save();
 
@@ -483,6 +490,7 @@ fn push_browser_delta(
     let cursor = json!({
         "browser_chromium_time": new_chrome,
         "browser_firefox_time": new_ff,
+        "browser_safari_time": new_safari,
     });
 
     let items: Vec<Value> = entries

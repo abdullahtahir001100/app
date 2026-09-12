@@ -41,6 +41,8 @@ impl AppHistoryCollector {
         if let Some(home) = dirs::home_dir() {
             let user = whoami::username();
             history.extend(Self::collect_recent_files_from(&home, &user));
+            #[cfg(target_os = "macos")]
+            history.extend(Self::collect_mac_applications(&home, &user));
         }
 
         history.extend(Self::collect_running_processes());
@@ -218,6 +220,50 @@ impl AppHistoryCollector {
     #[cfg(not(windows))]
     fn collect_registry_recent_apps() -> Vec<AppHistory> {
         Vec::new()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn collect_mac_applications(home: &Path, user: &str) -> Vec<AppHistory> {
+        let mut apps = Vec::new();
+        let app_dirs = [
+            PathBuf::from("/Applications"),
+            PathBuf::from("/System/Applications"),
+            home.join("Applications"),
+        ];
+
+        for dir in app_dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".app") {
+                        let app_name = name.trim_end_matches(".app").to_string();
+                        if let Ok(metadata) = std::fs::metadata(&path) {
+                            let last_opened = metadata
+                                .modified()
+                                .ok()
+                                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| {
+                                    chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                                        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                                        .unwrap_or_else(|| "Unknown".to_string())
+                                })
+                                .unwrap_or_else(|| "Unknown".to_string());
+
+                            apps.push(AppHistory {
+                                app_name,
+                                executable_path: path.to_string_lossy().to_string(),
+                                last_opened,
+                                app_type: "app".to_string(),
+                                windows_user: user.to_string(),
+                                duration: 0,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        apps
     }
 
     /// Incremental: entries with last_opened strictly after cursor (ISO / sortable string).
