@@ -5,6 +5,7 @@ const {
     extractDeviceIdFromAgentSocket,
     extractOwnerUserId,
     sendToOwnerDashboards,
+    forwardPacketToDashboards,
     broadcastOwnerBinary,
 } = require('./fanout');
 const { dispatchAgentCommand } = require('./dispatchAgent');
@@ -163,13 +164,11 @@ function handleScreenTelemetry(ws, packet, activeConnections) {
     }
 
     const ownerUserId = extractOwnerUserId(ws);
-    if (!ownerUserId) return;
-
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
     delete metrics.live_frame_b64;
 
-    sendToOwnerDashboards(activeConnections, ownerUserId, {
+    forwardPacketToDashboards({
         type: 'screen_telemetry_stream',
         senderAgentId: extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN',
         metrics,
@@ -178,7 +177,7 @@ function handleScreenTelemetry(ws, packet, activeConnections) {
         status: packet.status || 'RUNNING',
         has_binary_frame: !!packet.has_binary_frame,
         frame_bytes: packet.frame_bytes || 0,
-    });
+    }, activeConnections, ownerUserId);
 }
 
 function broadcastScreenBinaryFrame(frameBuffer, activeConnections, sourceWs = null) {

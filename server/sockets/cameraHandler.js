@@ -5,6 +5,7 @@ const {
     extractDeviceIdFromAgentSocket,
     extractOwnerUserId,
     sendToOwnerDashboards,
+    forwardPacketToDashboards,
     broadcastOwnerBinary,
 } = require('./fanout');
 const { dispatchAgentCommand } = require('./dispatchAgent');
@@ -117,13 +118,12 @@ function handleCameraTelemetry(ws, packet, activeConnections) {
 
     const ownerUserId = extractOwnerUserId(ws);
     const senderAgentId = extractDeviceIdFromAgentSocket(ws) || 'UNKNOWN';
-    if (!ownerUserId) return;
 
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
     delete metrics.live_frame_b64;
 
-    sendToOwnerDashboards(activeConnections, ownerUserId, {
+    forwardPacketToDashboards({
         type: 'camera_telemetry_stream',
         senderAgentId,
         metrics,
@@ -134,7 +134,7 @@ function handleCameraTelemetry(ws, packet, activeConnections) {
         camera_blocked: !!metrics.camera_blocked || packet.status === 'CAMERA_BLOCKED',
         has_binary_frame: !!packet.has_binary_frame,
         frame_bytes: packet.frame_bytes || 0
-    });
+    }, activeConnections, ownerUserId);
 }
 
 function broadcastBinaryFrame(frameBuffer, activeConnections, _frameType, sourceWs = null) {

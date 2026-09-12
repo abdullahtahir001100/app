@@ -8,6 +8,7 @@ const {
     extractDeviceIdFromAgentSocket,
     extractOwnerUserId,
     sendToOwnerDashboards,
+    forwardPacketToDashboards,
     broadcastOwnerBinary,
 } = require('./fanout');
 
@@ -134,9 +135,7 @@ function handleFileTelemetry(ws, packet, activeConnections) {
 
     resolveFileOpWaiters(packet);
 
-    if (!ownerUserId) return;
-
-    sendToOwnerDashboards(activeConnections, ownerUserId, {
+    forwardPacketToDashboards({
         type: 'file_telemetry_stream',
         senderAgentId: senderId,
         action,
@@ -144,7 +143,7 @@ function handleFileTelemetry(ws, packet, activeConnections) {
         message: packet.message || null,
         request_id: fileResult.request_id || packet.request_id || null,
         file_result: fileResult
-    });
+    }, activeConnections, ownerUserId);
 }
 
 function isFileBinaryFrame(frameType) {
