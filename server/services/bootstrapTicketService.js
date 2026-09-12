@@ -186,7 +186,7 @@ function buildBashInstallScript(ticket, platform = 'mac') {
         'step 2 5 "Downloading native agent binary..."',
         'post_log "ok" 2 5 "Downloading native agent binary ($OS)"',
         'DL_URL="$API/api/agent/download?platform=$OS&format=binary"',
-        'curl -sL --retry 3 --connect-timeout 30 "$DL_URL" -o "$AGENT_BIN.tmp"',
+        'curl -# -L --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 120 "$DL_URL" -o "$AGENT_BIN.tmp"',
         'if [ ! -s "$AGENT_BIN.tmp" ]; then',
         '  fail "Download failed or empty binary received from $DL_URL"',
         '  exit 1',
