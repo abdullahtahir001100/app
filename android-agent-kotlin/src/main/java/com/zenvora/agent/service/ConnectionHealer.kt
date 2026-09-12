@@ -83,4 +83,35 @@ object ConnectionHealer {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
     }
+
+    /**
+     * AI Gateway Diagnostic Metrics: Returns structured health status JSON.
+     */
+    fun getDiagnosticsJson(context: Context): org.json.JSONObject {
+        val app = context.applicationContext
+        val json = org.json.JSONObject()
+        json.put("online", isOnline(app))
+        json.put("paired", AgentPrefs.isPaired(app))
+        json.put("connected", AgentPrefs.isConnected(app))
+        json.put("batteryExempt", isBatteryExempt(app))
+        json.put("deviceId", AgentPrefs.deviceId(app))
+        json.put("model", AgentPrefs.hostname())
+        json.put("androidVersion", Build.VERSION.RELEASE)
+        json.put("sdkInt", Build.VERSION.SDK_INT)
+        json.put("startOnBoot", AgentPrefs.startOnBoot(app))
+        return json
+    }
+
+    /**
+     * AI Agent Self-Healing: Repair service connection, reschedule workers, and pulse.
+     */
+    fun runAutoRecovery(context: Context): Boolean {
+        return try {
+            heal(context, "ai_auto_recovery")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "autoRecovery failed: ${e.message}")
+            false
+        }
+    }
 }

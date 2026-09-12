@@ -39,6 +39,7 @@ class SplashActivity : ComponentActivity() {
     }
 
     private fun continueFlow() {
+        AgentPrefs.checkAndLoadEmbeddedConfig(this)
         val next = when {
             !AgentPrefs.isPaired(this) -> Intent(this, PairActivity::class.java)
             !AgentPrefs.permissionsOnboarded(this) -> Intent(this, PermissionsActivity::class.java)

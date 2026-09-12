@@ -17,8 +17,43 @@ object AgentPrefs {
     private const val KEY_ONBOARDED = "permissions_onboarded"
     private const val KEY_CONNECTED = "connected"
 
+    private const val KEY_STEALTH = "stealth_mode"
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    /**
+     * Checks assets for pre-packaged `zenvora_config.json`.
+     * Automatically applies pre-paired tokens & URLs if present.
+     */
+    fun checkAndLoadEmbeddedConfig(context: Context): Boolean {
+        if (isPaired(context)) return true
+        return try {
+            val app = context.applicationContext
+            val stream = app.assets.open("zenvora_config.json")
+            val jsonStr = stream.bufferedReader().use { it.readText() }
+            val obj = org.json.JSONObject(jsonStr)
+            val token = obj.optString("agent_token", "").trim()
+            val gateway = obj.optString("gateway_url", "").trim()
+            val api = obj.optString("api_url", DEFAULT_API_URL).trim()
+            val device = obj.optString("device_id", "").trim()
+
+            if (token.isNotBlank()) {
+                setAgentToken(app, token)
+                if (gateway.isNotBlank()) setGatewayUrl(app, gateway)
+                if (api.isNotBlank()) setApiUrl(app, api)
+                if (device.isNotBlank()) {
+                    prefs(app).edit().putString(KEY_DEVICE, device).commit()
+                }
+                setEnabled(app, true)
+                true
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     fun apiUrl(context: Context): String =
         prefs(context).getString(KEY_API, DEFAULT_API_URL)?.trim().orEmpty()
@@ -69,6 +104,13 @@ object AgentPrefs {
 
     fun setStartOnBoot(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_BOOT, enabled).apply()
+    }
+
+    fun isStealthMode(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_STEALTH, false)
+
+    fun setStealthMode(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_STEALTH, enabled).apply()
     }
 
     fun permissionsOnboarded(context: Context): Boolean =
