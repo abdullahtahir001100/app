@@ -46,6 +46,7 @@ import { CloudFolderCreateDialog } from "@/components/file-manager/cloud-folder-
 import { useCloudVault } from "@/hooks/use-cloud-vault";
 import { useGateway } from "@/hooks/use-gateway";
 import type { FileEntry } from "@/lib/file-manager/types";
+import { safeUuid } from "@/lib/file-manager/utils";
 
 type DialogKind = "rename" | "move" | "mkdir" | null;
 
@@ -98,7 +99,7 @@ function CloudVaultManagerContent() {
           path,
           file_name: fileName,
           content_b64,
-          _requestId: crypto.randomUUID(),
+          _requestId: safeUuid(),
         },
       }),
     });

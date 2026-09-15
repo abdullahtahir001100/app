@@ -51,38 +51,44 @@ function dispatchAgentCommand(deviceId, action, payload = {}, activeConnections)
                 timestamp: new Date().toISOString(),
             };
             socket.send(JSON.stringify(outboundPacket));
-            liveLogBus.push({
-                channel: 'node',
-                level: 'info',
-                message: `[NODE:REACT] Dispatched ${act} to device ${id} via Gateway WS`,
-                deviceId: id,
-                meta: { action: act, transport: 'gateway' }
-            });
+            if (!act.startsWith('REMOTE_')) {
+                liveLogBus.push({
+                    channel: 'node',
+                    level: 'info',
+                    message: `[NODE:REACT] Dispatched ${act} to device ${id} via Gateway WS`,
+                    deviceId: id,
+                    meta: { action: act, transport: 'gateway' }
+                });
+            }
             return { ok: true, transport: 'gateway' };
         } catch (_) {
             // fall through to control
         }
     }
 
-    // 2. Fallback to Control Plane (for TCP-only agents or history sync actions)
+    // 2. Fall back to Control plane (TCP / binary control channel)
     if (sendCommandToAgent(id, act, payload)) {
-        liveLogBus.push({
-            channel: 'node',
-            level: 'info',
-            message: `[NODE:REACT] Dispatched ${act} to device ${id} via TCP Control`,
-            deviceId: id,
-            meta: { action: act, transport: 'control' }
-        });
+        if (!act.startsWith('REMOTE_')) {
+            liveLogBus.push({
+                channel: 'node',
+                level: 'info',
+                message: `[NODE:REACT] Dispatched ${act} to device ${id} via TCP Control`,
+                deviceId: id,
+                meta: { action: act, transport: 'control' }
+            });
+        }
         return { ok: true, transport: 'control' };
     }
 
-    liveLogBus.push({
-        channel: 'node',
-        level: 'warn',
-        message: `[NODE:REACT] Dispatch failed for device ${id} (${act}) — device is OFFLINE`,
-        deviceId: id,
-        meta: { action: act, reason: 'offline' }
-    });
+    if (!act.startsWith('REMOTE_')) {
+        liveLogBus.push({
+            channel: 'node',
+            level: 'warn',
+            message: `[NODE:REACT] Dispatch failed for device ${id} (${act}) — device is OFFLINE`,
+            deviceId: id,
+            meta: { action: act, reason: 'offline' }
+        });
+    }
     return { ok: false, reason: 'offline' };
 }
 

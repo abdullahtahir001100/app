@@ -121,7 +121,7 @@ router.get('/users', async (_req, res) => {
         }).lean();
         const byUser = new Map(perms.map((p) => [String(p.userId), p.pages]));
 
-        res.json({
+            res.json({
             success: true,
             users: users.map((u) => ({
                 ...u,
@@ -131,6 +131,9 @@ router.get('/users', async (_req, res) => {
             })),
             pageKeys: Permission.PAGE_KEYS,
             pageLabels: Permission.PAGE_LABELS || {},
+            proNormalPages: Permission.PRO_NORMAL_PAGES,
+            proPlusPages: Permission.PRO_PLUS_PAGES,
+            defaultUserPages: Permission.DEFAULT_USER_PAGES,
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -259,14 +262,16 @@ router.put('/permissions/:userId', async (req, res) => {
     }
 });
 
-// Bulk Grant: Grant pages or all PRO features to all registered users in a single click
+// Bulk Grant: Grant pages or all PRO / PRO+ features to all registered users in a single click
 router.post('/permissions/bulk-grant', async (req, res) => {
     try {
-        const { pages: incomingPages, grantAllPro = false } = req.body || {};
+        const { pages: incomingPages, grantAllPro = false, tier } = req.body || {};
         let targetPages = [];
 
-        if (grantAllPro) {
-            targetPages = Permission.PAGE_KEYS.filter((p) => p !== 'admin' && p !== 'devices.any');
+        if (tier === 'pro' || tier === 'normal') {
+            targetPages = Permission.PRO_NORMAL_PAGES;
+        } else if (tier === 'pro_plus' || tier === 'premium' || grantAllPro) {
+            targetPages = Permission.PRO_PLUS_PAGES;
         } else if (Array.isArray(incomingPages)) {
             const allowed = new Set(Permission.PAGE_KEYS);
             targetPages = [...new Set(incomingPages.filter((p) => allowed.has(p) && p !== 'admin' && p !== 'devices.any'))];

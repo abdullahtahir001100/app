@@ -246,6 +246,10 @@ export default function DashboardPage() {
     userId: string,
     platform: "windows" | "mac" | "linux" = activeCliPlatform
   ) => {
+    if (!token || !userId) {
+      setInstallCommand("# Waiting for pairing credentials...");
+      return;
+    }
     setBootstrapLoading(true);
     try {
       const sessionId = `web-${Date.now().toString(36)}`;
@@ -1242,7 +1246,7 @@ export default function DashboardPage() {
                                 className="h-7 px-2"
                                 onClick={async () => {
                                   await navigator.clipboard.writeText(pairingToken);
-                                  alertMsg(Z.TOKEN_COPIED || "Token copied");
+                                  alertMsg("Token copied");
                                 }}
                               >
                                 <Copy className="w-3.5 h-3.5" />

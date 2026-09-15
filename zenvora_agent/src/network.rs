@@ -47,7 +47,7 @@ use crate::ui_notify;
 /// in-flight capture guard. Kept tight (125 Hz) so high target_fps (up to 60)
 /// and low input-to-photon latency are actually achievable.
 const SCREEN_FRAME_INTERVAL_MS: u64 = 8;
-const CAMERA_FRAME_INTERVAL_MS: u64 = 250;
+const CAMERA_FRAME_INTERVAL_MS: u64 = 66;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
 const CONNECT_TIMEOUT_SECS: u64 = 60;
 const NETWORK_WAIT_SECS: u64 = 15;

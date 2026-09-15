@@ -2,6 +2,9 @@
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
+import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGateway } from "@/hooks/use-gateway";
 import { RefreshCw, Trash2, Radio } from "lucide-react";
@@ -53,6 +56,7 @@ function channelBadge(channel: string) {
 }
 
 export default function ConsolePage() {
+  const { allowed, loading } = useFeatureAccess("console");
   const { isConnected, devices, subscribe, dispatch, ensureConnected } = useGateway();
   const [logs, setLogs] = useState<LiveLog[]>([]);
   const [channel, setChannel] = useState<(typeof CHANNELS)[number]>("all");
@@ -192,6 +196,33 @@ export default function ConsolePage() {
   }, [logs, channel, selectedDevice, query]);
 
   const onlineDevices = devices.filter((d) => d.status === "online").length;
+
+  if (loading) {
+    return <FullPageLoader message="Verifying Live Console access…" />;
+  }
+
+  if (!allowed) {
+    return (
+      <div className="flex h-screen bg-background">
+        <AppSidebar />
+        <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
+          <PremiumGate
+            featureKey="console"
+            title="Live Telemetry Console"
+            description="Real-time administrative telemetry, dispatches, agent streams, and server logs."
+            price="$29.99/mo"
+            features={[
+              "Sub-millisecond WebSocket and TCP packet streaming",
+              "Agent event and dispatch diagnostics",
+              "Live HTTP and socket error tracking",
+              "Health status and cluster connection metrics",
+            ]}
+            onUnlocked={() => window.location.reload()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-background">

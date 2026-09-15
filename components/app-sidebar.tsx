@@ -70,7 +70,26 @@ function AppSidebarContent() {
     avatarUrl?: string | null;
     role?: string;
     pages?: string[];
-  } | null>(null);
+  } | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem("zenvora_session_cache");
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data?.authenticated && data?.user) {
+            return {
+              name: data.user.name || "User",
+              email: data.user.email || "",
+              avatarUrl: data.user.avatarUrl || null,
+              role: data.user.role || "user",
+              pages: Array.isArray(data.user.pages) ? data.user.pages : [],
+            };
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  });
   const [loggingOut, setLoggingOut] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
@@ -380,17 +399,15 @@ function AppSidebarContent() {
     { icon: Eye, label: "Screen Monitor", href: "/screen", page: "screen" },
     { icon: Camera, label: "Camera Access", href: "/camera", page: "camera" },
     { icon: FileText, label: "File Manager", href: "/files", page: "files" },
-    { icon: ScrollText, label: "Live Console", href: "/console", page: "console" },
+    { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
     { icon: Bell, label: "Notifications", href: "/notifications", page: "notifications" },
     { icon: History, label: "Activity Logs", href: "/logs", page: "logs" },
     { icon: Settings, label: "Settings", href: "/settings", page: "settings" },
-    { icon: Layers, label: "Architecture", href: "/architecture", page: "architecture" },
   ];
 
   const premiumMenuItems = [
     { icon: Grid3x3, label: "Fleet Grid", href: "/fleet", page: "fleet" },
     { icon: Sparkles, label: "Agent Ops", href: "/ops", page: "ops" },
-    { icon: TerminalSquare, label: "Shell Control", href: "/shell", page: "shell" },
     { icon: Package, label: "Install Apps", href: "/apps", page: "apps" },
     { icon: Activity, label: "Usage", href: "/usage", page: "usage" },
     { icon: Phone, label: "Phone", href: "/phone", page: "phone" },
@@ -404,6 +421,7 @@ function AppSidebarContent() {
         { icon: History, label: "Permissions", href: "/admin/permissions" },
         { icon: Eye, label: "Security", href: "/admin/security" },
         { icon: ScrollText, label: "Live Console", href: "/console" },
+        { icon: Layers, label: "Architecture", href: "/architecture" },
       ]
     : [];
 

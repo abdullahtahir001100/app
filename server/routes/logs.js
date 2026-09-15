@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const ActivityLog = require('../models/ActivityLog');
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
+const Notification = require('../models/Notification');
 const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const syncManager = require('../services/syncManager');
@@ -585,8 +586,8 @@ router.get('/usage', attachUser, requirePagePermission('logs.usage'), requireUse
             ActivityLog.find({
                 ...scope,
                 createdAt: { $gte: start, $lte: end },
-                action: 'app_closed',
-            }).sort({ createdAt: -1 }).limit(2000).lean(),
+                action: { $in: ['app_closed', 'app_session', 'app_opened'] },
+            }).sort({ createdAt: -1 }).limit(5000).lean(),
         ]);
 
         const byApp = new Map();
@@ -610,22 +611,20 @@ router.get('/usage', attachUser, requirePagePermission('logs.usage'), requireUse
             timeline.push({ appName, duration: seconds, lastOpened: at });
         };
 
-        const closed = activityRows.filter((row) => {
-            const seconds = Math.max(0, Number(row.duration) || Number(row.metadata?.duration) || 0);
-            return seconds > 0;
-        });
+        // First accumulate from AppHistory
+        for (const row of historyRows) {
+            add(row.appName, row.duration, row.lastOpened);
+        }
 
-        if (closed.length > 0) {
-            for (const row of closed) {
-                add(
-                    row.appName || row.processName || row.details,
-                    Number(row.duration) || Number(row.metadata?.duration) || 0,
-                    row.createdAt
-                );
-            }
-        } else {
-            for (const row of historyRows) {
-                add(row.appName, row.duration, row.lastOpened);
+        // Also add unique or recent sessions from ActivityLog that may not be in AppHistory
+        for (const row of activityRows) {
+            const seconds = Math.max(0, Number(row.duration) || Number(row.metadata?.duration) || 0);
+            if (seconds > 0) {
+                const name = row.appName || row.processName || row.details;
+                const cleanName = String(name || '').split(/[\\/]/).pop().replace(/\.exe$/i, '').replace(/\.app$/, '');
+                if (cleanName && !byApp.has(cleanName)) {
+                    add(cleanName, seconds, row.createdAt);
+                }
             }
         }
 
@@ -645,7 +644,7 @@ router.get('/usage', attachUser, requirePagePermission('logs.usage'), requireUse
     }
 });
 
-/** App drill-down: activity + browser visits related to one app name (Chrome, etc.). */
+/** App drill-down: activity + browser visits + notifications related to one app name (Chrome, etc.). */
 router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), requireUserIdOwnership, async (req, res) => {
     try {
         const deviceId = req.query.deviceId ? String(req.query.deviceId) : '';
@@ -676,6 +675,8 @@ router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), req
                 activity: result.activity,
                 appSessions: result.appSessions,
                 browserHistory: result.browserHistory,
+                notifications: [],
+                domainBreakdown: [],
             });
         }
 
@@ -684,7 +685,7 @@ router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), req
 
         const isBrowser = /chrome|edge|firefox|brave|opera|safari|browser|msedge/i.test(appName);
 
-        const [activity, appSessions, browser] = await Promise.all([
+        const [activity, appSessions, browser, notifications] = await Promise.all([
             ActivityLog.find({
                 ...scope,
                 createdAt: { $gte: start, $lte: end },
@@ -706,9 +707,36 @@ router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), req
                 ? BrowserHistory.find({
                     ...scope,
                     visitTime: { $gte: start, $lte: end },
-                }).sort({ visitTime: -1 }).limit(200).lean()
+                }).sort({ visitTime: -1 }).limit(300).lean()
                 : Promise.resolve([]),
+            Notification.find({
+                ...scope,
+                createdAt: { $gte: start, $lte: end },
+                $or: [
+                    { app: appRe },
+                    { title: appRe },
+                    { message: appRe }
+                ]
+            }).sort({ createdAt: -1 }).limit(100).lean(),
         ]);
+
+        // Aggregate domains for browser apps (e.g. YouTube, Google, GitHub, etc.)
+        const domainMap = new Map();
+        if (isBrowser && browser.length > 0) {
+            for (const b of browser) {
+                const dom = String(b.domain || '').trim().toLowerCase() || 'unknown';
+                const prev = domainMap.get(dom) || { domain: dom, visits: 0, lastVisit: b.visitTime, titles: [] };
+                prev.visits += Math.max(1, Number(b.visitCount) || 1);
+                if (b.title && !prev.titles.includes(b.title) && prev.titles.length < 5) {
+                    prev.titles.push(b.title);
+                }
+                if (b.visitTime && (!prev.lastVisit || b.visitTime > prev.lastVisit)) {
+                    prev.lastVisit = b.visitTime;
+                }
+                domainMap.set(dom, prev);
+            }
+        }
+        const domainBreakdown = [...domainMap.values()].sort((a, b) => b.visits - a.visits);
 
         res.status(200).json({
             success: true,
@@ -720,6 +748,8 @@ router.get('/usage/detail', attachUser, requirePagePermission('logs.usage'), req
             activity,
             appSessions,
             browserHistory: browser,
+            notifications,
+            domainBreakdown,
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

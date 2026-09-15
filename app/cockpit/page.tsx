@@ -2,6 +2,7 @@
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { CameraPanel } from "@/components/cockpit/camera-panel";
 import { FloatingPanel, type PanelId } from "@/components/cockpit/floating-panel";
@@ -221,7 +222,11 @@ function CockpitInner() {
     [deviceId, router]
   );
 
-  if (!loading && !allowed) {
+  if (loading) {
+    return <FullPageLoader message="Verifying Cockpit access…" />;
+  }
+
+  if (!allowed) {
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

@@ -45,10 +45,10 @@ function extractDomain(url) {
 }
 
 function normalizeBrowser(name) {
-    const value = String(name || 'Edge').trim();
-    const allowed = ['Chrome', 'Edge', 'Firefox', 'Safari'];
+    const value = String(name || 'Chrome').trim();
+    const allowed = ['Chrome', 'Edge', 'Firefox', 'Safari', 'Brave', 'Opera', 'Opera GX', 'Vivaldi', 'Arc'];
     const match = allowed.find((b) => b.toLowerCase() === value.toLowerCase());
-    return match || 'Edge';
+    return match || (value.length > 0 ? value : 'Chrome');
 }
 
 function normalizeAppType(value) {

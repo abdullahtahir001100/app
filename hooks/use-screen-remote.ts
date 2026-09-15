@@ -75,66 +75,91 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
   const [detectedDisplays, setDetectedDisplays] = useState<DetectedDisplay[]>([]);
   const [activeDisplay, setActiveDisplay] = useState("");
 
-  const paintFrame = useCallback(async (blob: Blob) => {
-    if (blob.size < 100) return;
+  const isDecodingRef = useRef(false);
+  const pendingBlobRef = useRef<Blob | null>(null);
 
-    // Always keep the newest blob; coalesce paints so we never replay a backlog.
-    latestBlobRef.current = blob;
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const nextBitmapRef = useRef<ImageBitmap | null>(null);
+  const rafIdRef = useRef<number | null>(null);
 
-    if (paintScheduledRef.current) return;
-    paintScheduledRef.current = true;
+  // Direct hardware paint as soon as GPU decodes the frame (zero V-Sync queue delay, 0ms backlog)
+  const drawBitmapDirect = useCallback((bitmap: ImageBitmap) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      bitmap.close();
+      return;
+    }
 
-    requestAnimationFrame(async () => {
-      paintScheduledRef.current = false;
-      const frame = latestBlobRef.current;
-      const canvas = canvasRef.current;
-      if (!frame || !canvas) return;
-      const paintGen = ++paintGenRef.current;
+    let ctx = ctxRef.current;
+    if (!ctx || ctx.canvas !== canvas) {
+      ctx = canvas.getContext("2d", { alpha: false });
+      ctxRef.current = ctx;
+    }
 
-      try {
-        const bitmap = await createImageBitmap(frame);
-        // Drop stale decode — older JPEG finishing late was painting Chrome after Instagram.
-        if (paintGen !== paintGenRef.current || latestBlobRef.current !== frame) {
-          bitmap.close();
-          // Newer blob arrived mid-decode — schedule a fresh paint of "now".
-          if (latestBlobRef.current && latestBlobRef.current !== frame) {
-            paintFrameRef.current(latestBlobRef.current);
-          }
-          return;
-        }
-        const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-        if (!ctx) {
-          bitmap.close();
-          return;
-        }
-
-        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-        }
-
-        ctx.drawImage(bitmap, 0, 0);
-        if (bitmapRef.current) bitmapRef.current.close();
-        bitmapRef.current = bitmap;
-
-        if (!hasLiveFrameRef.current) {
-          hasLiveFrameRef.current = true;
-          setHasLiveFrame(true);
-        }
-
-        const now = Date.now();
-        fpsTimerRef.current.count += 1;
-        if (now - fpsTimerRef.current.last >= 1000) {
-          const fps = fpsTimerRef.current.count;
-          setMeasuredFps(String(fps));
-          setFrameCount((c) => c + fps);
-          fpsTimerRef.current = { last: now, count: 0 };
-        }
-      } catch (err) {
-        console.warn("Frame paint failed:", err);
+    if (ctx) {
+      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
       }
-    });
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "medium";
+      ctx.drawImage(bitmap, 0, 0);
+
+      if (!hasLiveFrameRef.current) {
+        hasLiveFrameRef.current = true;
+        setHasLiveFrame(true);
+      }
+
+      const now = Date.now();
+      fpsTimerRef.current.count += 1;
+      if (now - fpsTimerRef.current.last >= 1000) {
+        const fps = fpsTimerRef.current.count;
+        setMeasuredFps(String(fps));
+        setFrameCount((c) => c + fps);
+        fpsTimerRef.current = { last: now, count: 0 };
+      }
+    }
+
+    // Free GPU texture immediately so memory never bloats
+    bitmap.close();
   }, []);
+
+  const pumpDecodeLoop = useCallback(async () => {
+    if (isDecodingRef.current) return;
+    const blob = pendingBlobRef.current;
+    if (!blob) return;
+    pendingBlobRef.current = null;
+    isDecodingRef.current = true;
+
+    try {
+      // GPU decode off the main thread
+      const bitmap = await createImageBitmap(blob, {
+        premultiplyAlpha: "none",
+        colorSpaceConversion: "none",
+      }).catch(() => createImageBitmap(blob));
+
+      // Paint immediately to the screen — zero frame queue backlog
+      drawBitmapDirect(bitmap);
+    } catch (err) {
+      console.warn("Frame decode failed:", err);
+    } finally {
+      isDecodingRef.current = false;
+      // If newer frames arrived while decoding, ONLY decode the absolute latest one!
+      if (pendingBlobRef.current) {
+        void pumpDecodeLoop();
+      }
+    }
+  }, [drawBitmapDirect]);
+
+  const paintFrame = useCallback((blob: Blob) => {
+    if (blob.size < 100) return;
+    // Always overwrite with the newest incoming frame (drop older backlogs)
+    pendingBlobRef.current = blob;
+    if (!isDecodingRef.current) {
+      void pumpDecodeLoop();
+    }
+  }, [pumpDecodeLoop]);
 
   paintFrameRef.current = paintFrame;
 
@@ -149,8 +174,8 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
       const frameType = frame[0];
       if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
       const jpegBytes = frame.subarray(1);
-      // .slice() gives a fresh ArrayBuffer-backed copy (required for Blob typing).
-      const jpegBlob = new Blob([jpegBytes.slice()], { type: "image/jpeg" });
+      // Zero-copy Blob creation from Uint8Array
+      const jpegBlob = new Blob([jpegBytes as unknown as BlobPart], { type: "image/jpeg" });
       void paintFrameRef.current(jpegBlob);
     };
 
@@ -166,6 +191,12 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
 
   const resetPreview = useCallback(() => {
     latestBlobRef.current = null;
+    pendingBlobRef.current = null;
+    isDecodingRef.current = false;
+    if (nextBitmapRef.current) {
+      nextBitmapRef.current.close();
+      nextBitmapRef.current = null;
+    }
     if (bitmapRef.current) {
       bitmapRef.current.close();
       bitmapRef.current = null;
@@ -236,11 +267,41 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
     });
   }, [subscribe]);
 
+  const canvasRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  const updateCanvasRect = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const r = canvas.getBoundingClientRect();
+      canvasRectRef.current = { left: r.left, top: r.top, width: r.width, height: r.height };
+    }
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    updateCanvasRect();
+    const ro = new ResizeObserver(updateCanvasRect);
+    ro.observe(canvas);
+    window.addEventListener("resize", updateCanvasRect, { passive: true });
+    window.addEventListener("scroll", updateCanvasRect, { passive: true });
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updateCanvasRect);
+      window.removeEventListener("scroll", updateCanvasRect);
+    };
+  }, [updateCanvasRect]);
+
   const mapPointerToRemote = useCallback((clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
-    const rect = canvas.getBoundingClientRect();
+    let rect = canvasRectRef.current;
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      const r = canvas.getBoundingClientRect();
+      rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+      canvasRectRef.current = rect;
+    }
     if (rect.width <= 0 || rect.height <= 0) return null;
 
     // Account for object-contain letterboxing.

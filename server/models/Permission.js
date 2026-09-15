@@ -118,6 +118,24 @@ const DEFAULT_USER_PAGES = [
     'settings',
 ];
 
+const PRO_NORMAL_PAGES = [
+    'dashboard',
+    'devices',
+    'settings',
+    'screen',
+    'camera',
+    'files',
+    'shell',
+    'notifications',
+    'logs',
+    'logs.browser',
+    'logs.activity',
+    'logs.apps',
+    'logs.usage',
+];
+
+const PRO_PLUS_PAGES = PAGE_KEYS.filter((p) => p !== 'admin' && p !== 'devices.any');
+
 const DEFAULT_ADMIN_PAGES = [...PAGE_KEYS];
 
 const PermissionSchema = new mongoose.Schema({
@@ -140,6 +158,8 @@ PermissionSchema.statics.PAGE_KEYS = PAGE_KEYS;
 PermissionSchema.statics.PAGE_LABELS = PAGE_LABELS;
 PermissionSchema.statics.DEFAULT_USER_PAGES = DEFAULT_USER_PAGES;
 PermissionSchema.statics.DEFAULT_ADMIN_PAGES = DEFAULT_ADMIN_PAGES;
+PermissionSchema.statics.PRO_NORMAL_PAGES = PRO_NORMAL_PAGES;
+PermissionSchema.statics.PRO_PLUS_PAGES = PRO_PLUS_PAGES;
 
 PermissionSchema.statics.defaultsForRole = function defaultsForRole(role) {
     return role === 'admin' ? [...DEFAULT_ADMIN_PAGES] : [...DEFAULT_USER_PAGES];

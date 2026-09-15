@@ -24,11 +24,15 @@ import { toast } from "sonner";
 
 export interface PremiumGateProps {
   featureKey: string;
-  title: string;
+  loading?: boolean;
+  title?: string;
+  featureTitle?: string;
   description?: string;
+  featureDescription?: string;
   price?: string;
   badge?: string;
   bullets?: string[];
+  features?: string[];
   onUnlocked?: () => void;
   className?: string;
   compact?: boolean;
@@ -249,11 +253,15 @@ const DEFAULT_FEATURE_CONFIG: Record<string, { title: string; desc: string; pric
 export function PremiumGate({
   featureKey,
   title,
+  featureTitle,
   description,
+  featureDescription,
   price,
   badge,
   bullets,
+  features,
   onUnlocked,
+  loading = false,
   className = "",
   compact = false,
 }: PremiumGateProps) {
@@ -266,11 +274,31 @@ export function PremiumGate({
   const [promoCode, setPromoCode] = useState("");
   const [requestSent, setRequestSent] = useState(false);
 
+  if (loading) {
+    if (compact) {
+      return (
+        <div className={`p-6 rounded-xl border border-border/40 bg-card/40 flex flex-col items-center justify-center text-center ${className}`}>
+          <div className="w-6 h-6 rounded-full border-2 border-primary/30 border-t-primary animate-spin mb-2" />
+          <span className="text-[11px] font-mono text-muted-foreground animate-pulse">Verifying credentials…</span>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col items-center justify-center p-12 min-h-[320px] gap-3">
+        <div className="relative flex items-center justify-center">
+          <div className="w-10 h-10 rounded-full border-2 border-primary/25 border-t-primary animate-spin" />
+          <div className="absolute w-4 h-4 rounded-full bg-primary/15 animate-ping" />
+        </div>
+        <p className="text-xs font-mono text-muted-foreground animate-pulse">Verifying access credentials…</p>
+      </div>
+    );
+  }
+
   const fallbackConfig = DEFAULT_FEATURE_CONFIG[featureKey] || {
-    title: title || "Premium Feature",
-    desc: description || "This feature requires a premium plan or specific administrator permission.",
+    title: title || featureTitle || "Premium Feature",
+    desc: description || featureDescription || "This feature requires a premium plan or specific administrator permission.",
     price: price || "$9.99/mo",
-    bullets: bullets || [
+    bullets: bullets || features || [
       "Instant access upon activation",
       "Full historical synchronization",
       "Enterprise 256-bit encryption",
@@ -278,10 +306,10 @@ export function PremiumGate({
     ],
   };
 
-  const finalTitle = title || fallbackConfig.title;
-  const finalDesc = description || fallbackConfig.desc;
+  const finalTitle = title || featureTitle || fallbackConfig.title;
+  const finalDesc = description || featureDescription || fallbackConfig.desc;
   const finalPrice = price || fallbackConfig.price;
-  const finalBullets = bullets || fallbackConfig.bullets;
+  const finalBullets = bullets || features || fallbackConfig.bullets;
   const finalBadge = badge || "PREMIUM FEATURE";
 
   const handleSimulatedPurchase = () => {

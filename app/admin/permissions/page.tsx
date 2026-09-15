@@ -14,6 +14,7 @@ type AdminUser = {
   name: string;
   email: string;
   role: string;
+  provider?: string;
   pages?: string[];
 };
 
@@ -27,32 +28,48 @@ const PERMISSION_GROUPS = [
     keys: ["dashboard", "devices", "settings"],
   },
   {
-    id: "logs",
-    title: "Activity Logs & Granular Tabs",
-    badge: "Granular Add-ons",
+    id: "pro_normal",
+    title: "PRO Tools (Normal Tier)",
+    badge: "PRO Normal",
     badgeColor: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-    description: "Grant full activity logs access or individual sub-tabs (e.g. Browser Data only). If only 'logs.browser' is checked, user sees ONLY browser history while other tabs stay locked.",
+    description: "Standard remote tools activated when a user buys or is granted PRO: Screen Monitor, Camera Access, File Manager, Shell Control, and Notifications.",
+    keys: ["screen", "camera", "files", "shell", "notifications"],
+  },
+  {
+    id: "logs",
+    title: "Activity Logs & Granular Tabs (PRO Normal)",
+    badge: "Granular Add-ons",
+    badgeColor: "bg-cyan-500/10 text-cyan-600 border-cyan-500/20",
+    description: "Grant full activity logs access or individual sub-tabs (e.g. Browser Data only). Included in PRO (Normal).",
     keys: ["logs", "logs.browser", "logs.activity", "logs.apps", "logs.usage"],
   },
   {
+    id: "pro_plus",
+    title: "PRO+ Tools (Premium Suite)",
+    badge: "PRO+ Premium",
+    badgeColor: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+    description: "High-tier monitoring and autonomous tools activated with PRO+: Fleet Grid, Agent Ops, Software Installers, and Unified Cockpit.",
+    keys: ["fleet", "ops", "apps", "cockpit"],
+  },
+  {
     id: "phone",
-    title: "Phone Suite & Granular Tabs",
+    title: "Phone Suite & Granular Tabs (PRO+)",
     badge: "Granular Add-ons",
     badgeColor: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-    description: "Grant full mobile phone suite access or individual sub-tabs (Calls, SMS, Contacts, or Remote Lock) as add-on purchases.",
+    description: "Grant full mobile phone suite access or individual sub-tabs (Calls, SMS, Contacts, or Remote Lock).",
     keys: ["phone", "phone.calls", "phone.sms", "phone.contacts", "phone.lock"],
   },
   {
     id: "settings_tabs",
-    title: "Settings Suite Granular Tabs",
+    title: "Settings Suite Granular Tabs (PRO+)",
     badge: "Premium Add-ons",
-    badgeColor: "bg-cyan-500/10 text-cyan-600 border-cyan-500/20",
+    badgeColor: "bg-teal-500/10 text-teal-600 border-teal-500/20",
     description: "Grant access to custom database integration, Cloudinary media storage, AI copilot keys, and advanced security.",
     keys: ["settings.custom_db", "settings.cloudinary", "settings.ai", "settings.security"],
   },
   {
     id: "usage_tabs",
-    title: "Usage Metrics & 3D Engine Tabs",
+    title: "Usage Metrics & 3D Engine Tabs (PRO+)",
     badge: "Granular Add-ons",
     badgeColor: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
     description: "Grant access to live usage telemetry charts or interactive 3D matrix visualization.",
@@ -60,38 +77,19 @@ const PERMISSION_GROUPS = [
   },
   {
     id: "apps_tabs",
-    title: "App Suite & Live Screen Tabs",
+    title: "App Suite & Live Screen Tabs (PRO+)",
     badge: "Granular Add-ons",
     badgeColor: "bg-violet-500/10 text-violet-600 border-violet-500/20",
     description: "Grant access to remote application push installer or live application screen streaming.",
-    keys: ["apps", "apps.installer", "apps.screen"],
-  },
-  {
-    id: "premium",
-    title: "Premium Pro Tools",
-    badge: "PRO Upgrade",
-    badgeColor: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-    description: "High-tier monitoring and live execution tools gated behind premium subscriptions.",
-    keys: [
-      "camera",
-      "screen",
-      "files",
-      "shell",
-      "ops",
-      "fleet",
-      "cockpit",
-      "notifications",
-      "console",
-      "architecture",
-    ],
+    keys: ["apps.installer", "apps.screen"],
   },
   {
     id: "admin",
-    title: "System Administration",
+    title: "System Administration (Admin Only)",
     badge: "Master Only",
     badgeColor: "bg-rose-500/10 text-rose-600 border-rose-500/20",
-    description: "Administrative console access and cross-user device oversight. Strict master DB verification applies.",
-    keys: ["admin", "devices.any"],
+    description: "Administrative console access, cross-user device oversight, Live Telemetry Console, and System Architecture blueprints.",
+    keys: ["admin", "devices.any", "console", "architecture"],
   },
 ];
 
@@ -101,6 +99,22 @@ export default function AdminPermissionsPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [pageKeys, setPageKeys] = useState<string[]>([]);
   const [pageLabels, setPageLabels] = useState<Record<string, string>>({});
+  const [proNormalKeys, setProNormalKeys] = useState<string[]>([
+    "dashboard",
+    "devices",
+    "settings",
+    "screen",
+    "camera",
+    "files",
+    "shell",
+    "notifications",
+    "logs",
+    "logs.browser",
+    "logs.activity",
+    "logs.apps",
+    "logs.usage",
+  ]);
+  const [proPlusKeys, setProPlusKeys] = useState<string[]>([]);
   const [selectedUserId, setSelectedUserId] = useState(searchParams.get("userId") || "");
   const [pages, setPages] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -133,6 +147,14 @@ export default function AdminPermissionsPage() {
         setUsers(data.users || []);
         setPageKeys(data.pageKeys || []);
         setPageLabels(data.pageLabels || {});
+        if (Array.isArray(data.proNormalPages) && data.proNormalPages.length > 0) {
+          setProNormalKeys(data.proNormalPages);
+        }
+        if (Array.isArray(data.proPlusPages) && data.proPlusPages.length > 0) {
+          setProPlusKeys(data.proPlusPages);
+        } else {
+          setProPlusKeys((data.pageKeys || []).filter((k: string) => k !== "admin" && k !== "devices.any"));
+        }
         const initial = searchParams.get("userId") || data.users?.[0]?.id || "";
         setSelectedUserId(initial);
         const u = (data.users || []).find((x: AdminUser) => x.id === initial);
@@ -191,8 +213,8 @@ export default function AdminPermissionsPage() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMessage, setBulkMessage] = useState("");
 
-  const bulkGrantProAll = async () => {
-    if (!confirm("Are you sure you want to grant ALL PRO capabilities to ALL registered users in 1 click?")) return;
+  const bulkGrantProNormal = async () => {
+    if (!confirm("Grant PRO (Normal Tier) to ALL registered users in 1 click?")) return;
     setBulkLoading(true);
     setBulkMessage("");
     try {
@@ -200,14 +222,41 @@ export default function AdminPermissionsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ grantAllPro: true }),
+        body: JSON.stringify({ tier: "pro" }),
       });
       const data = await res.json();
       if (!res.ok) {
         setBulkMessage(data.message || "Bulk grant failed");
         return;
       }
-      setBulkMessage(data.message || "Granted to all users!");
+      setBulkMessage("Granted PRO (Normal) to all users!");
+      const uRes = await fetch("/api/admin/users", { credentials: "include" });
+      const uData = await uRes.json();
+      if (uData.users) setUsers(uData.users);
+    } catch (e: any) {
+      setBulkMessage(e.message || "Error performing bulk grant");
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const bulkGrantProPlusAll = async () => {
+    if (!confirm("Grant PRO+ (All Premium Features) to ALL registered users in 1 click?")) return;
+    setBulkLoading(true);
+    setBulkMessage("");
+    try {
+      const res = await fetch("/api/admin/permissions/bulk-grant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ tier: "pro_plus" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBulkMessage(data.message || "Bulk grant failed");
+        return;
+      }
+      setBulkMessage("Granted PRO+ (All Features) to all users!");
       const uRes = await fetch("/api/admin/users", { credentials: "include" });
       const uData = await uRes.json();
       if (uData.users) setUsers(uData.users);
@@ -354,12 +403,24 @@ export default function AdminPermissionsPage() {
                 type="button"
                 variant="default"
                 size="sm"
-                onClick={() => void bulkGrantProAll()}
+                onClick={() => void bulkGrantProNormal()}
+                disabled={bulkLoading}
+                className="h-8 text-xs font-semibold gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                {bulkLoading ? "Applying..." : "Grant PRO (Normal) to All"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => void bulkGrantProPlusAll()}
                 disabled={bulkLoading}
                 className="h-8 text-xs font-semibold gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-sm"
               >
-                <Zap className="w-3.5 h-3.5" />
-                {bulkLoading ? "Applying..." : "Grant ALL PRO to All Users"}
+                <Sparkles className="w-3.5 h-3.5" />
+                {bulkLoading ? "Applying..." : "Grant PRO+ (Premium All) to All"}
               </Button>
 
               <Button
@@ -449,6 +510,30 @@ export default function AdminPermissionsPage() {
                         className="text-xs h-8 px-2.5"
                       >
                         Reset Free Default
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPages([...proNormalKeys])}
+                        className="text-xs h-8 px-2.5 text-blue-600 border-blue-500/30 hover:bg-blue-500/10 font-semibold"
+                      >
+                        Apply PRO (Normal)
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setPages(
+                            proPlusKeys.length > 0
+                              ? [...proPlusKeys]
+                              : pageKeys.filter((k) => k !== "admin" && k !== "devices.any")
+                          )
+                        }
+                        className="text-xs h-8 px-2.5 text-amber-600 border-amber-500/30 hover:bg-amber-500/10 font-semibold"
+                      >
+                        Apply PRO+ (Premium)
                       </Button>
                       <Button
                         type="button"

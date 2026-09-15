@@ -2524,7 +2524,9 @@ function initWebSocketGateway(
                     try {
                         const result =
                             handleSocketClose(
-                                ws
+                                ws,
+                                code,
+                                reasonText
                             );
 
                         if (

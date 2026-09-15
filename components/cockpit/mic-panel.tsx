@@ -50,6 +50,8 @@ export function MicPanel({
   const talkProcRef = useRef<ScriptProcessorNode | null>(null);
   const talkingRef = useRef(false);
   talkingRef.current = talking;
+  const lastLevelUpdateRef = useRef(0);
+  const currentSampleRateRef = useRef(0);
 
   const handleAudioFrame = useCallback(
     (frame: Uint8Array) => {
@@ -61,7 +63,7 @@ export function MicPanel({
       if (sampleCount === 0) return;
 
       let ctx = audioCtxRef.current;
-      if (!ctx) {
+      if (!ctx || ctx.state === "closed") {
         ctx = new AudioContext();
         audioCtxRef.current = ctx;
         const gain = ctx.createGain();
@@ -69,8 +71,14 @@ export function MicPanel({
         gain.connect(ctx.destination);
         gainRef.current = gain;
       }
-      void ctx.resume();
-      setSampleRate(rate);
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
+
+      if (currentSampleRateRef.current !== rate) {
+        currentSampleRateRef.current = rate;
+        setSampleRate(rate);
+      }
 
       const buffer = ctx.createBuffer(1, sampleCount, rate);
       const channel = buffer.getChannelData(0);
@@ -82,13 +90,27 @@ export function MicPanel({
         const a = Math.abs(s);
         if (a > peak) peak = a;
       }
-      setLevel(peak);
+
+      const nowTime = Date.now();
+      if (nowTime - lastLevelUpdateRef.current >= 120) {
+        lastLevelUpdateRef.current = nowTime;
+        setLevel(peak);
+      }
 
       const node = ctx.createBufferSource();
       node.buffer = buffer;
       node.connect(gainRef.current ?? ctx.destination);
+      node.onended = () => {
+        try {
+          node.disconnect();
+        } catch (_) {}
+      };
+
       const now = ctx.currentTime;
-      if (playheadRef.current < now) playheadRef.current = now + 0.05;
+      // Ultra low-latency alignment: never allow playhead to drift beyond 120ms or fall behind
+      if (playheadRef.current < now || playheadRef.current > now + 0.12) {
+        playheadRef.current = now + 0.02;
+      }
       node.start(playheadRef.current);
       playheadRef.current += buffer.duration;
     },
@@ -169,8 +191,47 @@ export function MicPanel({
 
   const startTalk = async () => {
     setError("");
+    if (typeof window === "undefined" || !navigator) {
+      setError("Browser environment not supported");
+      return;
+    }
+
+    const mediaDevices = navigator.mediaDevices;
+    type LegacyNav = Navigator & {
+      webkitGetUserMedia?: (c: MediaStreamConstraints, s: (stream: MediaStream) => void, e: (err: unknown) => void) => void;
+      mozGetUserMedia?: (c: MediaStreamConstraints, s: (stream: MediaStream) => void, e: (err: unknown) => void) => void;
+      getUserMedia?: (c: MediaStreamConstraints, s: (stream: MediaStream) => void, e: (err: unknown) => void) => void;
+    };
+    const legacyNav = navigator as LegacyNav;
+
+    const getUserMedia =
+      mediaDevices?.getUserMedia?.bind(mediaDevices) ||
+      (legacyNav.webkitGetUserMedia
+        ? (c: MediaStreamConstraints) =>
+            new Promise<MediaStream>((res, rej) => legacyNav.webkitGetUserMedia!(c, res, rej))
+        : legacyNav.mozGetUserMedia
+          ? (c: MediaStreamConstraints) =>
+              new Promise<MediaStream>((res, rej) => legacyNav.mozGetUserMedia!(c, res, rej))
+          : legacyNav.getUserMedia
+            ? (c: MediaStreamConstraints) =>
+                new Promise<MediaStream>((res, rej) => legacyNav.getUserMedia!(c, res, rej))
+            : null);
+
+    if (!getUserMedia) {
+      const isHttps =
+        window.location.protocol === "https:" ||
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+      if (!isHttps) {
+        setError("Microphone access requires HTTPS or localhost (browser blocks mic on plain HTTP IP).");
+      } else {
+        setError("Microphone not supported on this browser (navigator.mediaDevices is unavailable).");
+      }
+      return;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,

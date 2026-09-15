@@ -28,6 +28,16 @@ function computeAllowed(pageKey: string, role: string, pages: string[]): boolean
 }
 
 function getInitialState(pageKey: string): FeatureAccessState {
+  const isCore = pageKey === "dashboard" || pageKey === "devices" || pageKey === "settings";
+  if (isCore) {
+    return {
+      allowed: true,
+      loading: false,
+      role: "user",
+      pages: [],
+    };
+  }
+
   if (typeof window !== "undefined") {
     try {
       const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
@@ -36,19 +46,24 @@ function getInitialState(pageKey: string): FeatureAccessState {
         if (data?.authenticated && data?.user) {
           const role = data.user.role || "user";
           const pages: string[] = Array.isArray(data.user.pages) ? data.user.pages : [];
-          return {
-            allowed: computeAllowed(pageKey, role, pages),
-            loading: false,
-            role,
-            pages,
-          };
+          const isAllowed = computeAllowed(pageKey, role, pages);
+          if (isAllowed) {
+            // Already cached as allowed — render immediately without any delay!
+            return {
+              allowed: true,
+              loading: false,
+              role,
+              pages,
+            };
+          }
         }
       }
     } catch (_) {}
   }
 
+  // Not yet verified — keep loading true so full page spinner shows, NEVER flash pro card!
   return {
-    allowed: pageKey === "dashboard" || pageKey === "devices" || pageKey === "settings",
+    allowed: false,
     loading: true,
     role: "user",
     pages: [],

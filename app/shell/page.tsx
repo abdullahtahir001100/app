@@ -7,6 +7,7 @@ import { useGateway } from "@/hooks/use-gateway";
 import { AgentChatPanel } from "@/components/shell/agent-chat-panel";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 type TerminalLine = {
@@ -288,17 +289,11 @@ export default function ShellPage() {
     inputRef.current?.focus();
   };
 
+  if (loading) {
+    return <FullPageLoader message="Verifying shell terminal permissions…" />;
+  }
+
   if (!allowed) {
-    if (loading) {
-      return (
-        <div className="flex h-screen bg-background">
-          <AppSidebar />
-          <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
-            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          </main>
-        </div>
-      );
-    }
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

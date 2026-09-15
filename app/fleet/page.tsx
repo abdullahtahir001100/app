@@ -2,6 +2,7 @@
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { Button } from "@/components/ui/button";
 import { useGateway } from "@/hooks/use-gateway";
@@ -352,7 +353,11 @@ export default function FleetPage() {
 
   const onlineCount = devices.filter((d) => d.status === "online").length;
 
-  if (!loading && !allowed) {
+  if (loading) {
+    return <FullPageLoader message="Verifying fleet grid access…" />;
+  }
+
+  if (!allowed) {
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

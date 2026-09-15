@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { ARCHITECTURE_DIAGRAMS, DiagramDef } from "@/lib/architecture-diagrams";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 let mermaidInitialized = false;
@@ -242,14 +243,7 @@ export default function ArchitecturePage() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-gray-600 font-mono text-sm">
-          <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-          <span>Verifying Access Credentials…</span>
-        </div>
-      </div>
-    );
+    return <FullPageLoader message="Verifying architecture blueprint access…" />;
   }
 
   if (!allowed) {

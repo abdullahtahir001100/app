@@ -20,6 +20,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: "targetDeviceId is required." }, { status: 400 });
     }
 
+    // Strict security sanitation: reject null bytes, control characters, and illegal payloads
+    const p = payload as Record<string, unknown>;
+    if (typeof p.path === "string" && (p.path.includes("\0") || /[\x00-\x1f\x7f]/.test(p.path))) {
+      return NextResponse.json({ success: false, message: "Invalid characters in file path" }, { status: 400 });
+    }
+    if (typeof p.dest_path === "string" && (p.dest_path.includes("\0") || /[\x00-\x1f\x7f]/.test(p.dest_path))) {
+      return NextResponse.json({ success: false, message: "Invalid characters in destination path" }, { status: 400 });
+    }
+    if (typeof p.name === "string" && (p.name.includes("..") || p.name.includes("/") || p.name.includes("\\") || p.name.includes("\0"))) {
+      return NextResponse.json({ success: false, message: "Invalid filename format" }, { status: 400 });
+    }
+
     const access = await verifyRequestDeviceAccess(request, targetDeviceId);
     if (!access?.ok) {
       return NextResponse.json(

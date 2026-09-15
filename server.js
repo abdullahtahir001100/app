@@ -1,3 +1,9 @@
+const dns = require('dns');
+try {
+    dns.setDefaultResultOrder('ipv4first');
+    dns.setServers(['8.8.8.8', '1.1.1.1', '192.168.100.1']);
+} catch (_) {}
+
 const express = require('express');
 const http = require('http');
 const cookieParser = require('cookie-parser');

@@ -11,8 +11,10 @@ import {
   blobToBase64,
   defaultRootFromList,
   mimeForName,
+  normalizeFileEntry,
   normalizePath,
   pathsEqual,
+  safeUuid,
 } from "@/lib/file-manager/utils";
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 import type {
@@ -46,6 +48,7 @@ export type FileBrowseSurface = "local" | "cloud" | "trash";
 
 type PendingRequest = {
   action: string;
+  requestId?: string;
   resolve: (packet: FileTelemetryPacket) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -87,6 +90,7 @@ export function useFileAgent() {
 
   const selectedDeviceRef = useRef("");
   const currentPathRef = useRef("");
+  const dirCacheRef = useRef<Map<string, { items: FileEntry[]; timestamp: number }>>(new Map());
   const pendingRef = useRef<PendingRequest[]>([]);
   const pendingDownloadRef = useRef<{ name: string; resolve?: () => void } | null>(null);
   const pathHistoryRef = useRef<string[]>([]);
@@ -144,6 +148,7 @@ export function useFileAgent() {
     if (initializedDeviceRef.current && initializedDeviceRef.current !== selectedDevice) {
       initializedDeviceRef.current = "";
       initInFlightRef.current = false;
+      dirCacheRef.current.clear();
       setItems([]);
       setCurrentPath("");
       setHomePath("");
@@ -169,14 +174,23 @@ export function useFileAgent() {
     }
   }, []);
 
-  const resolvePending = useCallback((action: string, packet: FileTelemetryPacket, error?: string) => {
-    const idx = pendingRef.current.findIndex((p) => p.action === action);
-    if (idx < 0) return;
-    const [pending] = pendingRef.current.splice(idx, 1);
-    clearTimeout(pending.timer);
-    if (error) pending.reject(new Error(error));
-    else pending.resolve(packet);
-  }, []);
+  const resolvePending = useCallback(
+    (action: string, packet: FileTelemetryPacket, error?: string, reqId?: string) => {
+      let idx = -1;
+      if (reqId) {
+        idx = pendingRef.current.findIndex((p) => p.requestId === reqId);
+      }
+      if (idx < 0 && action) {
+        idx = pendingRef.current.findIndex((p) => p.action === action);
+      }
+      if (idx < 0) return;
+      const [pending] = pendingRef.current.splice(idx, 1);
+      clearTimeout(pending.timer);
+      if (error) pending.reject(new Error(error));
+      else pending.resolve(packet);
+    },
+    []
+  );
 
   const dispatchToAgent = useCallback(
     (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
@@ -194,7 +208,7 @@ export function useFileAgent() {
     [devices, gatewayDispatch, resolveTarget]
   );
 
-  const execHttp = useCallback(
+  const execFileAction = useCallback(
     async (action: string, payload: Record<string, unknown> = {}) => {
       const target = selectedDeviceRef.current || resolveTarget(devices[0]?.value);
       if (!target) {
@@ -206,7 +220,7 @@ export function useFileAgent() {
         setSelectedDevice(target);
       }
 
-      const requestId = crypto.randomUUID();
+      const requestId = safeUuid();
       const normalizedPayload: Record<string, unknown> = { ...payload, _requestId: requestId };
       if (typeof normalizedPayload.path === "string") {
         normalizedPayload.path = normalizePath(normalizedPayload.path);
@@ -215,6 +229,42 @@ export function useFileAgent() {
         normalizedPayload.dest_path = normalizePath(normalizedPayload.dest_path);
       }
 
+      // 1. Primary: Direct WebSocket Gateway (Fastest, zero-proxy, real-time agent dispatch)
+      const wsDispatched = gatewayDispatchRef.current(action, normalizedPayload, target);
+      if (wsDispatched.ok) {
+        return new Promise<FileTelemetryPacket>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            const idx = pendingRef.current.findIndex(
+              (p) => (p.requestId && p.requestId === requestId) || p.action === action
+            );
+            if (idx >= 0) pendingRef.current.splice(idx, 1);
+            // Fall back to HTTP if WebSocket timed out
+            fetch("/api/files/exec", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action, targetDeviceId: target, payload: normalizedPayload }),
+            })
+              .then((res) => res.json())
+              .then((data) => {
+                if (data.success) {
+                  resolve({
+                    type: "file_telemetry_stream",
+                    action: data.action || action,
+                    message: data.message,
+                    file_result: data.file_result,
+                  } as FileTelemetryPacket);
+                } else {
+                  reject(new Error(data.message || `Failed: ${action}`));
+                }
+              })
+              .catch(() => reject(new Error(`Timed out waiting for file response (${action})`)));
+          }, 4000);
+
+          pendingRef.current.push({ action, requestId, resolve, reject, timer });
+        });
+      }
+
+      // 2. Secondary: HTTP route fallback
       const response = await fetch("/api/files/exec", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -236,21 +286,52 @@ export function useFileAgent() {
   );
 
   const exec = useCallback(
-    (action: string, payload: Record<string, unknown> = {}) => execHttp(action, payload),
-    [execHttp]
+    (action: string, payload: Record<string, unknown> = {}) => execFileAction(action, payload),
+    [execFileAction]
   );
 
   const applyList = useCallback(
     (fileResult: Record<string, unknown>) => {
-      if (typeof fileResult.path === "string") {
-        const nextPath = normalizePath(fileResult.path);
+      const data = (fileResult.file_result && typeof fileResult.file_result === "object")
+        ? (fileResult.file_result as Record<string, unknown>)
+        : fileResult;
+
+      let resolvedPath = currentPathRef.current;
+      if (typeof data.path === "string") {
+        const nextPath = normalizePath(data.path);
         setCurrentPath(nextPath);
         currentPathRef.current = nextPath;
+        resolvedPath = nextPath;
         pushHistory(nextPath);
       }
-      if (Array.isArray(fileResult.items)) {
-        setItems(fileResult.items as FileEntry[]);
+
+      const rawList = Array.isArray(data.items)
+        ? data.items
+        : Array.isArray(data.entries)
+        ? data.entries
+        : Array.isArray(data.files)
+        ? data.files
+        : Array.isArray(data.data)
+        ? data.data
+        : null;
+
+      if (rawList) {
+        const fileItems = rawList.map((entry) =>
+          normalizeFileEntry(entry as Record<string, unknown> | FileEntry)
+        );
+        setItems(fileItems);
         setSearchResults(null);
+        setBrowseSurface("local");
+
+        // Store into LRU cache (limit to 50 folders)
+        if (resolvedPath) {
+          const cache = dirCacheRef.current;
+          if (cache.size > 50) {
+            const oldestKey = cache.keys().next().value;
+            if (oldestKey) cache.delete(oldestKey);
+          }
+          cache.set(resolvedPath, { items: fileItems, timestamp: Date.now() });
+        }
       }
     },
     [pushHistory]
@@ -258,9 +339,27 @@ export function useFileAgent() {
 
   const listDirectory = useCallback(
     async (path?: string, silent = false) => {
-      if (!silent) setLoading(true);
+      const targetPath = normalizePath(path ?? currentPathRef.current);
+      const cached = targetPath ? dirCacheRef.current.get(targetPath) : undefined;
+      const isFresh = cached && (Date.now() - cached.timestamp < 30000); // 30s fresh window
+
+      if (cached && targetPath) {
+        // Instant 0ms cache display!
+        setCurrentPath(targetPath);
+        currentPathRef.current = targetPath;
+        pushHistory(targetPath);
+        setItems(cached.items);
+        setSearchResults(null);
+        if (isFresh && !silent) {
+          // Background revalidation not needed if accessed within 30s
+          return;
+        }
+      } else if (!silent) {
+        setLoading(true);
+      }
+
       try {
-        const packet = await exec("FILE_LIST_DIR", { path: path ?? currentPathRef.current });
+        const packet = await exec("FILE_LIST_DIR", { path: targetPath || currentPathRef.current });
         const result = (packet.file_result || {}) as Record<string, unknown>;
         if (result.error) throw new Error(String(result.error));
         applyList(result);
@@ -271,7 +370,7 @@ export function useFileAgent() {
         setLoading(false);
       }
     },
-    [applyList, exec]
+    [applyList, exec, pushHistory]
   );
 
   const applyListRef = useRef(applyList);
@@ -492,19 +591,38 @@ export function useFileAgent() {
     setSearchResults(null);
 
     try {
-      const rootsPacket = await execHttp("FILE_GET_ROOTS", {});
-      const roots = (rootsPacket.file_result || {}) as Record<string, unknown>;
+      const rootsPacket = await exec("FILE_GET_ROOTS", {});
+      const roots = (rootsPacket.file_result || rootsPacket || {}) as Record<string, unknown>;
       if (roots.error) throw new Error(String(roots.error));
 
-      if (Array.isArray(roots.roots)) setQuickRoots(roots.roots as QuickRoot[]);
+      const seenRoots = new Set<string>();
+      const combinedRoots: QuickRoot[] = [];
+      const addRoot = (r: QuickRoot) => {
+        if (!r || !r.path) return;
+        const norm = normalizePath(r.path).toLowerCase();
+        if (!seenRoots.has(norm)) {
+          seenRoots.add(norm);
+          combinedRoots.push({ ...r, path: normalizePath(r.path) });
+        }
+      };
+      if (Array.isArray(roots.drives)) {
+        (roots.drives as QuickRoot[]).forEach(addRoot);
+      }
+      if (Array.isArray(roots.roots)) {
+        (roots.roots as QuickRoot[]).forEach(addRoot);
+      }
+      if (combinedRoots.length > 0) {
+        setQuickRoots(combinedRoots);
+      }
+
       const home = String(
-        roots.home || defaultRootFromList((roots.roots as QuickRoot[]) || [])
+        roots.home || defaultRootFromList(combinedRoots)
       );
       setHomePath(home);
       pushHistory(home);
 
-      const listPacket = await execHttp("FILE_LIST_DIR", { path: home });
-      const listResult = (listPacket.file_result || {}) as Record<string, unknown>;
+      const listPacket = await exec("FILE_LIST_DIR", { path: home });
+      const listResult = (listPacket.file_result || listPacket || {}) as Record<string, unknown>;
       if (listResult.error) throw new Error(String(listResult.error));
       applyList(listResult);
 
@@ -517,7 +635,7 @@ export function useFileAgent() {
       initInFlightRef.current = false;
       setLoading(false);
     }
-  }, [applyList, devices, execHttp, items.length, pushHistory, refreshVirtualFiles]);
+  }, [applyList, devices, exec, items.length, pushHistory, refreshVirtualFiles]);
 
   const initExplorerRef = useRef(initExplorer);
   initExplorerRef.current = initExplorer;
@@ -531,11 +649,12 @@ export function useFileAgent() {
 
   const handleFileTelemetryRef = useRef<(packet: FileTelemetryPacket & Record<string, unknown>) => void>(() => {});
   handleFileTelemetryRef.current = (packet) => {
-    const action = String(packet.action || "");
+    const action = String(packet.action || packet.last_action || "");
     const fileResult = (packet.file_result || {}) as Record<string, unknown>;
+    const reqId = String(packet.request_id || fileResult.request_id || "");
     const err = fileResult.error ? String(fileResult.error) : undefined;
 
-    resolvePending(action, packet, err);
+    resolvePending(action, packet, err, reqId);
 
     if (err) {
       initInFlightRef.current = false;
@@ -561,27 +680,46 @@ export function useFileAgent() {
         }
         break;
       case "FILE_GET_ROOTS": {
-        if (Array.isArray(fileResult.roots)) setQuickRoots(fileResult.roots as QuickRoot[]);
+        const seenRoots = new Set<string>();
+        const combinedRoots: QuickRoot[] = [];
+        const addRoot = (r: QuickRoot) => {
+          if (!r || !r.path) return;
+          const norm = normalizePath(r.path).toLowerCase();
+          if (!seenRoots.has(norm)) {
+            seenRoots.add(norm);
+            combinedRoots.push({ ...r, path: normalizePath(r.path) });
+          }
+        };
+        if (Array.isArray(fileResult.drives)) {
+          (fileResult.drives as QuickRoot[]).forEach(addRoot);
+        }
+        if (Array.isArray(fileResult.roots)) {
+          (fileResult.roots as QuickRoot[]).forEach(addRoot);
+        }
+        if (combinedRoots.length > 0) {
+          setQuickRoots(combinedRoots);
+        }
         const home = String(
-          fileResult.home || defaultRootFromList((fileResult.roots as QuickRoot[]) || [])
+          fileResult.home || defaultRootFromList(combinedRoots)
         );
         if (home) {
           setHomePath(home);
-          pushHistory(home);
-          dispatchToAgentRef.current("FILE_LIST_DIR", { path: home }, selectedDeviceRef.current);
-        } else {
-          initInFlightRef.current = false;
-          setLoading(false);
         }
         break;
       }
-      case "FILE_SEARCH":
-        if (Array.isArray(fileResult.results)) {
-          setSearchResults(fileResult.results as FileEntry[]);
-          toast.message(`Found ${fileResult.count ?? fileResult.results.length} items`);
-        }
+      case "FILE_SEARCH": {
+        const rawResults = Array.isArray(fileResult.results)
+          ? fileResult.results
+          : Array.isArray(fileResult.items)
+          ? fileResult.items
+          : [];
+        setSearchResults(
+          rawResults.map((entry) => normalizeFileEntry(entry as Record<string, unknown> | FileEntry))
+        );
+        toast.message(`Found ${fileResult.count ?? rawResults.length} items`);
         setLoading(false);
         break;
+      }
       case "FILE_READ_TEXT":
         if (typeof fileResult.content === "string") {
           setPreviewText(fileResult.content);
@@ -629,6 +767,9 @@ export function useFileAgent() {
       case "FILE_DECOMPRESS":
       case "FILE_SET_METADATA":
       case "FILE_SET_PERMISSIONS":
+        if (currentPathRef.current) {
+          dirCacheRef.current.delete(currentPathRef.current);
+        }
         void listDirectoryRef.current(currentPathRef.current, true);
         setLoading(false);
         break;
@@ -649,7 +790,7 @@ export function useFileAgent() {
           const selected = selectedDeviceRef.current || "";
           if (deviceId && selected && deviceId !== selected) return;
           if (bytes[0] !== FRAME_FILE_BINARY || bytes.length < 2) return;
-          const blob = new Blob([bytes.slice(1)], { type: mimeForName(pending.name) });
+          const blob = new Blob([bytes.subarray(1) as unknown as BlobPart], { type: mimeForName(pending.name) });
           const url = URL.createObjectURL(blob);
           clearPreviewBlob();
           previewBlobUrlRef.current = url;
@@ -657,7 +798,10 @@ export function useFileAgent() {
           const link = document.createElement("a");
           link.href = url;
           link.download = pending.name;
+          document.body.appendChild(link);
           link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
           pending.resolve?.();
           pendingDownloadRef.current = null;
           toast.success(`Downloaded ${pending.name}`);
@@ -715,7 +859,6 @@ export function useFileAgent() {
     (path: string) => {
       const target = normalizePath(path);
       if (!target) return;
-      if (loadingRef.current) return;
       setSelectedPaths([]);
       clearPreviewBlob();
       setPreviewText("");
@@ -846,8 +989,10 @@ export function useFileAgent() {
         const link = document.createElement("a");
         link.href = url;
         link.download = name;
+        document.body.appendChild(link);
         link.click();
-        URL.revokeObjectURL(url);
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         toast.success(`Downloaded ${name}`);
       } else {
         pendingDownloadRef.current = { name: String(fr.name || entry.name) };

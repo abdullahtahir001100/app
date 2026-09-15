@@ -34,29 +34,47 @@ import {
 } from "@/lib/media-transport";
 import { MicPanel } from "@/components/cockpit/mic-panel";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 
-type StreamQuality = "saver" | "low" | "medium" | "high" | "ultra";
+type StreamQuality = "fast" | "high" | "ultra" | "medium" | "saver" | "low";
+
+function buildQualityPayload(quality: StreamQuality, target_fps: number) {
+  switch (quality) {
+    case "fast":
+      return { quality: "fast", max_width: 1280, jpeg_quality: 58, target_fps: target_fps || 60 };
+    case "high":
+      return { quality: "high", max_width: 1600, jpeg_quality: 72, target_fps: target_fps || 45 };
+    case "ultra":
+      return { quality: "ultra", max_width: 1920, jpeg_quality: 84, target_fps: target_fps || 30 };
+    case "medium":
+      return { quality: "medium", max_width: 1280, jpeg_quality: 62, target_fps: target_fps || 30 };
+    case "saver":
+    case "low":
+    default:
+      return { quality: "saver", max_width: 960, jpeg_quality: 50, target_fps: target_fps || 20 };
+  }
+}
 
 const QUALITY_OPTIONS: { value: StreamQuality; label: string; hint: string; recommended?: boolean }[] = [
-  { value: "saver", label: "Slow Net", hint: "960p · light (weak connection)" },
-  { value: "medium", label: "Balanced", hint: "1280p · balanced" },
-  { value: "high", label: "Sharp ⭐", hint: "1440p · crisp (recommended)", recommended: true },
-  { value: "ultra", label: "Ultra / LAN", hint: "1920p · full quality (LAN)" },
+  { value: "fast", label: "⚡ Ultra Smooth (60 FPS)", hint: "720p · 60 FPS (Zero-Lag Butter Motion)", recommended: true },
+  { value: "high", label: "Crisp Video ⭐", hint: "1600px · 45 FPS (HQ Clean Text)" },
+  { value: "ultra", label: "Studio Ultra", hint: "1080p · Lossless High-Res" },
+  { value: "saver", label: "Low Bandwidth", hint: "960px · Light Net" },
 ];
 
-const FPS_OPTIONS = [5, 8, 12, 15, 20, 30];
+const FPS_OPTIONS = [15, 24, 30, 45, 60];
 
 function loadSavedQuality(): StreamQuality {
   try {
-    const saved = sessionStorage.getItem("zenvora_screen_quality");
-    if (saved === "saver" || saved === "low" || saved === "medium" || saved === "high" || saved === "ultra") {
+    const saved = sessionStorage.getItem("zenvora_screen_quality") as StreamQuality;
+    if (saved === "fast" || saved === "high" || saved === "ultra" || saved === "medium" || saved === "saver" || saved === "low") {
       return saved;
     }
   } catch {
     // ignore
   }
-  return "high"; // Default to a sharp, crisp tier (AnyDesk-like). "saver" stays one click away for weak links.
+  return "fast"; // Default to fast (60 FPS Butter) for lightning-fast responsive frames
 }
 
 function loadSavedFps(): number {
@@ -69,7 +87,7 @@ function loadSavedFps(): number {
   } catch {
     // ignore
   }
-  return 30;
+  return 60; // 60 FPS buttery smooth standard on LAN
 }
 
 export default function ScreenPage() {
@@ -322,7 +340,7 @@ export default function ScreenPage() {
 
     const started = dispatchControl(
       "START_SCREEN_STREAM",
-      { quality: streamQualityRef.current, target_fps: streamFpsRef.current },
+      buildQualityPayload(streamQualityRef.current, streamFpsRef.current),
       target
     );
     if (!started) {
@@ -359,7 +377,7 @@ export default function ScreenPage() {
     if (mediaReady && !wasMediaReadyRef.current) {
       dispatchControl(
         "START_SCREEN_STREAM",
-        { quality: streamQualityRef.current, target_fps: streamFpsRef.current },
+        buildQualityPayload(streamQualityRef.current, streamFpsRef.current),
         selectedDevice
       );
       setCommandStatus("Media reconnected — resuming stream…");
@@ -457,12 +475,57 @@ export default function ScreenPage() {
     [controlEnabled, dispatchControl, isStreaming, mapPointerToRemote, sendUdpControl]
   );
 
+  const cursorRef = useRef<HTMLDivElement>(null);
+  const containerRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  const updateContainerRect = useCallback(() => {
+    if (containerRef.current) {
+      const r = containerRef.current.getBoundingClientRect();
+      containerRectRef.current = { left: r.left, top: r.top, width: r.width, height: r.height };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    updateContainerRect();
+    const ro = new ResizeObserver(updateContainerRect);
+    ro.observe(containerRef.current);
+    window.addEventListener("resize", updateContainerRect, { passive: true });
+    window.addEventListener("scroll", updateContainerRect, { passive: true });
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updateContainerRect);
+      window.removeEventListener("scroll", updateContainerRect);
+    };
+  }, [updateContainerRect]);
+
   const handleMouseMove = (e: React.MouseEvent) => {
-    const now = Date.now();
-    const throttleMs = isUdpConnected ? 8 : 16;
-    if (now - moveThrottleRef.current < throttleMs) return;
+    if (controlEnabled && isStreaming && cursorRef.current) {
+      let rect = containerRectRef.current;
+      if (!rect) {
+        const r = containerRef.current?.getBoundingClientRect();
+        if (r) {
+          rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+          containerRectRef.current = rect;
+        }
+      }
+      if (rect) {
+        cursorRef.current.style.transform = `translate3d(${e.clientX - rect.left}px, ${e.clientY - rect.top}px, 0)`;
+        cursorRef.current.style.display = "block";
+      }
+    }
+    const now = performance.now();
+    // 0ms delay on WebRTC UDP for instantaneous buttery smooth tracking; 4ms on WebSocket
+    const throttleMs = isUdpConnected ? 0 : 4;
+    if (throttleMs > 0 && now - moveThrottleRef.current < throttleMs) return;
     moveThrottleRef.current = now;
     sendPointer("REMOTE_MOUSE_MOVE", e);
+  };
+
+  const handleMouseLeave = () => {
+    if (cursorRef.current) {
+      cursorRef.current.style.display = "none";
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -531,10 +594,11 @@ export default function ScreenPage() {
       // ignore
     }
 
-    dispatchControl("SET_SCREEN_QUALITY", { quality, target_fps: streamFpsRef.current });
+    const payload = buildQualityPayload(quality, streamFpsRef.current);
+    dispatchControl("SET_SCREEN_QUALITY", payload);
     if (isStreaming) {
       resetPreview();
-      dispatchControl("START_SCREEN_STREAM", { quality, target_fps: streamFpsRef.current });
+      dispatchControl("START_SCREEN_STREAM", payload);
       setCommandStatus(`Quality set to ${quality} — refreshing stream...`);
     } else {
       setCommandStatus(`Quality set to ${quality}.`);
@@ -550,9 +614,10 @@ export default function ScreenPage() {
       // ignore
     }
 
-    dispatchControl("SET_SCREEN_QUALITY", { quality: streamQualityRef.current, target_fps: fps });
+    const payload = buildQualityPayload(streamQualityRef.current, fps);
+    dispatchControl("SET_SCREEN_QUALITY", payload);
     if (isStreaming) {
-      dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current, target_fps: fps });
+      dispatchControl("START_SCREEN_STREAM", payload);
       setCommandStatus(`Stream set to ${fps} FPS.`);
     } else {
       setCommandStatus(`Frame rate set to ${fps} FPS.`);
@@ -567,10 +632,7 @@ export default function ScreenPage() {
       resetPreview();
       setTimeout(
         () =>
-          dispatchControl("START_SCREEN_STREAM", {
-            quality: streamQualityRef.current,
-            target_fps: streamFpsRef.current,
-          }),
+          dispatchControl("START_SCREEN_STREAM", buildQualityPayload(streamQualityRef.current, streamFpsRef.current)),
         200
       );
     }
@@ -610,17 +672,11 @@ export default function ScreenPage() {
     };
   }, []);
 
+  if (featureLoading) {
+    return <FullPageLoader message="Verifying screen monitor permissions…" />;
+  }
+
   if (!featureAllowed) {
-    if (featureLoading) {
-      return (
-        <div className="flex h-screen bg-background">
-          <AppSidebar />
-          <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
-            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          </main>
-        </div>
-      );
-    }
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />
@@ -740,15 +796,32 @@ export default function ScreenPage() {
               className={`h-full w-full max-h-full max-w-full object-contain outline-none ${
                 controlEnabled && isStreaming ? "cursor-none" : "cursor-default"
               }`}
+              style={{
+                transform: "translateZ(0)",
+                backfaceVisibility: "hidden",
+                imageRendering: "auto",
+              }}
               onMouseMove={handleMouseMove}
               onMouseDown={handleMouseDown}
               onMouseUp={handleMouseUp}
               onContextMenu={(e) => e.preventDefault()}
               onWheel={handleWheel}
+              onMouseLeave={handleMouseLeave}
               onMouseEnter={() => {
                 if (controlEnabled && isStreaming) canvasRef.current?.focus();
               }}
             />
+
+            {controlEnabled && isStreaming && (
+              <div
+                ref={cursorRef}
+                className="pointer-events-none absolute z-30 top-0 left-0 -translate-x-1/2 -translate-y-1/2 hidden will-change-transform"
+              >
+                <div className="relative flex items-center justify-center">
+                  <div className="h-2.5 w-2.5 rounded-full bg-cyan-400 border border-white shadow-[0_0_10px_rgba(34,211,238,0.9)] ring-2 ring-cyan-500/60" />
+                </div>
+              </div>
+            )}
 
             {!hasLiveFrame && (
               <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-zinc-900 to-black p-6 text-center">

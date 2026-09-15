@@ -2,6 +2,7 @@
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,8 +62,22 @@ type UsageDetail = {
     _id: string;
     url: string;
     title: string;
+    domain?: string;
     browser?: string;
     visitTime: string;
+  }[];
+  notifications?: {
+    _id: string;
+    app: string;
+    title: string;
+    message?: string;
+    createdAt?: string;
+  }[];
+  domainBreakdown?: {
+    domain: string;
+    visits: number;
+    lastVisit?: string;
+    titles?: string[];
   }[];
 };
 
@@ -164,6 +179,8 @@ export default function UsagePage() {
             activity: json.activity || [],
             appSessions: json.appSessions || [],
             browserHistory: json.browserHistory || [],
+            notifications: json.notifications || [],
+            domainBreakdown: json.domainBreakdown || [],
           });
         }
       } finally {
@@ -283,17 +300,11 @@ export default function UsagePage() {
     [data]
   );
 
+  if (featureLoading) {
+    return <FullPageLoader message="Verifying usage analytics access…" />;
+  }
+
   if (!featureAllowed) {
-    if (featureLoading) {
-      return (
-        <div className="flex min-h-screen bg-background">
-          <AppSidebar />
-          <main className="flex-1 sidebar-aware-main p-8 flex items-center justify-center">
-            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          </main>
-        </div>
-      );
-    }
     return (
       <div className="flex min-h-screen bg-background">
         <AppSidebar />
@@ -537,13 +548,16 @@ export default function UsagePage() {
             </div>
             {detailLoading && <p className="text-sm text-muted-foreground">Loading detail…</p>}
             {!detailLoading && detail && (
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid gap-4 lg:grid-cols-4">
                 <div>
-                  <h3 className="text-sm font-medium mb-2">Sessions</h3>
+                  <h3 className="text-sm font-medium mb-2 flex items-center justify-between">
+                    <span>Sessions</span>
+                    <span className="text-xs text-muted-foreground">{detail.appSessions.length}</span>
+                  </h3>
                   <div className="max-h-64 overflow-auto text-xs space-y-2">
                     {detail.appSessions.map((s) => (
                       <div key={s._id} className="border-b border-border/30 pb-2">
-                        <div>{formatDuration(s.duration)}</div>
+                        <div className="font-medium text-emerald-500">{formatDuration(s.duration)}</div>
                         <div className="text-muted-foreground">
                           {s.lastOpened ? new Date(s.lastOpened).toLocaleString() : "—"}
                         </div>
@@ -553,7 +567,10 @@ export default function UsagePage() {
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-sm font-medium mb-2">Activity</h3>
+                  <h3 className="text-sm font-medium mb-2 flex items-center justify-between">
+                    <span>Activity</span>
+                    <span className="text-xs text-muted-foreground">{detail.activity.length}</span>
+                  </h3>
                   <div className="max-h-64 overflow-auto text-xs space-y-2">
                     {detail.activity.map((a) => (
                       <div key={a._id} className="border-b border-border/30 pb-2">
@@ -571,10 +588,24 @@ export default function UsagePage() {
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-sm font-medium mb-2">
-                    {detail.isBrowser ? "Searches & sites" : "Related browser (if any)"}
+                  <h3 className="text-sm font-medium mb-2 flex items-center justify-between">
+                    <span>{detail.isBrowser ? "Browser & Domains" : "Related Sites"}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {detail.domainBreakdown?.length ? `${detail.domainBreakdown.length} domains` : `${detail.browserHistory.length}`}
+                    </span>
                   </h3>
                   <div className="max-h-64 overflow-auto text-xs space-y-2">
+                    {detail.domainBreakdown && detail.domainBreakdown.length > 0 && (
+                      <div className="mb-3 space-y-1.5 pb-2 border-b border-border/40">
+                        <span className="text-[11px] font-semibold text-foreground/80">Active Domains:</span>
+                        {detail.domainBreakdown.map((d) => (
+                          <div key={d.domain} className="flex items-center justify-between text-xs py-0.5 px-1.5 rounded bg-muted/40">
+                            <span className="font-medium truncate max-w-[140px] text-primary">{d.domain}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">{d.visits} visits</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {detail.browserHistory.map((b) => (
                       <div key={b._id} className="border-b border-border/30 pb-2">
                         <div className="font-medium truncate">{b.title || b.url}</div>
@@ -582,7 +613,7 @@ export default function UsagePage() {
                           href={b.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-emerald-600 truncate block"
+                          className="text-emerald-500 hover:underline truncate block"
                         >
                           {b.url}
                         </a>
@@ -591,12 +622,39 @@ export default function UsagePage() {
                         </div>
                       </div>
                     ))}
-                    {!detail.browserHistory.length && (
+                    {!detail.browserHistory.length && (!detail.domainBreakdown || !detail.domainBreakdown.length) && (
                       <p className="text-muted-foreground">
                         {detail.isBrowser
-                          ? "No browser history in range — use AI heal or refresh."
+                          ? "No browser visits in selected range."
                           : "No browser rows for this app"}
                       </p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium mb-2 flex items-center justify-between">
+                    <span>Notifications</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-mono">
+                      {detail.notifications?.length || 0}
+                    </span>
+                  </h3>
+                  <div className="max-h-64 overflow-auto text-xs space-y-2">
+                    {detail.notifications && detail.notifications.length > 0 ? (
+                      detail.notifications.map((n) => (
+                        <div key={n._id} className="border-b border-border/30 pb-2">
+                          <div className="font-medium text-foreground truncate">{n.title}</div>
+                          {n.message && (
+                            <div className="text-muted-foreground line-clamp-2 mt-0.5">
+                              {n.message}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-muted-foreground/80 mt-1">
+                            {n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground">No notifications for this app</p>
                     )}
                   </div>
                 </div>

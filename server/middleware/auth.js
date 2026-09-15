@@ -14,7 +14,11 @@ function parseCookies(header) {
         if (idx <= 0) return;
         const key = part.slice(0, idx).trim();
         const value = part.slice(idx + 1).trim();
-        out[key] = decodeURIComponent(value);
+        try {
+            out[key] = decodeURIComponent(value);
+        } catch (_) {
+            out[key] = value;
+        }
     });
     return out;
 }
@@ -57,9 +61,12 @@ function isPublicApiRoute(pathname = "") {
         '/api/agent/download',
         '/api/health',
         '/api/network/android-beat',
+        '/api/network/my-ip',   // Public: IP detection for LAN routing (no auth needed)
+        '/api/live-logs',       // Fast-auth inside router handles user token or local monitor
         '/downloads/',
         '/r/',
     ];
+
 
     return publicPaths.some(path =>
         pathname === path || pathname.startsWith(path + "/")

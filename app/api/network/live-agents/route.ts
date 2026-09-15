@@ -26,6 +26,7 @@ export async function GET(request: Request) {
     const { getLiveDeviceOptions } = require("../../../../server/sockets/handler");
     const { verifyRequestAuth } = require("../../../../server/middleware/auth");
     const { overlayDeviceStatus } = require("../../../../server/services/androidBeat");
+    const Device = require("../../../../server/models/Device");
 
     const user = await verifyRequestAuth(request);
     if (!user?.id) {

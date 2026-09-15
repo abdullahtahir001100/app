@@ -34,6 +34,7 @@ import {
 } from "@/hooks/use-api-config";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 /* ── Constants ─────────────────────────────────────────────── */
@@ -211,7 +212,11 @@ function OpsPageInner() {
       activeProvider.model
     : "2.0 Flash";
 
-  if (!loading && !allowed) {
+  if (loading) {
+    return <FullPageLoader message="Verifying Agent Ops access…" />;
+  }
+
+  if (!allowed) {
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

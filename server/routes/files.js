@@ -22,6 +22,17 @@ router.post('/exec', attachUser, requirePagePermission('files'), requireUserIdOw
             return jsonMsg(res, 400, Z.SELECT_DEVICE, 'targetDeviceId is required');
         }
 
+        // Strict security sanitation: reject null bytes, control characters, and illegal payloads
+        if (typeof payload.path === 'string' && (payload.path.includes('\0') || /[\x00-\x1f\x7f]/.test(payload.path))) {
+            return jsonMsg(res, 400, Z.FILE_FAILED, 'Invalid characters in file path');
+        }
+        if (typeof payload.dest_path === 'string' && (payload.dest_path.includes('\0') || /[\x00-\x1f\x7f]/.test(payload.dest_path))) {
+            return jsonMsg(res, 400, Z.FILE_FAILED, 'Invalid characters in destination path');
+        }
+        if (typeof payload.name === 'string' && (payload.name.includes('..') || payload.name.includes('/') || payload.name.includes('\\') || payload.name.includes('\0'))) {
+            return jsonMsg(res, 400, Z.FILE_FAILED, 'Invalid filename format');
+        }
+
         getConnectionRegistry();
         const packet = await execFileCommand(action, targetDeviceId, payload);
 

@@ -69,7 +69,7 @@ import {
 } from "@/components/file-manager/cloud-folder-picker-dialog";
 import { useFileAgent } from "@/hooks/use-file-agent";
 import type { DeviceOption } from "@/lib/gateway-client";
-import type { FileEntry } from "@/lib/file-manager/types";
+import type { FileEntry, QuickRoot } from "@/lib/file-manager/types";
 import {
   filterEntries,
   getFileIcon,
@@ -98,14 +98,34 @@ export function FileManager() {
   const mainPanelRef = useRef<HTMLElement>(null);
 
   const deviceOption = agent.devices.find((d) => d.value === agent.selectedDevice) || null;
-  const driveRoots = useMemo(
-    () => agent.quickRoots.filter((r) => r.kind === "drive" || /^[A-Za-z]:\/?$/.test(r.path)),
-    [agent.quickRoots]
-  );
-  const folderRoots = useMemo(
-    () => agent.quickRoots.filter((r) => !driveRoots.some((d) => d.path === r.path)),
-    [agent.quickRoots, driveRoots]
-  );
+  const driveRoots = useMemo(() => {
+    const seen = new Set<string>();
+    const list: QuickRoot[] = [];
+    for (const r of agent.quickRoots) {
+      if (r.kind === "drive" || /^[A-Za-z]:\/?$/.test(r.path)) {
+        const norm = r.path.toLowerCase().replace(/\/$/, "");
+        if (!seen.has(norm)) {
+          seen.add(norm);
+          list.push(r);
+        }
+      }
+    }
+    return list;
+  }, [agent.quickRoots]);
+
+  const folderRoots = useMemo(() => {
+    const seen = new Set<string>();
+    const list: QuickRoot[] = [];
+    const drivePaths = new Set(driveRoots.map((d) => d.path.toLowerCase().replace(/\/$/, "")));
+    for (const r of agent.quickRoots) {
+      const norm = r.path.toLowerCase().replace(/\/$/, "");
+      if (!drivePaths.has(norm) && !seen.has(norm)) {
+        seen.add(norm);
+        list.push(r);
+      }
+    }
+    return list;
+  }, [agent.quickRoots, driveRoots]);
   const breadcrumbs = useMemo(() => {
     if (agent.browseSurface === "trash") {
       return [
@@ -282,7 +302,7 @@ export function FileManager() {
     a.openEntry(entry);
   }, []);
 
-  if (agent.loading && !agent.items.length && !agent.cloudItems.length) {
+  if (agent.loading && !agent.items.length && !agent.cloudItems.length && !agent.quickRoots.length) {
     return (
       <div className="flex h-screen bg-background">
         <aside className="hidden xl:flex w-64 flex-col gap-4 border-r border-border bg-muted p-6">
@@ -573,11 +593,7 @@ export function FileManager() {
                         <button
                           key={root.path}
                           type="button"
-                          onClick={() => {
-                            if (agent.loading) return;
-                            agent.navigateTo(root.path);
-                          }}
-                          disabled={agent.loading}
+                          onClick={() => agent.navigateTo(root.path)}
                           className={`w-full text-left rounded-md px-2.5 py-2 text-sm transition-colors ${
                             pathsEqual(agent.currentPath, root.path)
                               ? "bg-accent text-accent-foreground font-medium"
@@ -600,11 +616,7 @@ export function FileManager() {
                       <button
                         key={root.path}
                         type="button"
-                        onClick={() => {
-                          if (agent.loading) return;
-                          agent.navigateTo(root.path);
-                        }}
-                        disabled={agent.loading}
+                        onClick={() => agent.navigateTo(root.path)}
                         className={`w-full text-left rounded-md px-2.5 py-2 text-sm transition-colors ${
                           pathsEqual(agent.currentPath, root.path)
                             ? "bg-accent text-accent-foreground font-medium"
@@ -784,6 +796,7 @@ export function FileManager() {
                 <FileDataTable
                   rows={displayRows}
                   selectedPaths={agent.selectedPaths}
+                  loading={agent.loading}
                   onSelect={handleSelectPaths}
                   onOpen={handleOpenEntry}
                   onContextAction={handleContextAction}
@@ -1097,7 +1110,7 @@ export function FileManager() {
                 ],
               ].map(([label, value]) => (
                 <div key={String(label)} className="grid grid-cols-[110px_1fr] gap-2 border-b border-border/60 py-1.5">
-                  <span className="text-muted-foreground text-xs">{label}</span>
+                  <span className="text-muted-foreground text-xs">{String(label)}</span>
                   <span className="break-all font-mono text-xs">{value == null || value === "" ? "—" : String(value)}</span>
                 </div>
               ))}

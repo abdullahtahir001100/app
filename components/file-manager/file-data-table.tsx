@@ -11,7 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import React, { useMemo, useRef, useState } from "react";
-import { Shield } from "lucide-react";
+import { Shield, Loader2 } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -36,12 +36,13 @@ import type { FileEntry } from "@/lib/file-manager/types";
 type Props = {
   rows: FileEntry[];
   selectedPaths: string[];
+  loading?: boolean;
   onSelect: (paths: string[]) => void;
   onOpen: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
 };
 
-export const FileDataTable = React.memo(function FileDataTable({ rows, selectedPaths, onSelect, onOpen, onContextAction }: Props) {
+export const FileDataTable = React.memo(function FileDataTable({ rows, selectedPaths, loading, onSelect, onOpen, onContextAction }: Props) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "name", desc: false }]);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -146,8 +147,19 @@ export const FileDataTable = React.memo(function FileDataTable({ rows, selectedP
     count: tableRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 44,
-    overscan: 12,
+    overscan: 10,
   });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const isVirtual = virtualItems.length > 0;
+  const paddingTop = isVirtual ? virtualItems[0]?.start ?? 0 : 0;
+  const paddingBottom = isVirtual
+    ? virtualizer.getTotalSize() - (virtualItems[virtualItems.length - 1]?.end ?? 0)
+    : 0;
+
+  const rowsToRender = isVirtual
+    ? virtualItems.map((v) => ({ row: tableRows[v.index], virtualRow: v }))
+    : tableRows.map((row) => ({ row, virtualRow: null }));
 
   return (
     <div ref={parentRef} className="h-full overflow-auto rounded-lg border border-border bg-card">
@@ -168,66 +180,77 @@ export const FileDataTable = React.memo(function FileDataTable({ rows, selectedP
             </TableRow>
           ))}
         </TableHeader>
-        <TableBody style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+        <TableBody>
           {tableRows.length === 0 ? (
             <TableRow>
               <TableCell colSpan={columns.length} className="h-32 text-center text-muted-foreground">
-                This folder is empty
+                {loading ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    <span>Loading files…</span>
+                  </div>
+                ) : (
+                  "This folder is empty"
+                )}
               </TableCell>
             </TableRow>
           ) : (
-            virtualizer.getVirtualItems().map((virtualRow) => {
-              const row = tableRows[virtualRow.index];
-              const selected = selectedPaths.includes(row.original.path);
-              return (
-                <ContextMenu key={row.id}>
-                  <ContextMenuTrigger asChild>
-                    <TableRow
-                      data-index={virtualRow.index}
-                      ref={virtualizer.measureElement}
-                      draggable={row.original.kind === "file"}
-                      onDragStart={(e) => {
-                        if (row.original.kind !== "file") return;
-                        e.dataTransfer.setData("application/x-zenvora-file", row.original.path);
-                        e.dataTransfer.effectAllowed = "copy";
-                      }}
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        transform: `translateY(${virtualRow.start}px)`,
-                      }}
-                      className={cn("cursor-pointer", selected && "bg-accent/20 hover:bg-accent/25")}
-                      onClick={() => onSelect([row.original.path])}
-                      onDoubleClick={() => onOpen(row.original)}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
-                      ))}
-                    </TableRow>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent className="w-48">
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "open")}>Open</ContextMenuItem>
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "download")}>Download</ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "rename")}>Rename</ContextMenuItem>
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "copy")}>Copy to…</ContextMenuItem>
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "move")}>Move to…</ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "zip")}>Compress</ContextMenuItem>
-                    {row.original.name.endsWith(".zip") && (
-                      <ContextMenuItem onClick={() => onContextAction(row.original, "unzip")}>Extract</ContextMenuItem>
-                    )}
-                    <ContextMenuItem onClick={() => onContextAction(row.original, "backup")}>Cloud backup</ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem className="text-destructive" onClick={() => onContextAction(row.original, "delete")}>
-                      Delete
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                </ContextMenu>
-              );
-            })
+            <>
+              {paddingTop > 0 && (
+                <TableRow style={{ height: `${paddingTop}px` }}>
+                  <TableCell colSpan={columns.length} className="p-0 border-0" />
+                </TableRow>
+              )}
+              {rowsToRender.map(({ row, virtualRow }) => {
+                const selected = selectedPaths.includes(row.original.path);
+                return (
+                  <ContextMenu key={row.id}>
+                    <ContextMenuTrigger asChild>
+                      <TableRow
+                        data-index={virtualRow?.index}
+                        ref={virtualRow ? virtualizer.measureElement : undefined}
+                        draggable={row.original.kind === "file"}
+                        onDragStart={(e) => {
+                          if (row.original.kind !== "file") return;
+                          e.dataTransfer.setData("application/x-zenvora-file", row.original.path);
+                          e.dataTransfer.effectAllowed = "copy";
+                        }}
+                        className={cn("cursor-pointer", selected && "bg-accent/20 hover:bg-accent/25")}
+                        onClick={() => onSelect([row.original.path])}
+                        onDoubleClick={() => onOpen(row.original)}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
+                        ))}
+                      </TableRow>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-48">
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "open")}>Open</ContextMenuItem>
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "download")}>Download</ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "rename")}>Rename</ContextMenuItem>
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "copy")}>Copy to…</ContextMenuItem>
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "move")}>Move to…</ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "zip")}>Compress</ContextMenuItem>
+                      {row.original.name.endsWith(".zip") && (
+                        <ContextMenuItem onClick={() => onContextAction(row.original, "unzip")}>Extract</ContextMenuItem>
+                      )}
+                      <ContextMenuItem onClick={() => onContextAction(row.original, "backup")}>Cloud backup</ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem className="text-destructive" onClick={() => onContextAction(row.original, "delete")}>
+                        Delete
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                );
+              })}
+              {paddingBottom > 0 && (
+                <TableRow style={{ height: `${paddingBottom}px` }}>
+                  <TableCell colSpan={columns.length} className="p-0 border-0" />
+                </TableRow>
+              )}
+            </>
           )}
         </TableBody>
       </Table>

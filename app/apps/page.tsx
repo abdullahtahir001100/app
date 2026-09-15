@@ -32,6 +32,7 @@ import { useGateway } from "@/hooks/use-gateway";
 import { toast } from "sonner";
 import Select from "react-select";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 
 type JobLine = {
@@ -300,7 +301,11 @@ export default function InstallAppsPage() {
 
   const activeDeviceObj = devices.find((d) => d.value === selectedDevice);
 
-  if (!loading && !allowed) {
+  if (loading) {
+    return <FullPageLoader message="Verifying application installer access…" />;
+  }
+
+  if (!allowed) {
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />

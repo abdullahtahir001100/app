@@ -12,7 +12,7 @@ const {
     buildBootstrapCommandLinux,
 } = require('../services/bootstrapTicketService');
 const liveLogBus = require('../services/liveLogBus');
-const { verifyUserTokenFast, AUTH_COOKIE } = require('../services/authService');
+const { verifyUserTokenFast, verifyWsTicket, verifyUserToken, AUTH_COOKIE } = require('../services/authService');
 const {
     isLoopbackHost,
     resolvePublicApiBase,
@@ -28,17 +28,93 @@ function parseCookies(header) {
     String(header).split(';').forEach((part) => {
         const idx = part.indexOf('=');
         if (idx <= 0) return;
-        out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+        const key = part.slice(0, idx).trim();
+        const rawVal = part.slice(idx + 1).trim();
+        try {
+            out[key] = decodeURIComponent(rawVal);
+        } catch (_) {
+            out[key] = rawVal;
+        }
     });
     return out;
 }
 
-function requireUserFast(req, res, next) {
+async function requireUserFast(req, res, next) {
     const authHeader = req.headers?.authorization || '';
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
     const cookies = parseCookies(req.headers?.cookie || '');
-    const token = bearer || req.cookies?.[AUTH_COOKIE] || cookies[AUTH_COOKIE] || null;
-    const user = verifyUserTokenFast(token);
+    const token = bearer 
+        || req.cookies?.[AUTH_COOKIE] 
+        || req.cookies?.token 
+        || cookies[AUTH_COOKIE] 
+        || cookies['token'] 
+        || cookies['auth_token'] 
+        || req.body?.token 
+        || req.query?.token 
+        || null;
+
+    let user = null;
+
+    // 1. Direct JWT verify with secret (always succeeds for valid signed JWT, bypasses admin PIN lockout for pairing)
+    if (token) {
+        try {
+            const jwt = require('jsonwebtoken');
+            const secret = process.env.JWT_SECRET;
+            if (secret) {
+                const payload = jwt.verify(token, secret);
+                if (payload?.sub) {
+                    user = payload;
+                }
+            }
+        } catch (_) {}
+    }
+
+    // 2. Fast verification fallback
+    if (!user) {
+        user = verifyUserTokenFast(token) || verifyWsTicket(token);
+    }
+
+    // 3. Fallback: full DB user token verification
+    if (!user && token) {
+        try {
+            const payload = await verifyUserToken(token);
+            if (payload?.sub) {
+                user = payload;
+            }
+        } catch (_) {}
+    }
+
+    // 4. Fallback: verify pairing credentials if provided in request body
+    if (!user && req.body?.pairingUserId && req.body?.pairingToken) {
+        try {
+            const { ensureMongooseConnected } = require('../db/mongo/connection');
+            await ensureMongooseConnected();
+            const User = require('../models/User');
+            const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+            let dbUser = null;
+            const pUid = String(req.body.pairingUserId).trim();
+            const pTok = String(req.body.pairingToken).trim();
+            if (isMysql()) {
+                dbUser = await getMysqlAdapter().findUserByPairingUserId(pUid);
+            } else {
+                dbUser = await User.findOne({ pairingUserId: pUid }).lean();
+                if (!dbUser && pUid.length === 24) {
+                    dbUser = await User.findById(pUid).lean();
+                }
+                if (!dbUser) {
+                    dbUser = await User.findOne({ pairingToken: pTok }).lean();
+                }
+            }
+            if (dbUser && String(dbUser.pairingToken || '').trim() === pTok) {
+                user = { sub: String(dbUser._id), email: dbUser.email, role: dbUser.role, name: dbUser.name };
+            } else {
+                console.warn('[requireUserFast] Pairing credentials mismatch or user not found:', { pUid, pTok });
+            }
+        } catch (err) {
+            console.warn('[requireUserFast] Pairing credential check error:', err?.message || err);
+        }
+    }
+
     if (!user?.sub) {
         return jsonMsg(res, 401, Z.AUTH_REQUIRED);
     }

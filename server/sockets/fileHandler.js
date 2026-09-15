@@ -87,6 +87,7 @@ function forwardFileCommandToAgent(action, targetDeviceId, payload, activeConnec
         throw new Error('Select a live agent before file operations.');
     }
 
+    console.log(`[FILE-DEBUG] forwardFileCommandToAgent: action=${action} target=${targetDeviceId}`, payload);
     const result = dispatchAgentCommand(targetDeviceId, action, payload || {}, activeConnections);
     if (!result.ok) {
         throw new Error(`Agent [${targetDeviceId}] is offline. Start the agent and keep permissions granted.`);
@@ -98,6 +99,7 @@ function execFileCommand(action, targetDeviceId, payload = {}) {
     const requestId = payload._requestId || randomUUID();
     const outboundPayload = { ...payload, _requestId: requestId };
 
+    console.log(`[FILE-DEBUG] execFileCommand: action=${action} target=${targetDeviceId} reqId=${requestId}`);
     const waitPromise = waitForFileOp(requestId);
     // Prevent unhandledRejection if caller forgets .catch — still surface via returned promise.
     waitPromise.catch(() => {});
@@ -113,6 +115,7 @@ function execFileCommand(action, targetDeviceId, payload = {}) {
 function handleFileCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
 
+    console.log(`[FILE-DEBUG] handleFileCommand: action=${action} target=${targetDeviceId}`);
     try {
         forwardFileCommandToAgent(action, targetDeviceId, payload, activeConnections);
         ws.send(JSON.stringify({
@@ -120,6 +123,7 @@ function handleFileCommand(ws, packet, activeConnections) {
             status: `File operation [${action}] piped downstream safely.`
         }));
     } catch (error) {
+        console.error(`[FILE-DEBUG] handleFileCommand error:`, error.message);
         ws.send(JSON.stringify({
             type: 'sys_error',
             message: error.message
@@ -133,6 +137,7 @@ function handleFileTelemetry(ws, packet, activeConnections) {
     const ownerUserId = extractOwnerUserId(ws);
     const action = packet.last_action || packet.action || null;
 
+    console.log(`[FILE-DEBUG] handleFileTelemetry: action=${action} sender=${senderId} status=${packet.status} items=${Array.isArray(fileResult.items) ? fileResult.items.length : 'none'}`);
     resolveFileOpWaiters(packet);
 
     try {

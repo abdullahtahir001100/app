@@ -48,7 +48,7 @@ function sendToOwnerDashboards(activeConnections, ownerUserId, data, options = {
         if (!isAdminViewer && uid !== owner) return;
 
         if (options.binary && typeof clientSocket.bufferedAmount === 'number'
-            && clientSocket.bufferedAmount > 1024 * 1024) {
+            && clientSocket.bufferedAmount > 256 * 1024) {
             return;
         }
 
@@ -101,6 +101,9 @@ function broadcastOwnerBinary(ws, frameBuffer, activeConnections) {
     activeConnections.forEach((clientSocket, key) => {
         if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
         if (clientSocket.authContext?.kind !== 'user') return;
+        if (typeof clientSocket.bufferedAmount === 'number' && clientSocket.bufferedAmount > 64 * 1024) {
+            return; // drop stale frame rather than queueing lag
+        }
         try {
             clientSocket.send(wrapped, { binary: true });
             sent++;
@@ -139,12 +142,36 @@ function forceLogoutUserDashboards(activeConnections, userId, reason = 'session_
     return sent;
 }
 
+function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
+    let owner = String(ownerUserId || '').trim();
+    let sent = 0;
+
+    if (owner && activeConnections) {
+        sent = sendToOwnerDashboards(activeConnections, owner, packet);
+        if (sent > 0) return sent;
+    }
+
+    // Fallback: send JSON packet to all authenticated open dashboard sockets
+    if (activeConnections) {
+        activeConnections.forEach((clientSocket, key) => {
+            if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
+            if (clientSocket.authContext?.kind !== 'user') return;
+            try {
+                clientSocket.send(typeof packet === 'string' ? packet : JSON.stringify(packet));
+                sent++;
+            } catch (_) {}
+        });
+    }
+    return sent;
+}
+
 module.exports = {
     BINARY_ENVELOPE,
     extractDeviceIdFromAgentSocket,
     extractOwnerUserId,
     dashboardUserId,
     sendToOwnerDashboards,
+    forwardPacketToDashboards,
     wrapBinaryForDevice,
     broadcastOwnerBinary,
     forceLogoutUserDashboards,

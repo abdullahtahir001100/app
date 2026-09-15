@@ -32,16 +32,19 @@ router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
             const deviceId = String(device.deviceId || '');
             const isLive = liveDeviceIds.has(deviceId);
             const registry = getConnectionRegistry();
+            const { isCommandReady } = require('../sockets/dispatchAgent');
             return {
                 ...device,
                 deviceId,
                 status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive, registry),
+                commandReady: isCommandReady(deviceId, registry),
                 label: device.hostname || deviceId,
                 value: deviceId
             };
         });
 
         res.status(200).json({ success: true, devices });
+
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

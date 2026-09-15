@@ -411,6 +411,16 @@ impl BrowserHistoryCollector {
         ));
 
         if fs::copy(db_path, &temp_path).is_ok() {
+            let wal_src = PathBuf::from(format!("{}-wal", db_path.display()));
+            if wal_src.exists() {
+                let wal_dst = PathBuf::from(format!("{}-wal", temp_path.display()));
+                let _ = fs::copy(&wal_src, &wal_dst);
+            }
+            let shm_src = PathBuf::from(format!("{}-shm", db_path.display()));
+            if shm_src.exists() {
+                let shm_dst = PathBuf::from(format!("{}-shm", temp_path.display()));
+                let _ = fs::copy(&shm_src, &shm_dst);
+            }
             Connection::open(&temp_path)
         } else {
             Connection::open(db_path)

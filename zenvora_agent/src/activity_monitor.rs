@@ -89,16 +89,104 @@ fn platform_os_name() -> &'static str {
     { "Linux" }
 }
 
+fn is_browser_process(process_path: &str) -> bool {
+    let lower = process_path.to_lowercase();
+    lower.ends_with("chrome.exe")
+        || lower.ends_with("msedge.exe")
+        || lower.ends_with("brave.exe")
+        || lower.ends_with("firefox.exe")
+        || lower.ends_with("opera.exe")
+        || lower.ends_with("operagx.exe")
+        || lower.ends_with("safari")
+        || lower.ends_with("vivaldi.exe")
+        || lower.ends_with("arc.exe")
+        || lower.contains("google chrome")
+        || lower.contains("microsoft edge")
+        || lower.contains("brave-browser")
+        || lower.contains("firefox")
+}
+
+fn extract_browser_domain_and_title(window_title: &str, process_path: &str) -> (String, String) {
+    let raw_title = window_title.trim();
+    if raw_title.is_empty() {
+        return (String::new(), String::new());
+    }
+
+    let lower = raw_title.to_lowercase();
+    let domain = if lower.contains("youtube") {
+        "youtube.com".to_string()
+    } else if lower.contains("google search") || lower.ends_with("- google") {
+        "google.com".to_string()
+    } else if lower.contains("github") {
+        "github.com".to_string()
+    } else if lower.contains("whatsapp") {
+        "web.whatsapp.com".to_string()
+    } else if lower.contains("facebook") {
+        "facebook.com".to_string()
+    } else if lower.contains("netflix") {
+        "netflix.com".to_string()
+    } else if lower.contains("twitter") || lower.contains(" x ") || lower.starts_with("x - ") {
+        "x.com".to_string()
+    } else if lower.contains("reddit") {
+        "reddit.com".to_string()
+    } else if lower.contains("chatgpt") || lower.contains("openai") {
+        "chatgpt.com".to_string()
+    } else if lower.contains("linkedin") {
+        "linkedin.com".to_string()
+    } else if lower.contains("twitch") {
+        "twitch.tv".to_string()
+    } else if lower.contains("gmail") {
+        "mail.google.com".to_string()
+    } else if lower.contains("instagram") {
+        "instagram.com".to_string()
+    } else if lower.contains("wikipedia") {
+        "wikipedia.org".to_string()
+    } else if lower.contains("stackoverflow") || lower.contains("stack overflow") {
+        "stackoverflow.com".to_string()
+    } else {
+        let mut found = String::new();
+        for word in raw_title.split_whitespace() {
+            let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-').to_lowercase();
+            if clean.contains('.') && (clean.ends_with(".com") || clean.ends_with(".org") || clean.ends_with(".net") || clean.ends_with(".io") || clean.ends_with(".co") || clean.ends_with(".app") || clean.ends_with(".dev") || clean.ends_with(".tv") || clean.ends_with(".pk") || clean.ends_with(".uk")) {
+                found = clean;
+                break;
+            }
+        }
+        if !found.is_empty() {
+            found
+        } else {
+            let parts: Vec<&str> = raw_title.split(" - ").collect();
+            if parts.len() >= 3 {
+                let site = parts[parts.len() - 2].trim();
+                let clean_site = site.to_lowercase().replace(' ', "");
+                format!("{}.com", clean_site)
+            } else {
+                let browser_name = process_path
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or(process_path)
+                    .replace(".exe", "");
+                format!("{}.browser", browser_name.to_lowercase())
+            }
+        }
+    };
+
+    (domain, raw_title.to_string())
+}
+
 async fn foreground_window_monitor() {
     let mut last_window = String::new();
     let mut last_process = String::new();
+    #[allow(unused_variables)]
     let mut last_browser_url = String::new();
+    let mut last_domain = String::new();
     let mut session_start = Instant::now();
-    let mut last_usage_flush = Instant::now();
+    let mut domain_start = Instant::now();
+    let mut last_heartbeat = Instant::now();
 
     loop {
         let Some(logger) = current_logger() else {
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_millis(500)).await;
             continue;
         };
 
@@ -131,18 +219,19 @@ async fn foreground_window_monitor() {
         let active_window = get_active_window_info();
 
         if let Some((window_title, process_path)) = active_window {
+            let display_app = process_path
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or(process_path.as_str())
+                .to_string();
+
             if window_title != last_window {
-                let display_app = process_path
-                    .rsplit(['\\', '/'])
-                    .next()
-                    .unwrap_or(process_path.as_str())
-                    .to_string();
                 logger.log_window_changed(
                     platform_os_name(),
                     &window_title,
                     json!({
                         "process": process_path.clone(),
-                        "appName": display_app,
+                        "appName": display_app.clone(),
                         "windowTitle": window_title.clone(),
                     }),
                 );
@@ -172,32 +261,63 @@ async fn foreground_window_monitor() {
                         }),
                     );
                 }
-                let display_app = process_path
-                    .rsplit(['\\', '/'])
-                    .next()
-                    .unwrap_or(process_path.as_str())
-                    .to_string();
                 logger.log_app_opened(
                     platform_os_name(),
                     &process_path,
                     json!({
                         "process": process_path.clone(),
-                        "appName": display_app,
+                        "appName": display_app.clone(),
                         "windowTitle": window_title.clone(),
                     }),
                 );
-                last_process = process_path;
+                last_process = process_path.clone();
                 session_start = Instant::now();
-                last_usage_flush = Instant::now();
-            } else if session_start.elapsed().as_secs() >= 15 * 60
-                && last_usage_flush.elapsed().as_secs() >= 15 * 60
-            {
+                last_heartbeat = Instant::now();
+                last_domain.clear();
+            }
+
+            // Real-time browser domain tracking
+            if is_browser_process(&process_path) {
+                let (domain, site_title) = extract_browser_domain_and_title(&window_title, &process_path);
+                if !domain.is_empty() && domain != last_domain {
+                    if !last_domain.is_empty() {
+                        let dom_dur = domain_start.elapsed().as_secs();
+                        logger.log(
+                            "browser_session",
+                            "browser",
+                            "success",
+                            platform_os_name(),
+                            &last_domain,
+                            json!({
+                                "process": process_path.clone(),
+                                "appName": display_app.clone(),
+                                "domain": last_domain.clone(),
+                                "duration": dom_dur,
+                                "windowTitle": window_title.clone(),
+                            }),
+                        );
+                    }
+                    domain_start = Instant::now();
+                    last_domain = domain.clone();
+
+                    logger.log_website(
+                        &display_app,
+                        &format!("https://{}", domain),
+                        json!({
+                            "title": site_title,
+                            "domain": domain.clone(),
+                            "visitTime": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                            "visitCount": 1,
+                            "windowsUser": whoami::username(),
+                            "browserProfile": "Default",
+                        }),
+                    );
+                }
+            }
+
+            // Continuous 10-second active session flushes so usage is updated in real time
+            if last_heartbeat.elapsed().as_secs() >= 10 && !last_process.is_empty() {
                 let duration = session_start.elapsed().as_secs();
-                let app_name = last_process
-                    .rsplit(['\\', '/'])
-                    .next()
-                    .unwrap_or(last_process.as_str())
-                    .to_string();
                 logger.log(
                     "app_session",
                     "application",
@@ -205,18 +325,37 @@ async fn foreground_window_monitor() {
                     platform_os_name(),
                     &last_process,
                     json!({
-                        "process": last_process,
-                        "appName": app_name,
-                        "executablePath": last_process,
+                        "process": last_process.clone(),
+                        "appName": display_app.clone(),
+                        "executablePath": last_process.clone(),
                         "duration": duration,
-                        "windowTitle": window_title,
+                        "windowTitle": window_title.clone(),
+                        "domain": last_domain.clone(),
                     }),
                 );
-                last_usage_flush = Instant::now();
+
+                if is_browser_process(&last_process) && !last_domain.is_empty() {
+                    let dom_dur = domain_start.elapsed().as_secs();
+                    logger.log(
+                        "browser_session",
+                        "browser",
+                        "success",
+                        platform_os_name(),
+                        &last_domain,
+                        json!({
+                            "appName": display_app.clone(),
+                            "domain": last_domain.clone(),
+                            "duration": dom_dur,
+                            "windowTitle": window_title.clone(),
+                        }),
+                    );
+                }
+
+                last_heartbeat = Instant::now();
             }
         }
 
-        sleep(Duration::from_millis(2500)).await;
+        sleep(Duration::from_millis(500)).await;
     }
 }
 
@@ -301,17 +440,17 @@ async fn notification_monitor() {
 
     loop {
         let Some(logger) = current_logger() else {
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_millis(2000)).await;
             continue;
         };
-        let recent = notifier.get_recent(30);
+        let recent = notifier.get_recent(50);
         for notification in recent {
             let unique = format!("{}|{}|{}", notification.app, notification.title, notification.timestamp);
             if seen.contains(&unique) {
                 continue;
             }
             seen.insert(unique.clone());
-            if seen.len() > 2000 {
+            if seen.len() > 3000 {
                 seen.clear();
             }
             logger.log_notification_received(
@@ -326,7 +465,7 @@ async fn notification_monitor() {
             );
         }
 
-        sleep(Duration::from_secs(8)).await;
+        sleep(Duration::from_millis(1500)).await;
     }
 }
 

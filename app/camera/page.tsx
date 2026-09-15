@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CustomSlider } from "@/components/custom-slider";
 import { Camera, Video, Download, RefreshCw, Square, Cpu, Trash2, Image as ImageIcon, Film, Power, Radar } from "lucide-react";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import Select from "react-select";
 import { useGateway } from "@/hooks/use-gateway";
@@ -19,6 +19,7 @@ import {
   type MediaTransport,
 } from "@/lib/media-transport";
 import { PremiumGate } from "@/components/premium-card";
+import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { WebRtcClient, type WebRtcSignal, type WebRtcState } from "@/lib/webrtc-client";
 
@@ -299,16 +300,92 @@ export default function CameraPage() {
     void loadServerGallery(selectedDevice);
   }, [selectedDevice]);
 
+  const isDecodingRef = useRef(false);
+  const pendingBlobRef = useRef<Blob | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const bitmapRef = useRef<ImageBitmap | null>(null);
+  const nextBitmapRef = useRef<ImageBitmap | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const fpsTimerRef = useRef({ last: Date.now(), count: 0 });
+
+  // Continuous V-Sync video render loop (eliminates frame jitter and slideshow feel)
+  const renderCameraVideoLoop = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (canvas && nextBitmapRef.current) {
+      const bitmap = nextBitmapRef.current;
+      nextBitmapRef.current = null;
+
+      let ctx = ctxRef.current;
+      if (!ctx || ctx.canvas !== canvas) {
+        ctx = canvas.getContext("2d", { alpha: false });
+        ctxRef.current = ctx;
+      }
+      if (ctx) {
+        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(bitmap, 0, 0);
+      }
+
+      if (bitmapRef.current) {
+        bitmapRef.current.close();
+      }
+      bitmapRef.current = bitmap;
+
+      framesReceivedRef.current += 1;
+      if (!hasLiveFrame) {
+        setHasLiveFrame(true);
+        setCommandStatus("Live camera preview active.");
+      }
+
+      const now = Date.now();
+      fpsTimerRef.current.count += 1;
+      if (now - fpsTimerRef.current.last >= 1000) {
+        setLiveFrameCount(framesReceivedRef.current);
+        fpsTimerRef.current = { last: now, count: 0 };
+      }
+      applyGpuFilters();
+    }
+
+    rafIdRef.current = requestAnimationFrame(renderCameraVideoLoop);
+  }, [applyGpuFilters, hasLiveFrame]);
+
+  useEffect(() => {
+    rafIdRef.current = requestAnimationFrame(renderCameraVideoLoop);
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      if (nextBitmapRef.current) {
+        nextBitmapRef.current.close();
+        nextBitmapRef.current = null;
+      }
+      if (bitmapRef.current) {
+        bitmapRef.current.close();
+        bitmapRef.current = null;
+      }
+    };
+  }, [renderCameraVideoLoop]);
+
   const resetLivePreview = () => {
     framesReceivedRef.current = 0;
     lastFrameBlobRef.current = null;
+    pendingBlobRef.current = null;
+    isDecodingRef.current = false;
+    if (nextBitmapRef.current) {
+      nextBitmapRef.current.close();
+      nextBitmapRef.current = null;
+    }
+    if (bitmapRef.current) {
+      bitmapRef.current.close();
+      bitmapRef.current = null;
+    }
     setHasLiveFrame(false);
     setLiveFrameCount(0);
-    if (lastBlobUrlRef.current) {
-      URL.revokeObjectURL(lastBlobUrlRef.current);
-      lastBlobUrlRef.current = null;
-    }
-    if (liveImgRef.current) liveImgRef.current.removeAttribute("src");
     const canvas = canvasRef.current;
     if (canvas) {
       const ctx = canvas.getContext("2d");
@@ -316,31 +393,44 @@ export default function CameraPage() {
     }
   };
 
-  const showLiveFrame = (blob: Blob, saveSnapshot = false) => {
+  const pumpCameraDecodeLoop = useCallback(async () => {
+    if (isDecodingRef.current) return;
+    const blob = pendingBlobRef.current;
+    if (!blob) return;
+    pendingBlobRef.current = null;
+    isDecodingRef.current = true;
+
+    try {
+      const bitmap = await createImageBitmap(blob, {
+        premultiplyAlpha: "none",
+        colorSpaceConversion: "none",
+      }).catch(() => createImageBitmap(blob));
+
+      if (nextBitmapRef.current) {
+        nextBitmapRef.current.close();
+      }
+      nextBitmapRef.current = bitmap;
+    } catch (err) {
+      console.warn("Camera frame decode failed:", err);
+    } finally {
+      isDecodingRef.current = false;
+      if (pendingBlobRef.current) {
+        void pumpCameraDecodeLoop();
+      }
+    }
+  }, []);
+
+  const showLiveFrame = useCallback((blob: Blob, saveSnapshot = false) => {
     if (blob.size < 100) return;
-
     lastFrameBlobRef.current = blob;
-    const url = URL.createObjectURL(blob);
-    if (lastBlobUrlRef.current) URL.revokeObjectURL(lastBlobUrlRef.current);
-    lastBlobUrlRef.current = url;
-
-    if (liveImgRef.current) {
-      liveImgRef.current.src = url;
+    pendingBlobRef.current = blob;
+    if (!isDecodingRef.current) {
+      void pumpCameraDecodeLoop();
     }
-
-    framesReceivedRef.current += 1;
-    setHasLiveFrame(true);
-    setLiveFrameCount(framesReceivedRef.current);
-    applyGpuFilters();
-
-    if (framesReceivedRef.current === 1) {
-      setCommandStatus("Live camera preview active.");
-    }
-
     if (saveSnapshot) {
       void saveSnapshotToGallery(blob);
     }
-  };
+  }, [pumpCameraDecodeLoop]);
 
   const rgbToJpegBlob = (
     rgb: Uint8Array,
@@ -384,7 +474,7 @@ export default function CameraPage() {
     const frameType = bytes[0];
 
     if (frameType === 0x01 || frameType === 0x02) {
-      const jpegBlob = new Blob([bytes.subarray(1).slice()], {
+      const jpegBlob = new Blob([bytes.subarray(1) as unknown as BlobPart], {
         type: "image/jpeg",
       });
       showLiveFrame(jpegBlob, saveSnapshot || frameType === 0x02);
@@ -443,7 +533,7 @@ export default function CameraPage() {
     webrtcClientRef.current = rtc;
     const unsubState = rtc.onStateChange(setWebrtcState);
     const unsubFrame = rtc.onFrame((arrBuf) => {
-      const blob = new Blob([arrBuf], { type: "image/jpeg" });
+      const blob = new Blob([arrBuf as unknown as BlobPart], { type: "image/jpeg" });
       showLiveFrame(blob, false);
     });
 
@@ -653,7 +743,7 @@ export default function CameraPage() {
     if (isCameraOn) {
       resetLivePreview();
       setTimeout(() => {
-        dispatchControl("START_STREAM", { target_fps: 24, jpeg_quality: 42 }, undefined, true);
+        dispatchControl("START_STREAM", { target_fps: 30, jpeg_quality: 56, width: 1280, height: 720 }, undefined, true);
       }, 300);
     }
   };
@@ -704,28 +794,14 @@ export default function CameraPage() {
 
   const handleToggleRecording = async () => {
     const canvas = canvasRef.current;
-    const img = liveImgRef.current;
 
     if (!isRecording) {
-      if (!hasLiveFrame || !canvas || !img || img.naturalWidth === 0) {
+      if (!hasLiveFrame || !canvas || canvas.width === 0 || canvas.height === 0) {
         setCommandStatus("Wait for live camera preview before recording.");
         return;
       }
 
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      recordSyncTimerRef.current = setInterval(() => {
-        const liveImg = liveImgRef.current;
-        if (!liveImg || liveImg.naturalWidth === 0) return;
-        canvas.width = liveImg.naturalWidth;
-        canvas.height = liveImg.naturalHeight;
-        ctx.drawImage(liveImg, 0, 0, canvas.width, canvas.height);
-      }, 66);
-
-      const stream = canvas.captureStream(15);
+      const stream = canvas.captureStream(30);
       const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
         ? "video/webm;codecs=vp9"
         : "video/webm";
@@ -815,7 +891,7 @@ export default function CameraPage() {
     } catch {
       // ignore storage errors
     }
-    dispatchControl("START_STREAM", { target_fps: 24, jpeg_quality: 42 }, deviceId, true);
+    dispatchControl("START_STREAM", { target_fps: 30, jpeg_quality: 56, width: 1280, height: 720 }, deviceId, true);
     void loadServerGallery(deviceId);
     setCommandStatus(`Camera turning on for ${deviceId}...`);
   };
@@ -856,7 +932,6 @@ export default function CameraPage() {
     return () => {
       window.removeEventListener("pagehide", stopOnUnload);
       window.removeEventListener("beforeunload", stopOnUnload);
-      stopOnUnload();
     };
   }, []);
 
@@ -937,17 +1012,11 @@ export default function CameraPage() {
     return () => observer.disconnect();
   }, []);
 
+  if (featureLoading) {
+    return <FullPageLoader message="Verifying camera access permissions…" />;
+  }
+
   if (!featureAllowed) {
-    if (featureLoading) {
-      return (
-        <div className="flex h-screen bg-background">
-          <AppSidebar />
-          <main className="flex-1 sidebar-aware-main overflow-auto p-6 flex items-center justify-center">
-            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          </main>
-        </div>
-      );
-    }
     return (
       <div className="flex h-screen bg-background">
         <AppSidebar />
@@ -1113,18 +1182,20 @@ export default function CameraPage() {
                 className="relative h-[62vh] min-h-[420px] w-full overflow-hidden rounded-2xl border border-border bg-black shadow-2xl"
               >
                 <canvas ref={rgbCanvasRef} className="hidden" aria-hidden />
-                <canvas ref={canvasRef} className="hidden" aria-hidden />
 
                 <div
                   ref={filterWrapRef}
                   className="absolute inset-0 z-10 flex h-full w-full items-center justify-center overflow-hidden"
                   style={{ willChange: "transform, filter" }}
                 >
-                  <img
-                    ref={liveImgRef}
-                    alt="Live camera feed"
-                    className="max-h-full max-w-full object-contain transition-opacity duration-200"
-                    style={{ opacity: hasLiveFrame ? 1 : 0 }}
+                  <canvas
+                    ref={canvasRef}
+                    className="max-h-full max-w-full object-contain outline-none transition-opacity duration-150"
+                    style={{
+                      opacity: hasLiveFrame ? 1 : 0,
+                      transform: "translateZ(0)",
+                      imageRendering: "auto",
+                    }}
                   />
                 </div>
 

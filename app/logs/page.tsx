@@ -718,10 +718,10 @@ export default function LogsPage() {
                   uniqueActivityLogs.length === 0 ? (
                     <Card className="p-8 text-center"><p className="text-muted-foreground">No activity logs found</p></Card>
                   ) : (
-                    uniqueActivityLogs.map((log) => {
+                    uniqueActivityLogs.map((log, idx) => {
                       const IconComponent = iconMap[log.action] || Eye;
                       return (
-                        <Card key={log._id} className="p-4 hover:shadow-md transition-all">
+                        <Card key={log._id ? `${log._id}-${idx}` : `activity-${idx}`} className="p-4 hover:shadow-md transition-all">
                           <div className="flex items-start gap-4">
                             <div className="mt-1 p-2 rounded-lg bg-muted"><IconComponent className="w-5 h-5" /></div>
                             <div className="flex-1">
@@ -743,7 +743,7 @@ export default function LogsPage() {
                     <Card className="p-8 text-center"><p className="text-muted-foreground">No browser history found</p></Card>
                   ) : (
                     filteredBrowserHistory.map((entry, idx) => (
-                      <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
+                      <Card key={entry._id ? `${entry._id}-${idx}` : `browser-${idx}`} className="p-4 hover:shadow-md transition-all">
                         <div className="flex items-start gap-4">
                           <div className="mt-1 p-2.5 rounded-xl bg-card border border-border/80 flex items-center justify-center shrink-0 shadow-sm">
                             <BrowserLogo browser={entry.browser} className="w-6 h-6 shrink-0" />
@@ -782,7 +782,7 @@ export default function LogsPage() {
                     <Card className="p-8 text-center"><p className="text-muted-foreground">No app history found</p></Card>
                   ) : (
                     filteredAppHistory.map((entry, idx) => (
-                      <Card key={entry._id || idx} className="p-4 hover:shadow-md transition-all">
+                      <Card key={entry._id ? `${entry._id}-${idx}` : `app-${idx}`} className="p-4 hover:shadow-md transition-all">
                         <div className="flex items-start gap-4">
                           <div className="mt-1 p-2 rounded-lg bg-muted"><Clock className="w-5 h-5" /></div>
                           <div className="flex-1">

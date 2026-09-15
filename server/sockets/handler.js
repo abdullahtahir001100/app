@@ -2,6 +2,9 @@
 const { getConnectionRegistry } = require('./registry');
 const activeConnections = getConnectionRegistry();
 
+// Geo fallback: server-side IP lookup when agent doesn't send location
+const { fetchGeoFromIp, isPrivateIp } = require('../utils/geoFallback');
+
 const { handleCameraCommand, handleCameraTelemetry, broadcastBinaryFrame } = require('./cameraHandler');
 const {
     handleScreenCommand,
@@ -31,6 +34,7 @@ const { logMsg, msgText, Z } = require('../utils/messages');
 const {
     extractOwnerUserId,
     sendToOwnerDashboards,
+    forwardPacketToDashboards,
     broadcastOwnerBinary,
 } = require('./fanout');
 
@@ -348,30 +352,6 @@ function pushLiveDeviceSnapshot(userId) {
     }).catch(() => {});
 }
 
-function forwardPacketToDashboards(packet, activeConnections, ownerUserId = null) {
-    let owner = String(ownerUserId || '').trim();
-    let sent = 0;
-
-    if (owner) {
-        sent = sendToOwnerDashboards(activeConnections, owner, packet);
-        if (sent > 0) {
-            logDashboardFanout(packet, owner, sent);
-            return sent;
-        }
-    }
-
-    // Fallback: send JSON packet to all authenticated open dashboard sockets
-    activeConnections.forEach((clientSocket, key) => {
-        if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
-        if (clientSocket.authContext?.kind !== 'user') return;
-        try {
-            clientSocket.send(typeof packet === 'string' ? packet : JSON.stringify(packet));
-            sent++;
-        } catch (_) {}
-    });
-    logDashboardFanout(packet, owner, sent);
-    return sent;
-}
 
 function logDashboardFanout(packet, owner, count) {
     if (!count || count <= 0) return;
@@ -468,8 +448,12 @@ function isAgentBinaryFrame(ws, buffer) {
 }
 
 function isFileAck(packet) {
+    if (packet.type === 'dispatch_control') return false;
     if (packet.channel === 'files') return true;
+    if (packet.type === 'file_telemetry_stream') return true;
+    if (packet.file_result) return true;
     if (typeof packet.last_action === 'string' && packet.last_action.startsWith('FILE_')) return true;
+    if (packet.type === 'sys_ack' && typeof packet.action === 'string' && packet.action.startsWith('FILE_')) return true;
     return false;
 }
 
@@ -933,6 +917,71 @@ async function handleSocketMessage(ws, message) {
                         route: '/ws/gateway',
                     });
                 } catch (_) {}
+
+                // ── Geo Fallback: IP-based location if agent has no geo in DB ──
+                // Pull agent's remote IP from WS upgrade request
+                const agentRemoteIp = (() => {
+                    try {
+                        const req = ws.upgradeReq;
+                        if (!req) return null;
+                        const fwd = req.headers?.['x-forwarded-for'];
+                        const raw = (fwd ? fwd.split(',')[0].trim() : req.socket?.remoteAddress) || null;
+                        return raw ? raw.replace(/^::ffff:/, '') : null;
+                    } catch { return null; }
+                })();
+
+                if (agentRemoteIp && !isPrivateIp(agentRemoteIp)) {
+                    // Only do geo lookup if DB has no location data
+                    const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+                    void (async () => {
+                        try {
+                            let hasGeo = false;
+                            if (isMysql()) {
+                                const d = await getMysqlAdapter().findDeviceById(deviceOrPanelId);
+                                hasGeo = Boolean(d?.latitude || d?.country);
+                            } else {
+                                const d = await Device.findOne({ deviceId: deviceOrPanelId }).select('latitude country').lean();
+                                hasGeo = Boolean(d?.latitude || d?.country);
+                            }
+                            if (!hasGeo) {
+                                const geo = await fetchGeoFromIp(agentRemoteIp);
+                                if (geo) {
+                                    await upsertDeviceExclusive(deviceOrPanelId, {
+                                        publicIp: agentRemoteIp,
+                                        latitude: geo.latitude,
+                                        longitude: geo.longitude,
+                                        country: geo.country,
+                                        region: geo.region,
+                                        city: geo.city,
+                                        isp: geo.isp,
+                                        timezone: geo.timezone,
+                                    }, userIdForList);
+                                    require('../services/liveLogBus').push({
+                                        channel: 'db',
+                                        level: 'ok',
+                                        message: `[DB:GEO] IP geo fallback for device ${deviceOrPanelId}: ${geo.city}, ${geo.country} (ip=${agentRemoteIp})`,
+                                        deviceId: deviceOrPanelId,
+                                        userId: userIdForList,
+                                        meta: { city: geo.city, country: geo.country, ip: agentRemoteIp }
+                                    });
+                                    // Push updated geo to dashboards
+                                    sendToOwnerDashboards(activeConnections, userIdForList, {
+                                        type: 'device_status_update',
+                                        deviceId: deviceOrPanelId,
+                                        publicIp: agentRemoteIp,
+                                        latitude: geo.latitude,
+                                        longitude: geo.longitude,
+                                        country: geo.country,
+                                        region: geo.region,
+                                        city: geo.city,
+                                        isp: geo.isp,
+                                        timezone: geo.timezone,
+                                    });
+                                }
+                            }
+                        } catch (_) {}
+                    })();
+                }
             }
             return;
         }
@@ -1000,28 +1049,52 @@ async function handleSocketMessage(ws, message) {
                     }).catch(() => {});
                 } else {
                     const Notification = require('../models/Notification');
-                    Notification.create({
-                        deviceId,
-                        userId: ownerUserId,
-                        app: notif.app || 'System',
-                        title: notif.title || 'Notification',
-                        message: notif.message || '',
-                        icon: notif.icon || '',
-                        category: notif.category || 'toast',
-                    }).catch(() => {});
+                    Notification.updateOne(
+                        {
+                            deviceId,
+                            userId: ownerUserId,
+                            app: notif.app || 'System',
+                            title: notif.title || 'Notification',
+                            message: notif.message || '',
+                        },
+                        {
+                            $setOnInsert: {
+                                deviceId,
+                                userId: ownerUserId,
+                                app: notif.app || 'System',
+                                title: notif.title || 'Notification',
+                                message: notif.message || '',
+                                icon: notif.icon || '',
+                                category: notif.category || 'toast',
+                            },
+                            $set: { updatedAt: new Date() }
+                        },
+                        { upsert: true }
+                    ).catch(() => {});
                 }
 
                 try {
                     require('../services/liveLogBus').push({
                         channel: 'db',
                         level: 'ok',
-                        message: `[DB:PERSIST] Saved notification for device ${deviceId} (title="${notif.title || '-'}") in ${dbType}`,
+                        message: `[DB:PERSIST] Saved notification for device ${deviceId} (app="${notif.app || 'System'}" title="${notif.title || '-'}") in ${dbType}`,
                         deviceId,
                         userId: ownerUserId,
                     });
                 } catch (_) {}
 
                 forwardPacketToDashboards(packet, activeConnections, ownerUserId);
+                sendToOwnerDashboards(activeConnections, ownerUserId, {
+                    type: 'notification_update',
+                    deviceId,
+                    notification: {
+                        app: notif.app || 'System',
+                        title: notif.title || 'Notification',
+                        message: notif.message || '',
+                        category: notif.category || 'toast',
+                        timestamp: notif.timestamp || new Date().toISOString(),
+                    }
+                });
             }
             return;
         }
@@ -1047,7 +1120,11 @@ async function handleSocketMessage(ws, message) {
             return;
         }
 
-        if (packet.type === 'sys_ack' && (packet.file_result || isFileAck(packet))) {
+        if (
+            packet.type !== 'dispatch_control' &&
+            (isFileAck(packet) || packet.type === 'file_telemetry_stream' || (packet.type === 'sys_ack' && packet.file_result))
+        ) {
+            console.log(`[FILE-DEBUG] isFileAck MATCH: type=${packet.type} channel=${packet.channel} last_action=${packet.last_action} action=${packet.action} status=${packet.status}`);
             handleFileTelemetry(ws, packet, activeConnections);
             return;
         }
@@ -1197,15 +1274,17 @@ async function handleSocketMessage(ws, message) {
             packet.targetDeviceId =
                 packet.targetDeviceId || packet.target_device_id || packet.targetDevice;
 
-            try {
-                require('../services/liveLogBus').push({
-                    channel: 'node',
-                    level: 'info',
-                    message: `[NODE:REACT] Dashboard requested control: action=${packet.action} target=${packet.targetDeviceId}`,
-                    deviceId: packet.targetDeviceId || null,
-                    meta: { action: packet.action, targetDeviceId: packet.targetDeviceId }
-                });
-            } catch (_) {}
+            if (!String(packet.action || '').startsWith('REMOTE_')) {
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'node',
+                        level: 'info',
+                        message: `[NODE:REACT] Dashboard requested control: action=${packet.action} target=${packet.targetDeviceId}`,
+                        deviceId: packet.targetDeviceId || null,
+                        meta: { action: packet.action, targetDeviceId: packet.targetDeviceId }
+                    });
+                } catch (_) {}
+            }
 
             if (!authorizeSocketAction(ws, packet.targetDeviceId)) {
                 ws.send(JSON.stringify({
@@ -1244,6 +1323,7 @@ async function handleSocketMessage(ws, message) {
         }
 
         if (packet.type === 'dispatch_control' && FILE_ACTION_TOKENS.includes(packet.action)) {
+            console.log(`[FILE-DEBUG] dispatch_control FILE received: action=${packet.action} target=${packet.targetDeviceId}`);
             handleFileCommand(ws, packet, activeConnections);
             return;
         }
@@ -1578,16 +1658,77 @@ function handleActivityLog(ws, packet, activeConnections) {
 
         const duration = durationValue;
         const closed = String(liveLog.action) === 'app_closed';
-        if (closed && duration > 0 && (appName || processName) && userId) {
+        const isSession = String(liveLog.action) === 'app_session';
+        const isAppEvent = closed || isSession || String(liveLog.action) === 'app_opened';
+        if (isAppEvent && (appName || processName) && userId) {
             const { syncAppHistory } = require('../services/historySyncService');
             await syncAppHistory(deviceId, [{
                 appName: appName || processName,
                 executablePath: liveLog.executablePath || processName,
                 lastOpened: createdAt,
-                duration,
+                duration: duration > 0 ? duration : (isAppEvent ? 5 : 0),
                 appType: 'app',
-                category: 'session',
+                category: isSession ? 'session' : 'active',
             }], userId);
+        }
+
+        const isBrowserEvent = String(liveLog.action) === 'website' || String(liveLog.action) === 'browser_session';
+        if (isBrowserEvent && userId) {
+            const { syncBrowserHistory } = require('../services/historySyncService');
+            let domain = String(metadata.domain || '');
+            const rawUrl = String(details || metadata.url || '');
+            if (!domain && rawUrl) {
+                try {
+                    domain = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`).hostname;
+                } catch (_) {
+                    domain = rawUrl.replace(/^https?:\/\//, '').split('/')[0];
+                }
+            }
+            if (!domain && windowTitle) {
+                const parts = windowTitle.split(' - ');
+                if (parts.length > 1) {
+                    const candidate = parts[parts.length - 2].trim().toLowerCase();
+                    if (candidate.includes('youtube')) domain = 'youtube.com';
+                    else if (candidate.includes('google')) domain = 'google.com';
+                    else if (candidate.includes('github')) domain = 'github.com';
+                    else if (candidate.includes('.')) domain = candidate;
+                }
+            }
+            const visitUrl = rawUrl || (domain ? `https://${domain}` : 'https://unknown');
+            await syncBrowserHistory(deviceId, [{
+                browser: appName || 'Chrome',
+                url: visitUrl,
+                title: String(metadata.title || windowTitle || domain || 'Website'),
+                visitTime: createdAt,
+                visitCount: 1,
+                domain: domain || 'unknown',
+                windowsUser: String(metadata.windowsUser || metadata.windows_user || ''),
+                browserProfile: String(metadata.browserProfile || 'Default'),
+            }], userId);
+        }
+
+        if (String(liveLog.action) === 'notification_received' && userId) {
+            const { syncSystemNotifications } = require('../services/historySyncService');
+            const notifApp = String(metadata.app || appName || 'System');
+            const notifTitle = String(details || metadata.title || 'Notification');
+            const notifMsg = String(metadata.message || '');
+            await syncSystemNotifications(deviceId, [{
+                app: notifApp,
+                title: notifTitle,
+                message: notifMsg,
+                category: String(metadata.category || 'toast'),
+            }], userId);
+            sendToOwnerDashboards(activeConnections, userId, {
+                type: 'notification_update',
+                deviceId,
+                notification: {
+                    app: notifApp,
+                    title: notifTitle,
+                    message: notifMsg,
+                    category: String(metadata.category || 'toast'),
+                    timestamp: createdAt,
+                }
+            });
         }
     });
 }
@@ -1659,7 +1800,27 @@ function handleSocketBinary(ws, message) {
     broadcastBinaryFrame(message, activeConnections, frameType, ws);
 }
 
-function handleSocketClose(ws) {
+function getCloseCodeReason(code) {
+    const num = Number(code) || 1000;
+    switch (num) {
+        case 1000: return 'Normal closure (graceful shutdown by agent or server)';
+        case 1001: return 'Going away (agent process terminated, tab closed, or OS shutting down)';
+        case 1002: return 'Protocol error (bad packet frame)';
+        case 1003: return 'Unsupported data received';
+        case 1005: return 'No status code received';
+        case 1006: return 'Abnormal closure (TCP connection dropped unexpectedly / WiFi lost / agent process killed)';
+        case 1007: return 'Invalid frame payload data (UTF-8 decode failed)';
+        case 1008: return 'Policy violation (auth or permission error)';
+        case 1009: return 'Message too large';
+        case 1011: return 'Server internal error';
+        case 4001: return 'Auth timeout (agent connected but failed register_channel in time)';
+        case 4002: return 'Auth rejected (invalid agent token or device ID)';
+        case 4004: return 'Superseded (replaced by newer connection)';
+        default: return `Custom code ${num}`;
+    }
+}
+
+function handleSocketClose(ws, code = 1000, reason = '') {
     if (ws?.superseded) {
         console.log('[GW-DEBUG] ignore close for superseded agent socket');
         return;
@@ -1680,20 +1841,57 @@ function handleSocketClose(ws) {
         : '';
 
     activeConnections.delete(key);
-    console.log(`[GW-DEBUG] socket closed key=${key}`);
+    const codeDesc = getCloseCodeReason(code);
+    const reasonStr = typeof reason === 'string' ? reason : (reason ? String(reason) : '');
+    console.log(`[GW-DEBUG] socket closed key=${key} code=${code} (${codeDesc}) reason="${reasonStr || 'none'}"`);
 
     if (wasAgent && deviceId) {
         const ownerUserId = extractOwnerUserId(ws);
-        // Debounce offline: only mark offline if still no live socket after grace.
         const graceMs = 45_000;
+
+        // Push immediate disconnect notification to Live Log Bus
+        try {
+            require('../services/liveLogBus').push({
+                channel: 'agent',
+                level: 'warn',
+                message: `[AGENT:DISCONNECT] Device ${deviceId} socket dropped: code=${code} (${codeDesc}) reason="${reasonStr || 'none'}". Starting 45s grace period before marking offline in DB.`,
+                deviceId,
+                userId: ownerUserId || null,
+                meta: { code, codeDesc, reason: reasonStr, graceSeconds: 45 }
+            });
+        } catch (_) {}
+
+        // Debounce offline: only mark offline if still no live socket after grace.
         setTimeout(() => {
             const live = activeConnections.get(key);
             if (live && live.readyState === 1) {
                 console.log(`[GW-DEBUG] skip offline device=${deviceId} (reconnected within grace)`);
+                try {
+                    require('../services/liveLogBus').push({
+                        channel: 'agent',
+                        level: 'ok',
+                        message: `[AGENT:RECONNECT] Device ${deviceId} reconnected within grace period! Kept online in DB.`,
+                        deviceId,
+                        userId: ownerUserId || null,
+                    });
+                } catch (_) {}
                 return;
             }
             const filter = ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId };
-            console.log(`[GW-DEBUG] mark offline device=${deviceId}`);
+            console.log(`[GW-DEBUG] mark offline device=${deviceId} (grace expired)`);
+
+            // Push DB offline log so dashboard and monitor see exact DB transition
+            try {
+                require('../services/liveLogBus').push({
+                    channel: 'mongo',
+                    level: 'warn',
+                    message: `[DB:OFFLINE] Device ${deviceId} marked OFFLINE in MongoDB (grace period of 45s expired without reconnection. Cause: ${codeDesc}).`,
+                    deviceId,
+                    userId: ownerUserId || null,
+                    meta: { deviceId, status: 'offline', lastCloseCode: code, lastCloseReason: reasonStr }
+                });
+            } catch (_) {}
+
             const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
             const syncManager = require('../services/syncManager');
             if (isMysql()) {

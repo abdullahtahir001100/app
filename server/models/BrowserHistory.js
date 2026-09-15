@@ -13,7 +13,6 @@ const BrowserHistorySchema = new mongoose.Schema({
     browser: {
         type: String,
         required: true,
-        enum: ['Chrome', 'Edge', 'Firefox', 'Safari'],
         index: true
     },
     url: {
