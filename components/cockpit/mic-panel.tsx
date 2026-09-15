@@ -2,6 +2,7 @@
 
 import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 import { gatewayClient } from "@/lib/gateway-client";
+import { JitterAudioPlayer } from "@/lib/jitter-audio-player";
 import { Mic, MicOff, Radio, Volume2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -39,9 +40,7 @@ export function MicPanel({
   const [talkLevel, setTalkLevel] = useState(0);
   const [sampleRate, setSampleRate] = useState(0);
   const [error, setError] = useState("");
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-  const playheadRef = useRef(0);
+  const playerRef = useRef<JitterAudioPlayer | null>(null);
   const listeningRef = useRef(false);
   listeningRef.current = listening;
 
@@ -50,8 +49,22 @@ export function MicPanel({
   const talkProcRef = useRef<ScriptProcessorNode | null>(null);
   const talkingRef = useRef(false);
   talkingRef.current = talking;
-  const lastLevelUpdateRef = useRef(0);
   const currentSampleRateRef = useRef(0);
+
+  useEffect(() => {
+    const player = new JitterAudioPlayer({
+      onLevel: (peak) => setLevel(peak),
+    });
+    playerRef.current = player;
+    return () => {
+      player.stop();
+      playerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    playerRef.current?.setVolume(volume);
+  }, [volume]);
 
   const handleAudioFrame = useCallback(
     (frame: Uint8Array) => {
@@ -59,62 +72,16 @@ export function MicPanel({
       const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
       const rate = view.getUint32(1, false) || 48000;
       const pcm = frame.subarray(5);
-      const sampleCount = Math.floor(pcm.length / 2);
-      if (sampleCount === 0) return;
-
-      let ctx = audioCtxRef.current;
-      if (!ctx || ctx.state === "closed") {
-        ctx = new AudioContext();
-        audioCtxRef.current = ctx;
-        const gain = ctx.createGain();
-        gain.gain.value = volume;
-        gain.connect(ctx.destination);
-        gainRef.current = gain;
-      }
-      if (ctx.state === "suspended") {
-        void ctx.resume();
-      }
+      if (pcm.length === 0) return;
 
       if (currentSampleRateRef.current !== rate) {
         currentSampleRateRef.current = rate;
         setSampleRate(rate);
       }
 
-      const buffer = ctx.createBuffer(1, sampleCount, rate);
-      const channel = buffer.getChannelData(0);
-      const pcmView = new DataView(pcm.buffer, pcm.byteOffset, sampleCount * 2);
-      let peak = 0;
-      for (let i = 0; i < sampleCount; i += 1) {
-        const s = pcmView.getInt16(i * 2, true) / 32768;
-        channel[i] = s;
-        const a = Math.abs(s);
-        if (a > peak) peak = a;
-      }
-
-      const nowTime = Date.now();
-      if (nowTime - lastLevelUpdateRef.current >= 120) {
-        lastLevelUpdateRef.current = nowTime;
-        setLevel(peak);
-      }
-
-      const node = ctx.createBufferSource();
-      node.buffer = buffer;
-      node.connect(gainRef.current ?? ctx.destination);
-      node.onended = () => {
-        try {
-          node.disconnect();
-        } catch (_) {}
-      };
-
-      const now = ctx.currentTime;
-      // Ultra low-latency alignment: never allow playhead to drift beyond 120ms or fall behind
-      if (playheadRef.current < now || playheadRef.current > now + 0.12) {
-        playheadRef.current = now + 0.02;
-      }
-      node.start(playheadRef.current);
-      playheadRef.current += buffer.duration;
+      playerRef.current?.pushPcm16(pcm, rate);
     },
-    [volume]
+    []
   );
 
   const handleRef = useRef(handleAudioFrame);
@@ -135,10 +102,6 @@ export function MicPanel({
     });
   }, [subscribe, deviceId]);
 
-  useEffect(() => {
-    if (gainRef.current) gainRef.current.gain.value = volume;
-  }, [volume]);
-
   const startListen = () => {
     setError("");
     if (!includeMic && !includeSystem) {
@@ -146,16 +109,7 @@ export function MicPanel({
       return;
     }
     setListening(true);
-    playheadRef.current = 0;
-    if (!audioCtxRef.current) {
-      const ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-      const gain = ctx.createGain();
-      gain.gain.value = volume;
-      gain.connect(ctx.destination);
-      gainRef.current = gain;
-    }
-    void audioCtxRef.current.resume();
+    playerRef.current?.init();
     dispatch(
       "START_AUDIO_STREAM",
       {
@@ -169,6 +123,7 @@ export function MicPanel({
   const stopListen = useCallback(() => {
     setListening(false);
     setLevel(0);
+    playerRef.current?.stop();
     dispatch("STOP_AUDIO_STREAM", {}, deviceId);
   }, [deviceId, dispatch]);
 
@@ -279,8 +234,7 @@ export function MicPanel({
     return () => {
       dispatch("STOP_AUDIO_STREAM", {}, deviceId);
       dispatch("STOP_SPEAKER_PLAY", {}, deviceId);
-      void audioCtxRef.current?.close();
-      audioCtxRef.current = null;
+      playerRef.current?.stop();
       try {
         talkProcRef.current?.disconnect();
       } catch {

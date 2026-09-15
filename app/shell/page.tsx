@@ -9,6 +9,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { PremiumGate } from "@/components/premium-card";
 import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { PeerStatusBadge } from "@/components/peer-status-badge";
+import { PeerDirectTransport } from "@/lib/peer-direct-transport";
 
 type TerminalLine = {
   id: string;
@@ -207,6 +209,29 @@ export default function ShellPage() {
     });
   }, [subscribe, shellId]);
 
+  useEffect(() => {
+    if (!selectedDevice) return;
+    const direct = PeerDirectTransport.get(selectedDevice);
+    return direct.onMessage((data) => {
+      const packet = data as Record<string, unknown>;
+      const isShellResponse =
+        packet.type === "shell_output" ||
+        packet.type === "shell_output_chunk" ||
+        (packet.type === "sys_ack" && Boolean(packet.stdout || packet.stderr));
+
+      if (!isShellResponse) return;
+
+      setIsExecuting(false);
+      const stdout = typeof packet.stdout === "string" ? packet.stdout : "";
+      const stderr = typeof packet.stderr === "string" ? packet.stderr : "";
+      const lines: TerminalLine[] = [];
+      if (stdout) lines.push({ id: Math.random().toString(), text: stdout, color: "#0f172a" });
+      if (stderr) lines.push({ id: Math.random().toString(), text: stderr, color: "#dc2626" });
+      if (lines.length) setHistory((prev) => [...prev, ...lines]);
+      setStatus("Direct P2P response received");
+    });
+  }, [selectedDevice]);
+
   const runCommand = (command: string) => {
     if (!command) return;
     setHistory((prev) => [
@@ -225,6 +250,19 @@ export default function ShellPage() {
     }
 
     setIsExecuting(true);
+
+    // Try direct LAN/P2P transport first:
+    try {
+      const direct = PeerDirectTransport.get(target);
+      if (direct.isDirectReady()) {
+        const sent = direct.sendDirectControl("SHELL_EXECUTE", { command, shellId, shell: shellEngine });
+        if (sent) {
+          setStatus(`Executing (${shellEngine}) via Direct P2P on ${target}`);
+          return;
+        }
+      }
+    } catch {}
+
     const result = dispatch(
       "SHELL_EXECUTE",
       { command, shellId, shell: shellEngine },
@@ -304,11 +342,14 @@ export default function ShellPage() {
     );
   }
 
+  const selectedDeviceOption = devices.find((d) => d.value === selectedDevice);
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#f5f7fb] text-slate-800">
       <div className="flex flex-1 flex-col p-4">
         <div className="relative flex flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.06)]">
           <div className="fixed right-2 top-2 z-10 flex items-center gap-1.5 shadow-sm backdrop-blur">
+            <PeerStatusBadge deviceId={selectedDevice} localIp={selectedDeviceOption?.localIp} />
             <div className="flex overflow-hidden rounded-md border border-slate-200 bg-white text-[11px] font-semibold">
               <button
                 type="button"

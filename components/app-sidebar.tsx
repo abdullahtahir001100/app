@@ -42,6 +42,7 @@ import { unwrapDeviceBinaryFrame } from "@/lib/binary-frame";
 
 import Link from "next/link";
 import { clearDeviceRegistryCache, gatewayClient } from "@/lib/gateway-client";
+import { JitterAudioPlayer } from "@/lib/jitter-audio-player";
 
 function AppSidebarFallback() {
   return (
@@ -176,19 +177,20 @@ function AppSidebarContent() {
     return () => unsubscribe();
   }, [subscribe]);
 
+  const sidebarAudioPlayerRef = useRef<JitterAudioPlayer | null>(null);
+
   useEffect(() => {
     if (!isAudioStreaming) {
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-        audioContextRef.current = null;
+      if (sidebarAudioPlayerRef.current) {
+        sidebarAudioPlayerRef.current.stop();
+        sidebarAudioPlayerRef.current = null;
       }
       return;
     }
 
-    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const audioCtx = new AudioContextClass();
-    audioContextRef.current = audioCtx;
-    nextStartTimeRef.current = 0;
+    const player = new JitterAudioPlayer();
+    player.init();
+    sidebarAudioPlayerRef.current = player;
 
     const unsubscribe = subscribe((event) => {
       if (event.type !== "binary") return;
@@ -203,33 +205,10 @@ function AppSidebarContent() {
           if (frame.length < 5 || frame[0] !== 0x0a) return;
 
           const sampleRate = (frame[1] << 24) | (frame[2] << 16) | (frame[3] << 8) | frame[4];
-          const samplesByteOffset = 5;
-          const samplesLength = Math.floor((frame.length - samplesByteOffset) / 2);
-          if (samplesLength <= 0 || !sampleRate) return;
+          const pcmData = frame.subarray(5);
+          if (pcmData.length === 0 || !sampleRate) return;
 
-          const float32Array = new Float32Array(samplesLength);
-          const dataView = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
-          for (let i = 0; i < samplesLength; i++) {
-            float32Array[i] = dataView.getInt16(samplesByteOffset + i * 2, true) / 32768.0;
-          }
-
-          if (audioCtx.state === "suspended") {
-            audioCtx.resume().catch(() => {});
-          }
-
-          const audioBuffer = audioCtx.createBuffer(1, float32Array.length, sampleRate);
-          audioBuffer.copyToChannel(float32Array, 0);
-
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-
-          const now = audioCtx.currentTime;
-          if (nextStartTimeRef.current < now) {
-            nextStartTimeRef.current = now + 0.06;
-          }
-          source.start(nextStartTimeRef.current);
-          nextStartTimeRef.current += audioBuffer.duration;
+          sidebarAudioPlayerRef.current?.pushPcm16(pcmData, sampleRate);
         })
         .catch((err) => {
           console.error("[AUDIO SIDEBAR] Failed to parse binary audio packet:", err);
@@ -238,9 +217,9 @@ function AppSidebarContent() {
 
     return () => {
       unsubscribe();
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-        audioContextRef.current = null;
+      if (sidebarAudioPlayerRef.current) {
+        sidebarAudioPlayerRef.current.stop();
+        sidebarAudioPlayerRef.current = null;
       }
     };
   }, [isAudioStreaming, subscribe]);

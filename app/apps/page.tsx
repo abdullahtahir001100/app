@@ -34,6 +34,8 @@ import Select from "react-select";
 import { PremiumGate } from "@/components/premium-card";
 import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { PeerStatusBadge } from "@/components/peer-status-badge";
+import { PeerDirectTransport } from "@/lib/peer-direct-transport";
 
 type JobLine = {
   id: string;
@@ -198,22 +200,34 @@ export default function InstallAppsPage() {
         }
         const chunkB64 = btoa(binary);
 
-        const res = dispatch(
-          "FILE_CHUNK_UPLOAD",
-          {
-            path: remoteDir,
-            file_name: file.name,
-            chunk_index: chunkIndex,
-            total_chunks: totalChunks,
-            chunk_b64: chunkB64,
-          },
-          selectedDevice
-        );
+        const chunkPayload = {
+          path: remoteDir,
+          file_name: file.name,
+          chunk_index: chunkIndex,
+          total_chunks: totalChunks,
+          chunk_b64: chunkB64,
+        };
 
-        if (!res.ok) {
-          throw new Error(
-            `Dispatch failed at chunk ${chunkIndex + 1}/${totalChunks}: ${res.reason || "Agent disconnected"}`
+        let directSent = false;
+        try {
+          const direct = PeerDirectTransport.get(selectedDevice);
+          if (direct.isDirectReady()) {
+            directSent = direct.sendDirectControl("FILE_CHUNK_UPLOAD", chunkPayload);
+          }
+        } catch {}
+
+        if (!directSent) {
+          const res = dispatch(
+            "FILE_CHUNK_UPLOAD",
+            chunkPayload,
+            selectedDevice
           );
+
+          if (!res.ok) {
+            throw new Error(
+              `Dispatch failed at chunk ${chunkIndex + 1}/${totalChunks}: ${res.reason || "Agent disconnected"}`
+            );
+          }
         }
 
         uploadedBytes += slice.size;
@@ -356,6 +370,8 @@ export default function InstallAppsPage() {
                   classNamePrefix="react-select"
                 />
               </div>
+
+              <PeerStatusBadge deviceId={selectedDevice} localIp={activeDeviceObj?.localIp} />
 
               {/* Navigation Tabs */}
               <div className="flex items-center rounded-lg border border-border bg-muted/40 p-1">

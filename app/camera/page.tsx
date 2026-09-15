@@ -22,6 +22,8 @@ import { PremiumGate } from "@/components/premium-card";
 import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { WebRtcClient, type WebRtcSignal, type WebRtcState } from "@/lib/webrtc-client";
+import { PeerStatusBadge } from "@/components/peer-status-badge";
+import { PeerDirectTransport } from "@/lib/peer-direct-transport";
 
 function b64ToBlob(b64: string, mimeType: string): Blob {
   const binary = atob(b64);
@@ -66,7 +68,7 @@ export default function CameraPage() {
 
   const [selectedDevice, setSelectedDevice] = useState("");
   const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
-  const canControl = isConnected && agentOnline;
+  const canControl = isConnected && Boolean(selectedDevice);
   const [commandStatus, setCommandStatus] = useState("Waiting for live agent...");
   const [mediaTransport, setMediaTransport] = useState<MediaTransport>("wss");
   const selectedDeviceRef = useRef("");
@@ -718,9 +720,24 @@ export default function CameraPage() {
       return;
     }
 
+    // Try ultra-fast direct P2P (LAN or WAN Tunnel) first
+    const directSent = PeerDirectTransport.get(targetDeviceId).sendDirectControl(actionToken, customPayload);
+    if (directSent) {
+      if (!silent) setCommandStatus(`Sent ${actionToken} directly via P2P LAN to ${targetDeviceId}`);
+      if (!selectedDeviceRef.current) {
+        selectedDeviceRef.current = targetDeviceId;
+        setSelectedDevice(targetDeviceId);
+      }
+      return;
+    }
+
     const result = gatewayDispatch(actionToken, customPayload, targetDeviceId);
     if (!result.ok) {
-      if (!silent) setCommandStatus("Socket offline. Start the server and Rust agent first.");
+      ensureConnected();
+      setTimeout(() => {
+        gatewayDispatch(actionToken, customPayload, targetDeviceId);
+      }, 300);
+      if (!silent) setCommandStatus(`Connecting and sending ${actionToken} to ${targetDeviceId}...`);
       return;
     }
 
@@ -1036,12 +1053,17 @@ export default function CameraPage() {
         <div className="p-6 lg:p-12">
 
           {/* Header */}
-          <div className="mb-8 flex justify-between items-start">
+          <div className="mb-8 flex flex-wrap justify-between items-start gap-4">
             <div>
-              <h1 className="text-4xl lg:text-5xl font-display tracking-tight mb-2 flex items-center gap-3">
-                Camera Access
-                <span className={`w-3 h-3 rounded-full ${linkDotClass}`} />
-              </h1>
+              <div className="flex flex-wrap items-center gap-3 mb-2">
+                <h1 className="text-4xl lg:text-5xl font-display tracking-tight flex items-center gap-3">
+                  Camera Access
+                  <span className={`w-3 h-3 rounded-full ${linkDotClass}`} />
+                </h1>
+                {selectedDevice && (
+                  <PeerStatusBadge deviceId={selectedDevice} localIp={selectedDeviceOption?.localIp} />
+                )}
+              </div>
               <p className="text-muted-foreground">Control every detected local camera from the Rust agent in real time</p>
             </div>
             <Button variant="outline" size="icon" onClick={() => fetchLatestTelemetry()} disabled={!canControl} className="border-border hover:bg-accent/10">

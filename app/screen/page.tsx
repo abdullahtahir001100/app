@@ -36,6 +36,8 @@ import { MicPanel } from "@/components/cockpit/mic-panel";
 import { PremiumGate } from "@/components/premium-card";
 import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { PeerStatusBadge } from "@/components/peer-status-badge";
+import { PeerDirectTransport } from "@/lib/peer-direct-transport";
 
 type StreamQuality = "fast" | "high" | "ultra" | "medium" | "saver" | "low";
 
@@ -150,7 +152,7 @@ export default function ScreenPage() {
   const [commandStatus, setCommandStatus] = useState("Connecting...");
   const [mediaTransport, setMediaTransport] = useState<MediaTransport>("wss");
   const agentOnline = Boolean(selectedDevice) && isDeviceOnline(selectedDevice);
-  const canControl = isConnected && agentOnline;
+  const canControl = isConnected && Boolean(selectedDevice);
   const [isStreaming, setIsStreaming] = useState(false);
   const [controlEnabled, setControlEnabled] = useState(true);
   const [showPanel, setShowPanel] = useState(true);
@@ -302,6 +304,17 @@ export default function ScreenPage() {
       if (!selectedDeviceRef.current) {
         selectedDeviceRef.current = target;
         setSelectedDevice(target);
+      }
+
+      // Fast LAN / Direct P2P priority check:
+      try {
+        const direct = PeerDirectTransport.get(target);
+        if (direct.isDirectReady()) {
+          direct.sendDirectControl(action, payload);
+          return true;
+        }
+      } catch {
+        // Fallback to gateway
       }
 
       const result = gatewayDispatch(action, payload, target);
@@ -723,6 +736,8 @@ export default function ScreenPage() {
                 isDisabled={deviceOptions.length === 0}
               />
             </div>
+
+            <PeerStatusBadge deviceId={selectedDevice} localIp={selectedDeviceOption?.localIp} />
 
             <Button
               size="sm"
