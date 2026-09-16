@@ -353,15 +353,8 @@ pub fn capture_stream_frame(
     settings: StreamCaptureSettings,
     force_keyframe: bool,
 ) -> StreamOutcome {
-    let monitors = match Monitor::all() {
-        Ok(list) => list,
-        Err(err) => {
-            eprintln!("[SCREEN] Monitor::all failed: {}", err);
-            return StreamOutcome::Failed;
-        }
-    };
+    let monitors = crate::screen::get_active_monitors();
     if monitors.is_empty() {
-        eprintln!("[SCREEN] No monitors returned by xcap");
         return StreamOutcome::Failed;
     }
     let monitor = match monitors

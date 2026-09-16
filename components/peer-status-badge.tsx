@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import { PeerDirectTransport, TransportStatus } from "@/lib/peer-direct-transport";
 import { Wifi, Zap, Globe, ShieldCheck } from "lucide-react";
 
-export function PeerStatusBadge({ deviceId, localIp }: { deviceId: string; localIp?: string }) {
+export function PeerStatusBadge({
+  deviceId,
+  localIp,
+  webrtcState,
+}: {
+  deviceId: string;
+  localIp?: string;
+  webrtcState?: string;
+}) {
   const [status, setStatus] = useState<TransportStatus>({
     mode: "gateway",
     connected: true,
@@ -23,8 +31,11 @@ export function PeerStatusBadge({ deviceId, localIp }: { deviceId: string; local
     return () => unsub();
   }, [deviceId, localIp]);
 
-  const isLan = status.mode === "lan_p2p" || status.isLanReachable;
-  const isWan = status.mode === "wan_tunnel";
+  const isUdpConnected = webrtcState === "connected";
+  const isPrivateIp = localIp && /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.0\.0\.1|localhost)/.test(localIp);
+  const isLan = status.mode === "lan_p2p" || (isUdpConnected && isPrivateIp);
+  const isWanP2P = isUdpConnected && !isPrivateIp;
+  const isConnectingP2P = webrtcState === "connecting";
 
   return (
     <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium border shadow-xs transition-all">
@@ -36,20 +47,28 @@ export function PeerStatusBadge({ deviceId, localIp }: { deviceId: string; local
           </span>
           <Wifi className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
           <span className="text-emerald-700 dark:text-emerald-300 font-semibold">
-            DIRECT LAN P2P ({status.latencyMs > 0 ? `${status.latencyMs}ms` : "<1ms"})
+            DIRECT LAN P2P (UDP &lt;1ms)
           </span>
-          {status.localIp && (
+          {localIp && (
             <span className="text-emerald-600/70 dark:text-emerald-400/70 border-l border-emerald-500/20 pl-1.5">
-              {status.localIp}
+              {localIp}
             </span>
           )}
         </>
-      ) : isWan ? (
+      ) : isWanP2P ? (
         <>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
           <Zap className="w-3 h-3 text-amber-600 dark:text-amber-400" />
           <span className="text-amber-700 dark:text-amber-300 font-semibold">
             DIRECT P2P TUNNEL (UDP)
+          </span>
+        </>
+      ) : isConnectingP2P ? (
+        <>
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400 animate-pulse" />
+          <Zap className="w-3 h-3 text-amber-500 animate-bounce" />
+          <span className="text-amber-600 dark:text-amber-300">
+            CONNECTING P2P TUNNEL…
           </span>
         </>
       ) : (

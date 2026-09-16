@@ -332,7 +332,7 @@ export default function ScreenPage() {
     [deviceOptions, gatewayDispatch, refreshDevices, resolveTarget, ensureConnected]
   );
 
-  const probeAndStream = useCallback(async () => {
+  const probeAndStream = useCallback(() => {
     const target = selectedDeviceRef.current || resolveTarget();
     if (!target) {
       setCommandStatus("No live agent.");
@@ -341,16 +341,9 @@ export default function ScreenPage() {
 
     selectedDeviceRef.current = target;
     setIsStreaming(true);
-    setCommandStatus("Connecting media socket…");
+    setCommandStatus("Starting instant 60 FPS stream…");
 
-    const mediaOk = await ensureMediaReady(12_000);
-    if (!mediaOk) {
-      setCommandStatus("Media socket not ready — retry Start (check /api/auth/ws-ticket)");
-      // Still try start so agent prepares frames for when media reconnects.
-    } else {
-      setCommandStatus("Media ready — starting agent stream…");
-    }
-
+    // 1. Send START_SCREEN_STREAM immediately — zero 5-second wait!
     const started = dispatchControl(
       "START_SCREEN_STREAM",
       buildQualityPayload(streamQualityRef.current, streamFpsRef.current),
@@ -367,7 +360,13 @@ export default function ScreenPage() {
       // ignore
     }
 
-    setCommandStatus("Waiting for agent stream…");
+    // 2. Concurrently ensure media socket connects in background without delaying startup
+    void ensureMediaReady(12_000).then((mediaOk) => {
+      if (mediaOk) {
+        setCommandStatus(`Stream live — 60 FPS (${target})`);
+      }
+    });
+
     dispatchControl("PROBE_DISPLAYS", {}, target);
     dispatchControl("LIST_DISPLAYS", {}, target);
   }, [dispatchControl, ensureMediaReady, resolveTarget]);
@@ -737,7 +736,7 @@ export default function ScreenPage() {
               />
             </div>
 
-            <PeerStatusBadge deviceId={selectedDevice} localIp={selectedDeviceOption?.localIp} />
+            <PeerStatusBadge deviceId={selectedDevice} localIp={selectedDeviceOption?.localIp} webrtcState={webrtcState} />
 
             <Button
               size="sm"

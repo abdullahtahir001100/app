@@ -79,8 +79,8 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
   const pendingBlobRef = useRef<Blob | null>(null);
 
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const nextBitmapRef = useRef<ImageBitmap | null>(null);
-  const rafIdRef = useRef<number | null>(null);
+  const pendingBitmapRef = useRef<ImageBitmap | null>(null);
+  const rafRunningRef = useRef(false);
 
   // Direct hardware paint as soon as GPU decodes the frame (zero V-Sync queue delay, 0ms backlog)
   const drawBitmapDirect = useCallback((bitmap: ImageBitmap) => {
@@ -92,18 +92,21 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
 
     let ctx = ctxRef.current;
     if (!ctx || ctx.canvas !== canvas) {
-      ctx = canvas.getContext("2d", { alpha: false });
+      ctx = (canvas.getContext("2d", { alpha: false, desynchronized: true }) ||
+        canvas.getContext("2d", { alpha: false })) as CanvasRenderingContext2D | null;
       ctxRef.current = ctx;
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+      }
     }
 
     if (ctx) {
       if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
         canvas.width = bitmap.width;
         canvas.height = bitmap.height;
+        ctx.imageSmoothingEnabled = true;
       }
 
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "medium";
       ctx.drawImage(bitmap, 0, 0);
 
       if (!hasLiveFrameRef.current) {
@@ -125,41 +128,44 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
     bitmap.close();
   }, []);
 
-  const pumpDecodeLoop = useCallback(async () => {
-    if (isDecodingRef.current) return;
-    const blob = pendingBlobRef.current;
-    if (!blob) return;
-    pendingBlobRef.current = null;
-    isDecodingRef.current = true;
-
-    try {
-      // GPU decode off the main thread
-      const bitmap = await createImageBitmap(blob, {
-        premultiplyAlpha: "none",
-        colorSpaceConversion: "none",
-      }).catch(() => createImageBitmap(blob));
-
-      // Paint immediately to the screen — zero frame queue backlog
-      drawBitmapDirect(bitmap);
-    } catch (err) {
-      console.warn("Frame decode failed:", err);
-    } finally {
-      isDecodingRef.current = false;
-      // If newer frames arrived while decoding, ONLY decode the absolute latest one!
-      if (pendingBlobRef.current) {
-        void pumpDecodeLoop();
+  const scheduleFrameRender = useCallback(() => {
+    if (rafRunningRef.current) return;
+    rafRunningRef.current = true;
+    requestAnimationFrame(() => {
+      rafRunningRef.current = false;
+      const bmp = pendingBitmapRef.current;
+      if (bmp) {
+        pendingBitmapRef.current = null;
+        drawBitmapDirect(bmp);
       }
-    }
+    });
   }, [drawBitmapDirect]);
 
-  const paintFrame = useCallback((blob: Blob) => {
-    if (blob.size < 100) return;
-    // Always overwrite with the newest incoming frame (drop older backlogs)
-    pendingBlobRef.current = blob;
-    if (!isDecodingRef.current) {
-      void pumpDecodeLoop();
-    }
-  }, [pumpDecodeLoop]);
+  const paintFrame = useCallback(
+    async (blobOrBuffer: Blob | ArrayBuffer) => {
+      try {
+        const blob =
+          blobOrBuffer instanceof Blob
+            ? blobOrBuffer
+            : new Blob([blobOrBuffer], { type: "image/jpeg" });
+        if (blob.size < 100) return;
+
+        const bitmap = await createImageBitmap(blob, {
+          premultiplyAlpha: "none",
+          colorSpaceConversion: "none",
+        }).catch(() => createImageBitmap(blob));
+
+        if (pendingBitmapRef.current) {
+          pendingBitmapRef.current.close();
+        }
+        pendingBitmapRef.current = bitmap;
+        scheduleFrameRender();
+      } catch {
+        // frame decode error ignored for continuity
+      }
+    },
+    [scheduleFrameRender]
+  );
 
   paintFrameRef.current = paintFrame;
 
@@ -193,9 +199,9 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
     latestBlobRef.current = null;
     pendingBlobRef.current = null;
     isDecodingRef.current = false;
-    if (nextBitmapRef.current) {
-      nextBitmapRef.current.close();
-      nextBitmapRef.current = null;
+    if (pendingBitmapRef.current) {
+      pendingBitmapRef.current.close();
+      pendingBitmapRef.current = null;
     }
     if (bitmapRef.current) {
       bitmapRef.current.close();

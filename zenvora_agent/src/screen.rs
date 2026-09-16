@@ -44,7 +44,38 @@ pub fn quality_preset(name: &str) -> (u32, u8, u32) {
     }
 }
 
-pub fn invalidate_monitor_cache() {}
+use std::sync::RwLock;
+use std::time::Instant;
+
+static MONITOR_CACHE: RwLock<Option<(Instant, Vec<Monitor>)>> = RwLock::new(None);
+
+pub fn get_active_monitors() -> Vec<Monitor> {
+    if let Ok(guard) = MONITOR_CACHE.read() {
+        if let Some((ts, ref list)) = *guard {
+            if ts.elapsed() < std::time::Duration::from_millis(3000) && !list.is_empty() {
+                return list.clone();
+            }
+        }
+    }
+    match Monitor::all() {
+        Ok(list) => {
+            if let Ok(mut guard) = MONITOR_CACHE.write() {
+                *guard = Some((Instant::now(), list.clone()));
+            }
+            list
+        }
+        Err(err) => {
+            eprintln!("[SCREEN] Monitor::all failed: {}", err);
+            Vec::new()
+        }
+    }
+}
+
+pub fn invalidate_monitor_cache() {
+    if let Ok(mut guard) = MONITOR_CACHE.write() {
+        *guard = None;
+    }
+}
 
 impl ScreenState {
     pub fn new() -> Self {
