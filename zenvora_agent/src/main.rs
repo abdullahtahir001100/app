@@ -40,6 +40,8 @@ pub mod media_channels;
 pub mod screen_abr;
 pub mod webrtc_session;
 pub mod messages;
+pub mod openclaw_db;
+pub mod openclaw_agent;
 use std::env;
 #[cfg(windows)]
 use std::fs;
@@ -125,6 +127,11 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
 
     connection_status::log("Agent worker starting");
     com_runtime::init_process_com();
+
+    // Initialize OpenClaw tracking database for autonomous agent
+    if let Err(e) = openclaw_db::init_db() {
+        eprintln!("[OpenClaw DB] Warning: init failed: {}", e);
+    }
 
     let notifier = notifications::global_notifier();
     notifier.start_listening();

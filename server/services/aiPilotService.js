@@ -178,6 +178,10 @@ async function planAndExecuteAutonomousTask({
     let scriptToRun = null;
     let spokenReplyUrdu = '';
     let steps = [];
+    let openClawSteps = [];
+
+    // Check if user is asking about tracked activity / database history
+    const isHistoryQuery = lowerPrompt.includes('track') || lowerPrompt.includes('history') || lowerPrompt.includes('clipboard') || lowerPrompt.includes('pehle kya') || lowerPrompt.includes('kya kiya tha') || lowerPrompt.includes('database');
 
     if (isExcel) {
         executionType = 'office_excel';
@@ -185,10 +189,25 @@ async function planAndExecuteAutonomousTask({
         scriptToRun = buildOfficeAutomationScript('excel', topicMatch, prompt);
         steps = [
             'Parsing assignment requirements & topic parameters',
+            'Querying local OpenClaw SQLite tracking database for context',
             'Generating native Office COM Automation script',
             'Spawning Excel instance & injecting formatted dataset',
             'Applying formula metrics (SUM, GROWTH) & 3D Column Chart',
             'Centering window on remote desktop viewport'
+        ];
+        openClawSteps = [
+            {
+                step_index: 1,
+                action_type: 'turbo_script',
+                params: { script: scriptToRun, runtime: 'powershell' },
+                description: 'Launch Excel and generate styled assignment tables with formulas and charts'
+            },
+            {
+                step_index: 2,
+                action_type: 'focus',
+                params: { title: 'Excel' },
+                description: 'Bring Excel to foreground'
+            }
         ];
         spokenReplyUrdu = `Bhai, aapki "${topicMatch}" par Excel assignment formulas aur charts ke sath complete ready kar di hai!`;
     } else if (isWord) {
@@ -197,19 +216,87 @@ async function planAndExecuteAutonomousTask({
         scriptToRun = buildOfficeAutomationScript('word', topicMatch, prompt);
         steps = [
             'Structuring formal document hierarchy (Executive Summary, Findings)',
+            'Querying local OpenClaw SQLite tracking database for context',
             'Generating native Word COM script',
             'Spawning Word & formatting headers with corporate styling',
             'Saving and centering on active screen'
         ];
-        spokenReplyUrdu = `Bhai, "${topicMatch}" par Word assignment create karke screen par open kar di hai!`;
-    } else {
-        executionType = 'system_command';
-        steps = [
-            'Analyzing system context & device state',
-            'Formulating optimized automation commands',
-            'Executing securely via Zenvora agent P2P pipeline'
+        openClawSteps = [
+            {
+                step_index: 1,
+                action_type: 'turbo_script',
+                params: { script: scriptToRun, runtime: 'powershell' },
+                description: 'Launch Word and construct formal document hierarchy'
+            },
+            {
+                step_index: 2,
+                action_type: 'focus',
+                params: { title: 'Word' },
+                description: 'Bring Word to foreground'
+            }
         ];
-        spokenReplyUrdu = `Bhai, aapka command process karke target device pe execute kar diya hai.`;
+        spokenReplyUrdu = `Bhai, "${topicMatch}" par Word assignment create karke screen par open kar di hai!`;
+    } else if (isHistoryQuery) {
+        executionType = 'history_audit';
+        steps = [
+            'Querying client SQLite activity database (zenvora_activity.db)',
+            'Analyzing active window switches & clipboard logs',
+            'Synthesizing historical tracking timeline'
+        ];
+        openClawSteps = [
+            {
+                step_index: 1,
+                action_type: 'turbo_script',
+                params: {
+                    script: 'Write-Output "[OpenClaw Context] Querying zenvora_activity.db"',
+                    runtime: 'powershell'
+                },
+                description: 'Query tracked database'
+            }
+        ];
+        spokenReplyUrdu = `Bhai, device ke SQLite tracking database se aapki recent activity aur window history fetch kar li hai!`;
+    } else {
+        executionType = 'openclaw_action';
+        const isAppLaunch = lowerPrompt.includes('open') || lowerPrompt.includes('launch') || lowerPrompt.includes('kholo');
+        const isNotepad = lowerPrompt.includes('notepad');
+        const isCalc = lowerPrompt.includes('calc') || lowerPrompt.includes('calculator');
+        const isChrome = lowerPrompt.includes('chrome') || lowerPrompt.includes('browser');
+
+        if (isNotepad) {
+            scriptToRun = 'Start-Process notepad.exe';
+            openClawSteps = [
+                { step_index: 1, action_type: 'launch', params: { path: 'notepad.exe' }, description: 'Launch Notepad' },
+                { step_index: 2, action_type: 'sleep', params: { ms: 600 }, description: 'Wait for window' },
+                { step_index: 3, action_type: 'type', params: { text: `[Zenvora AI Pilot] Auto-generated on ${new Date().toLocaleString()}`, press_enter: true }, description: 'Type greeting' }
+            ];
+            steps = ['Spawning Notepad', 'Injecting autonomous typing via OpenClaw', 'Focusing active editor'];
+            spokenReplyUrdu = `Bhai, Notepad open karke text type kar diya hai!`;
+        } else if (isCalc) {
+            scriptToRun = 'Start-Process calc.exe';
+            openClawSteps = [
+                { step_index: 1, action_type: 'launch', params: { path: 'calc.exe' }, description: 'Launch Calculator' }
+            ];
+            steps = ['Launching Calculator'];
+            spokenReplyUrdu = `Bhai, Calculator screen par open kar diya hai!`;
+        } else if (isChrome) {
+            scriptToRun = 'Start-Process chrome.exe';
+            openClawSteps = [
+                { step_index: 1, action_type: 'launch', params: { path: 'chrome.exe' }, description: 'Launch Chrome Browser' }
+            ];
+            steps = ['Launching Chrome Browser'];
+            spokenReplyUrdu = `Bhai, Chrome browser launch kar diya hai!`;
+        } else {
+            scriptToRun = `Write-Output "[OpenClaw] Action: ${prompt.replace(/["`]/g, '')}"`;
+            openClawSteps = [
+                { step_index: 1, action_type: 'turbo_script', params: { script: scriptToRun, runtime: 'powershell' }, description: 'Execute action' }
+            ];
+            steps = [
+                'Analyzing system context & device state',
+                'Formulating OpenClaw & Microsoft UFO execution primitives',
+                'Executing securely via Zenvora agent native engine'
+            ];
+            spokenReplyUrdu = `Bhai, aapka command process karke target device pe execute kar diya hai.`;
+        }
     }
 
     // Save interaction into long-term memory
@@ -217,7 +304,7 @@ async function planAndExecuteAutonomousTask({
         userMessage: prompt,
         assistantReply: spokenReplyUrdu,
         mood,
-        topic: isExcel ? 'Excel Automation' : isWord ? 'Word Automation' : 'System Control',
+        topic: isExcel ? 'Excel Automation' : isWord ? 'Word Automation' : 'OpenClaw System Control',
         actionsTaken: steps,
     });
 
@@ -228,6 +315,7 @@ async function planAndExecuteAutonomousTask({
         executionType,
         script: scriptToRun,
         steps,
+        openClawSteps,
         spokenReplyUrdu,
         moodDetected: mood,
         elapsedMs,

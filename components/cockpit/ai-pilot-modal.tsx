@@ -198,9 +198,12 @@ export function AiPilotModal({ open, onOpenChange, deviceId }: AiPilotModalProps
                   <Badge variant="secondary" className="text-[10px] bg-purple-500/10 text-purple-600 border-purple-500/20 font-mono">
                     Hybrid Turbo Mode
                   </Badge>
+                  <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30 bg-emerald-500/5 font-mono">
+                    OpenClaw + SQLite DB
+                  </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground mt-0.5">
-                  Autonomous Microsoft UFO + OpenClaw agent executing live on remote target ({deviceId || "active agent"}).
+                  Autonomous Microsoft UFO + OpenClaw engine running on Rust client with direct access to tracked OS database.
                 </DialogDescription>
               </div>
             </div>
@@ -239,22 +242,22 @@ export function AiPilotModal({ open, onOpenChange, deviceId }: AiPilotModalProps
 
               <button
                 type="button"
+                onClick={() => handleExecute("Device ke SQLite tracking database se check karo pichle 24 ghante me user ne kya kya kiya aur latest clipboard kya hai")}
+                disabled={isProcessing}
+                className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-card/50 hover:bg-purple-500/5 hover:border-purple-500/30 text-left text-xs transition group"
+              >
+                <Cpu className="w-4 h-4 text-emerald-500 shrink-0 group-hover:scale-110 transition-transform" />
+                <span className="line-clamp-1">Query SQLite Tracked History & Clipboard</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleExecute("Desktop ke files ko extensions ke hisab se organize kar do")}
                 disabled={isProcessing}
                 className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-card/50 hover:bg-purple-500/5 hover:border-purple-500/30 text-left text-xs transition group"
               >
                 <FolderTree className="w-4 h-4 text-amber-500 shrink-0 group-hover:scale-110 transition-transform" />
                 <span className="line-clamp-1">Clean & Organize Desktop Folders</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleExecute("Device network latency check karo aur report display karo")}
-                disabled={isProcessing}
-                className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-card/50 hover:bg-purple-500/5 hover:border-purple-500/30 text-left text-xs transition group"
-              >
-                <Zap className="w-4 h-4 text-purple-500 shrink-0 group-hover:scale-110 transition-transform" />
-                <span className="line-clamp-1">Speed & Diagnostic Assessment</span>
               </button>
             </div>
           </div>

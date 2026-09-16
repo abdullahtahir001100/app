@@ -5,6 +5,25 @@ use crate::heal_ai::{handle_heal_command, is_heal_action};
 use crate::screen_commands::{handle_screen_command, is_screen_action};
 use crate::history_commands::HistoryCommand;
 use crate::shell_commands::{handle_shell_command, is_shell_action};
+use crate::openclaw_agent::{OpenClawAgent, OpenClawStep};
+use crate::openclaw_db;
+
+pub fn is_openclaw_action(action: &str) -> bool {
+    matches!(
+        action,
+        "OPENCLAW_EXECUTE"
+            | "OPENCLAW_EXECUTE_PLAN"
+            | "AI_AGENT_EXECUTE"
+            | "OPENCLAW_GET_CONTEXT"
+            | "AI_AGENT_GET_CONTEXT"
+            | "OPENCLAW_QUERY_DB"
+            | "AI_AGENT_QUERY_DB"
+            | "OPENCLAW_INSPECT_UI"
+            | "AI_AGENT_INSPECT_UI"
+            | "OPENCLAW_STEP"
+            | "AI_AGENT_STEP"
+    )
+}
 
 pub fn is_history_action(action: &str) -> bool {
     matches!(
@@ -312,8 +331,140 @@ pub fn is_audio_action(action: &str) -> bool {
     )
 }
 
+pub fn handle_openclaw_command(action: &str, payload: &serde_json::Value) -> Option<CommandResponse> {
+    let response_json = match action {
+        "OPENCLAW_GET_CONTEXT" | "AI_AGENT_GET_CONTEXT" => {
+            let ctx = openclaw_db::synthesize_user_context();
+            serde_json::json!({
+                "type": "openclaw_response",
+                "action": action,
+                "status": "success",
+                "context": ctx
+            })
+        }
+        "OPENCLAW_INSPECT_UI" | "AI_AGENT_INSPECT_UI" => {
+            let inspect = OpenClawAgent::inspect_desktop();
+            serde_json::json!({
+                "type": "openclaw_response",
+                "action": action,
+                "status": "success",
+                "inspection": inspect
+            })
+        }
+        "OPENCLAW_QUERY_DB" | "AI_AGENT_QUERY_DB" => {
+            let limit = payload.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let category = payload.get("category").and_then(|v| v.as_str());
+            let search = payload.get("search").or_else(|| payload.get("query")).and_then(|v| v.as_str());
+            let table = payload.get("table").and_then(|v| v.as_str()).unwrap_or("events");
+
+            match table {
+                "clipboard" => {
+                    let clips = openclaw_db::query_clipboard(limit);
+                    serde_json::json!({
+                        "type": "openclaw_response",
+                        "action": action,
+                        "status": "success",
+                        "table": "clipboard",
+                        "records": clips
+                    })
+                }
+                "windows" => {
+                    let wins = openclaw_db::query_window_history(limit);
+                    serde_json::json!({
+                        "type": "openclaw_response",
+                        "action": action,
+                        "status": "success",
+                        "table": "windows",
+                        "records": wins
+                    })
+                }
+                _ => {
+                    let events = openclaw_db::query_events(limit, category, search);
+                    serde_json::json!({
+                        "type": "openclaw_response",
+                        "action": action,
+                        "status": "success",
+                        "table": "events",
+                        "records": events
+                    })
+                }
+            }
+        }
+        "OPENCLAW_STEP" | "AI_AGENT_STEP" => {
+            let action_type = payload.get("actionType").or_else(|| payload.get("action_type")).and_then(|v| v.as_str()).unwrap_or("turbo_script");
+            let params = payload.get("params").cloned().unwrap_or_else(|| payload.clone());
+            let start = std::time::Instant::now();
+            let res = OpenClawAgent::execute_primitive(action_type, &params);
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            match res {
+                Ok(out) => serde_json::json!({
+                    "type": "openclaw_response",
+                    "action": action,
+                    "status": "success",
+                    "output": out,
+                    "durationMs": duration_ms
+                }),
+                Err(err) => serde_json::json!({
+                    "type": "openclaw_response",
+                    "action": action,
+                    "status": "error",
+                    "error": err,
+                    "durationMs": duration_ms
+                }),
+            }
+        }
+        "OPENCLAW_EXECUTE" | "OPENCLAW_EXECUTE_PLAN" | "AI_AGENT_EXECUTE" => {
+            let task_id = payload.get("taskId").or_else(|| payload.get("task_id")).and_then(|v| v.as_str()).unwrap_or("plan_exec");
+
+            let steps: Vec<OpenClawStep> = if let Some(arr) = payload.get("steps").and_then(|v| v.as_array()) {
+                arr.iter().enumerate().filter_map(|(idx, item)| {
+                    let action_type = item.get("action_type").or_else(|| item.get("actionType")).and_then(|v| v.as_str())?.to_string();
+                    let params = item.get("params").cloned().unwrap_or(serde_json::Value::Null);
+                    let description = item.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let target = item.get("target").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    Some(OpenClawStep {
+                        step_index: idx + 1,
+                        action_type,
+                        target,
+                        params,
+                        description,
+                    })
+                }).collect()
+            } else if let Some(script) = payload.get("script").or_else(|| payload.get("command")).and_then(|v| v.as_str()) {
+                vec![OpenClawStep {
+                    step_index: 1,
+                    action_type: "turbo_script".to_string(),
+                    target: None,
+                    params: serde_json::json!({ "script": script }),
+                    description: "Execute autonomous turbo script".to_string(),
+                }]
+            } else {
+                Vec::new()
+            };
+
+            let report = OpenClawAgent::execute_plan(task_id, steps);
+            serde_json::json!({
+                "type": "openclaw_response",
+                "action": action,
+                "status": if report.success { "success" } else { "partial_or_error" },
+                "report": report
+            })
+        }
+        _ => return None,
+    };
+
+    Some(CommandResponse {
+        json: response_json,
+        frame: None,
+        frame_kind: 0,
+    })
+}
+
 pub fn dispatch_command(packet: IncomingPacket, agent: &mut AgentState) -> Option<CommandResponse> {
-    if is_agent_control_action(&packet.action) {
+    if is_openclaw_action(&packet.action) {
+        handle_openclaw_command(&packet.action, &packet.payload)
+    } else if is_agent_control_action(&packet.action) {
         handle_agent_control_command(&packet.action, &packet.payload)
     } else if is_heal_action(&packet.action) {
         handle_heal_command(&packet.action, &packet.payload)

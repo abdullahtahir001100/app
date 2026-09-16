@@ -73,6 +73,9 @@ impl ActivityLogger {
         details: &str,
         metadata: Value,
     ) {
+        // Record into local SQLite tracked database for OpenClaw / UFO autonomous agent
+        crate::openclaw_db::record_event(action, category, status, device, details, &metadata);
+
         let event = ActivityEvent {
             action: action.to_string(),
             category: category.to_string(),
@@ -101,6 +104,8 @@ impl ActivityLogger {
     }
 
     pub fn log_window_changed(&self, device: &str, details: &str, metadata: Value) {
+        let app_name = metadata.get("appName").and_then(|v| v.as_str()).unwrap_or("");
+        crate::openclaw_db::record_window(app_name, details, 0);
         self.log("window_changed", "application", "success", device, details, metadata);
     }
 
@@ -157,6 +162,7 @@ impl ActivityLogger {
     }
 
     pub fn log_clipboard_changed(&self, device: &str, details: &str, metadata: Value) {
+        crate::openclaw_db::record_clipboard(details);
         self.log("clipboard_changed", "clipboard", "success", device, details, metadata);
     }
 
