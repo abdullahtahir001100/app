@@ -155,6 +155,345 @@ function analyzeMoodAndTone(userPrompt = '') {
 }
 
 /**
+ * Call real LLM (Gemini / OpenAI / Groq) for fully autonomous desktop control planning
+ */
+async function callLLMForAutonomousPlan({ prompt, userMemory, deviceContext, apiKey, provider }) {
+    let activeKey = apiKey;
+    let activeProvider = provider || 'gemini';
+
+    if (!activeKey) {
+        if (process.env.GEMINI_API_KEY) {
+            activeKey = process.env.GEMINI_API_KEY;
+            activeProvider = 'gemini';
+        } else if (process.env.OPENAI_API_KEY) {
+            activeKey = process.env.OPENAI_API_KEY;
+            activeProvider = 'openai';
+        } else if (process.env.GROQ_API_KEY) {
+            activeKey = process.env.GROQ_API_KEY;
+            activeProvider = 'groq';
+        }
+    }
+
+    if (!activeKey && AdminSetting) {
+        try {
+            const row = await AdminSetting.findOne({ where: { key: 'ai_settings' } });
+            if (row && row.value) {
+                const parsed = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+                if (parsed.apiKey) {
+                    activeKey = parsed.apiKey;
+                    activeProvider = parsed.provider || activeProvider;
+                }
+            }
+        } catch (e) {}
+    }
+
+    if (!activeKey) {
+        return null;
+    }
+
+    const systemPrompt = `You are Zenvora AI Desktop Pilot, an autonomous operating system control agent inspired by Microsoft UFO (https://github.com/microsoft/UFO) and OpenClaw.
+You can control ANY application on Windows/macOS (Skype, WhatsApp, Discord, Slack, Telegram, Zoom, Spotify, Chrome, Excel, Word, Photoshop, VLC, Calculator, Settings, etc.) completely dynamically.
+
+Your job:
+Translate the user's natural language command into an executable plan with structured OpenClaw/UFO steps and an optional fast PowerShell / Win32 automation script.
+
+Device State:
+Active Window: ${deviceContext?.activeWindow || 'Desktop'}
+Recent Apps: ${JSON.stringify(deviceContext?.recentApps || [])}
+Recent Clipboard: "${deviceContext?.latestClipboard || ''}"
+
+Allowed OpenClaw action_types:
+- "launch": { "path": "<executable or URI like skype: or whatsapp: or spotify:>" }
+- "focus": { "title": "<window title substring>" }
+- "hotkey": { "key": "<SendKeys format like ^f for Ctrl+F, ^+c for Ctrl+Shift+C, {ENTER}>" }
+- "type": { "text": "<string>", "press_enter": boolean }
+- "click": { "x": number, "y": number, "button": "left|right|double" }
+- "sleep": { "ms": number }
+- "turbo_script": { "script": "<PowerShell script>", "runtime": "powershell" }
+
+Return a JSON object ONLY in this exact format:
+{
+  "spokenReplyUrdu": "Short conversational acknowledgment in Urdu/Hindi/English matching user mood",
+  "steps": ["Step 1 description", "Step 2 description", ...],
+  "openClawSteps": [
+    { "step_index": 1, "action_type": "...", "params": { ... }, "description": "..." }
+  ],
+  "script": "PowerShell automation script that accomplishes this task end-to-end"
+}`;
+
+    const userPromptText = `User Goal: "${prompt}"`;
+
+    try {
+        let jsonStr = '';
+        if (activeProvider === 'gemini') {
+            const modelName = 'gemini-2.0-flash';
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(activeKey)}`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: systemPrompt },
+                            { text: userPromptText }
+                        ]
+                    }],
+                    generationConfig: {
+                        responseMimeType: "application/json"
+                    }
+                }),
+                signal: AbortSignal.timeout(8000),
+            });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            jsonStr = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else if (activeProvider === 'openai') {
+            const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${activeKey}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPromptText }
+                    ],
+                    response_format: { type: 'json_object' }
+                }),
+                signal: AbortSignal.timeout(8000),
+            });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            jsonStr = data?.choices?.[0]?.message?.content || '';
+        } else if (activeProvider === 'groq') {
+            const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${activeKey}`
+                },
+                body: JSON.stringify({
+                    model: 'llama-3.3-70b-versatile',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPromptText }
+                    ],
+                    response_format: { type: 'json_object' }
+                }),
+                signal: AbortSignal.timeout(8000),
+            });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            jsonStr = data?.choices?.[0]?.message?.content || '';
+        }
+
+        if (jsonStr) {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.steps && parsed.spokenReplyUrdu) {
+                return parsed;
+            }
+        }
+    } catch (e) {
+        console.warn('[AI Pilot] LLM dynamic planning fallback:', e.message);
+    }
+
+    return null;
+}
+
+/**
+ * Generalized dynamic desktop planner (Zero hardcoded app rules - works for Skype, WhatsApp, Zoom, Discord, etc.)
+ */
+function generateGenericDynamicPlan(prompt, deviceContext = {}) {
+    const lower = prompt.toLowerCase();
+
+    // 1. Detect App dynamically
+    const knownApps = [
+        'skype', 'whatsapp', 'telegram', 'discord', 'zoom', 'slack', 'teams', 'spotify',
+        'excel', 'word', 'powerpoint', 'notepad', 'calc', 'calculator', 'chrome', 'edge',
+        'firefox', 'vlc', 'settings', 'photoshop', 'figma', 'code', 'terminal'
+    ];
+
+    let targetApp = null;
+    for (const app of knownApps) {
+        if (lower.includes(app)) {
+            targetApp = app;
+            break;
+        }
+    }
+
+    // If not in known list, try extracting from verbs: "open <app>", "launch <app>", "kholo <app>"
+    if (!targetApp) {
+        const match = lower.match(/(?:open|launch|kholo|chalao)\s+([a-zA-Z0-9]+)/i);
+        if (match && match[1]) {
+            targetApp = match[1];
+        }
+    }
+
+    targetApp = targetApp || 'system';
+
+    // 2. Detect Action Intent (Call, Message, Document, Search, Launch)
+    const isCall = lower.includes('call') || lower.includes('dial') || lower.includes('ring');
+    const isMessage = lower.includes('message') || lower.includes('msg') || lower.includes('bhejo') || lower.includes('send') || lower.includes('text');
+    const isDoc = targetApp === 'excel' || targetApp === 'word' || targetApp === 'powerpoint' || lower.includes('sheet') || lower.includes('table') || lower.includes('assignment');
+    const isHistory = lower.includes('track') || lower.includes('history') || lower.includes('clipboard') || lower.includes('pehle kya');
+
+    // Extract target entity (e.g. contact name or topic)
+    let entity = prompt
+        .replace(new RegExp(`(${targetApp}|open|launch|kholo|chalao|kar ke|karke|ko|call|laga|do|de|dial|audio|video|message|bhejo|send|aur|bhi)`, 'gi'), '')
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .trim();
+
+    if (!entity) {
+        entity = isCall ? 'Target Contact' : (isDoc ? 'Analytics Report' : 'Main Window');
+    }
+
+    // 3. Formulate Dynamic Execution Plan
+    if (isHistory) {
+        return {
+            executionType: 'history_audit',
+            steps: [
+                'Querying client SQLite activity database (zenvora_activity.db)',
+                'Analyzing active window switches & clipboard logs',
+                'Synthesizing historical tracking timeline'
+            ],
+            openClawSteps: [
+                { step_index: 1, action_type: 'turbo_script', params: { script: 'Write-Output "[OpenClaw Context] Querying zenvora_activity.db"', runtime: 'powershell' }, description: 'Query tracked database' }
+            ],
+            script: 'Write-Output "[Zenvora DB] Context synchronized."',
+            spokenReplyUrdu: 'Bhai, device ke SQLite tracking database se aapki recent activity aur window history fetch kar li hai!'
+        };
+    }
+
+    if (isDoc && (targetApp === 'excel' || lower.includes('sheet') || lower.includes('table'))) {
+        const script = buildOfficeAutomationScript('excel', entity, prompt);
+        return {
+            executionType: 'office_excel',
+            steps: [
+                `Generating native Excel COM model for "${entity}"`,
+                'Injecting dataset, formulas (SUM, GROWTH), and 3D Column Chart',
+                'Centering Excel on active display'
+            ],
+            openClawSteps: [
+                { step_index: 1, action_type: 'turbo_script', params: { script, runtime: 'powershell' }, description: 'Build Excel report' },
+                { step_index: 2, action_type: 'focus', params: { title: 'Excel' }, description: 'Bring Excel to foreground' }
+            ],
+            script,
+            spokenReplyUrdu: `Bhai, aapki "${entity}" par Excel assignment formulas aur charts ke sath complete ready kar di hai!`
+        };
+    }
+
+    if (isDoc && (targetApp === 'word' || lower.includes('doc'))) {
+        const script = buildOfficeAutomationScript('word', entity, prompt);
+        return {
+            executionType: 'office_word',
+            steps: [
+                `Constructing Word document hierarchy for "${entity}"`,
+                'Formatting corporate styling, executive summaries, and findings',
+                'Centering Word on active display'
+            ],
+            openClawSteps: [
+                { step_index: 1, action_type: 'turbo_script', params: { script, runtime: 'powershell' }, description: 'Build Word doc' },
+                { step_index: 2, action_type: 'focus', params: { title: 'Word' }, description: 'Bring Word to foreground' }
+            ],
+            script,
+            spokenReplyUrdu: `Bhai, "${entity}" par Word assignment create karke screen par open kar di hai!`
+        };
+    }
+
+    if (isCall) {
+        // Dynamic Call Intent for ANY communication app (Skype, WhatsApp, Zoom, Teams, Discord, etc.)
+        const uriProtocol = `${targetApp}:`;
+        const script = `# Microsoft UFO Dynamic Call Action for ${targetApp}
+Start-Process "${uriProtocol}" -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 800
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait('^f')
+Start-Sleep -Milliseconds 300
+Set-Clipboard -Value "${entity}"
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 500
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+Start-Sleep -Milliseconds 500
+[System.Windows.Forms.SendKeys]::SendWait('^+c')
+Write-Output "[SUCCESS] ${targetApp} opened and call initiated to ${entity}."
+`;
+        return {
+            executionType: 'dynamic_call',
+            steps: [
+                `Launching ${targetApp} via native protocol (${uriProtocol})`,
+                `Searching contact "${entity}" via hotkey [Ctrl+F]`,
+                `Selecting chat session for "${entity}"`,
+                `Actuating call via Microsoft UFO keystroke pipeline`
+            ],
+            openClawSteps: [
+                { step_index: 1, action_type: 'launch', params: { path: uriProtocol }, description: `Launch ${targetApp}` },
+                { step_index: 2, action_type: 'sleep', params: { ms: 800 }, description: 'Wait for UI' },
+                { step_index: 3, action_type: 'hotkey', params: { key: '^f' }, description: 'Search hotkey' },
+                { step_index: 4, action_type: 'type', params: { text: entity, press_enter: true }, description: `Search contact "${entity}"` },
+                { step_index: 5, action_type: 'sleep', params: { ms: 500 }, description: 'Wait for chat' },
+                { step_index: 6, action_type: 'hotkey', params: { key: '^+c' }, description: 'Actuate Call' }
+            ],
+            script,
+            spokenReplyUrdu: `Bhai, ${targetApp} open karke ${entity} ko call initiate kar di hai!`
+        };
+    }
+
+    if (isMessage) {
+        // Dynamic Message Intent for ANY messaging app
+        const uriProtocol = `${targetApp}:`;
+        const script = `# Microsoft UFO Dynamic Message Action
+Start-Process "${uriProtocol}" -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 800
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait('^f')
+Start-Sleep -Milliseconds 300
+Set-Clipboard -Value "${entity}"
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 500
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+Write-Output "[SUCCESS] ${targetApp} chat opened with ${entity}."
+`;
+        return {
+            executionType: 'dynamic_message',
+            steps: [
+                `Launching ${targetApp} via native protocol (${uriProtocol})`,
+                `Searching recipient "${entity}"`,
+                `Activating conversation thread`
+            ],
+            openClawSteps: [
+                { step_index: 1, action_type: 'launch', params: { path: uriProtocol }, description: `Launch ${targetApp}` },
+                { step_index: 2, action_type: 'sleep', params: { ms: 800 }, description: 'Wait for UI' },
+                { step_index: 3, action_type: 'hotkey', params: { key: '^f' }, description: 'Search hotkey' },
+                { step_index: 4, action_type: 'type', params: { text: entity, press_enter: true }, description: `Open chat with "${entity}"` }
+            ],
+            script,
+            spokenReplyUrdu: `Bhai, ${targetApp} mein ${entity} ki chat open kar di hai!`
+        };
+    }
+
+    // Default General Autonomous Launch & Focus for ANY application
+    const appExec = targetApp === 'system' ? 'explorer.exe' : (targetApp.includes('.') ? targetApp : `${targetApp}.exe`);
+    const script = `Start-Process "${appExec}" -ErrorAction SilentlyContinue; Write-Output "[SUCCESS] Launched ${targetApp}."`;
+
+    return {
+        executionType: 'dynamic_app',
+        steps: [
+            `Detecting target process "${targetApp}"`,
+            `Launching and focusing active viewport`,
+            'Verifying execution status'
+        ],
+        openClawSteps: [
+            { step_index: 1, action_type: 'launch', params: { path: appExec }, description: `Launch ${targetApp}` },
+            { step_index: 2, action_type: 'focus', params: { title: targetApp }, description: `Focus ${targetApp}` }
+        ],
+        script,
+        spokenReplyUrdu: `Bhai, ${targetApp} open kar diya hai!`
+    };
+}
+
+/**
  * Main Autonomous Execution Orchestrator
  */
 async function planAndExecuteAutonomousTask({
@@ -169,191 +508,38 @@ async function planAndExecuteAutonomousTask({
     const mood = analyzeMoodAndTone(prompt);
     const userMemory = getRelevantContext(userId, prompt);
 
-    // 1. Detect if this is an Office / App Automation task
-    const lowerPrompt = prompt.toLowerCase();
-    const isExcel = lowerPrompt.includes('excel') || lowerPrompt.includes('sheet') || lowerPrompt.includes('table') || lowerPrompt.includes('spreadsheet');
-    const isWord = lowerPrompt.includes('word') || lowerPrompt.includes('document') || lowerPrompt.includes('doc');
+    // 1. Attempt dynamic LLM planning (OpenAI / Gemini / Groq)
+    let plan = await callLLMForAutonomousPlan({
+        prompt,
+        userMemory,
+        deviceContext: {},
+        apiKey: customApiKey,
+        provider: customProvider,
+    });
 
-    let executionType = 'general_agent';
-    let scriptToRun = null;
-    let spokenReplyUrdu = '';
-    let steps = [];
-    let openClawSteps = [];
-
-    // Check if user is asking about tracked activity / database history
-    const isHistoryQuery = lowerPrompt.includes('track') || lowerPrompt.includes('history') || lowerPrompt.includes('clipboard') || lowerPrompt.includes('pehle kya') || lowerPrompt.includes('kya kiya tha') || lowerPrompt.includes('database');
-
-    if (isExcel) {
-        executionType = 'office_excel';
-        const topicMatch = prompt.replace(/(excel|sheet|open|karke|assignment|bana|do|aur|pe|me|topic)/gi, '').trim() || 'Data Analytics & Growth 2026';
-        scriptToRun = buildOfficeAutomationScript('excel', topicMatch, prompt);
-        steps = [
-            'Parsing assignment requirements & topic parameters',
-            'Querying local OpenClaw SQLite tracking database for context',
-            'Generating native Office COM Automation script',
-            'Spawning Excel instance & injecting formatted dataset',
-            'Applying formula metrics (SUM, GROWTH) & 3D Column Chart',
-            'Centering window on remote desktop viewport'
-        ];
-        openClawSteps = [
-            {
-                step_index: 1,
-                action_type: 'turbo_script',
-                params: { script: scriptToRun, runtime: 'powershell' },
-                description: 'Launch Excel and generate styled assignment tables with formulas and charts'
-            },
-            {
-                step_index: 2,
-                action_type: 'focus',
-                params: { title: 'Excel' },
-                description: 'Bring Excel to foreground'
-            }
-        ];
-        spokenReplyUrdu = `Bhai, aapki "${topicMatch}" par Excel assignment formulas aur charts ke sath complete ready kar di hai!`;
-    } else if (isWord) {
-        executionType = 'office_word';
-        const topicMatch = prompt.replace(/(word|document|open|karke|assignment|bana|do|aur|pe|me|topic)/gi, '').trim() || 'Strategic Research Brief';
-        scriptToRun = buildOfficeAutomationScript('word', topicMatch, prompt);
-        steps = [
-            'Structuring formal document hierarchy (Executive Summary, Findings)',
-            'Querying local OpenClaw SQLite tracking database for context',
-            'Generating native Word COM script',
-            'Spawning Word & formatting headers with corporate styling',
-            'Saving and centering on active screen'
-        ];
-        openClawSteps = [
-            {
-                step_index: 1,
-                action_type: 'turbo_script',
-                params: { script: scriptToRun, runtime: 'powershell' },
-                description: 'Launch Word and construct formal document hierarchy'
-            },
-            {
-                step_index: 2,
-                action_type: 'focus',
-                params: { title: 'Word' },
-                description: 'Bring Word to foreground'
-            }
-        ];
-        spokenReplyUrdu = `Bhai, "${topicMatch}" par Word assignment create karke screen par open kar di hai!`;
-    } else if (isHistoryQuery) {
-        executionType = 'history_audit';
-        steps = [
-            'Querying client SQLite activity database (zenvora_activity.db)',
-            'Analyzing active window switches & clipboard logs',
-            'Synthesizing historical tracking timeline'
-        ];
-        openClawSteps = [
-            {
-                step_index: 1,
-                action_type: 'turbo_script',
-                params: {
-                    script: 'Write-Output "[OpenClaw Context] Querying zenvora_activity.db"',
-                    runtime: 'powershell'
-                },
-                description: 'Query tracked database'
-            }
-        ];
-        spokenReplyUrdu = `Bhai, device ke SQLite tracking database se aapki recent activity aur window history fetch kar li hai!`;
-    } else if (lowerPrompt.includes('whatsapp') || lowerPrompt.includes('whats app')) {
-        executionType = 'ufo_whatsapp';
-        let contact = prompt.replace(/(whatsapp|whats app|open|karke|kar ke|ko|call|laga|do|de|dial|audio|video|message|aur|bhi)/gi, '').trim() || 'Tahir';
-        contact = contact.replace(/[^a-zA-Z0-9\s]/g, '').trim() || 'Tahir';
-
-        scriptToRun = `# Microsoft UFO WhatsApp Action
-Start-Process "whatsapp:"
-Start-Sleep -Milliseconds 800
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait('^f')
-Start-Sleep -Milliseconds 300
-Set-Clipboard -Value "${contact}"
-[System.Windows.Forms.SendKeys]::SendWait('^v')
-Start-Sleep -Milliseconds 500
-[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-Start-Sleep -Milliseconds 500
-[System.Windows.Forms.SendKeys]::SendWait('^+c')
-Write-Output "[SUCCESS] WhatsApp opened and voice call initiated to ${contact}."
-`;
-
-        steps = [
-            'Launching WhatsApp via native Windows protocol',
-            `Focusing search bar and querying contact "${contact}"`,
-            `Opening active chat session with "${contact}"`,
-            'Actuating voice call via Microsoft UFO keystrokes (Ctrl+Shift+C)'
-        ];
-
-        openClawSteps = [
-            { step_index: 1, action_type: 'launch', params: { path: 'whatsapp:' }, description: 'Launch WhatsApp' },
-            { step_index: 2, action_type: 'sleep', params: { ms: 800 }, description: 'Wait for WhatsApp UI' },
-            { step_index: 3, action_type: 'hotkey', params: { key: '^f' }, description: 'Focus search bar (Ctrl+F)' },
-            { step_index: 4, action_type: 'type', params: { text: contact, press_enter: true }, description: `Search contact "${contact}"` },
-            { step_index: 5, action_type: 'sleep', params: { ms: 500 }, description: 'Wait for chat session' },
-            { step_index: 6, action_type: 'hotkey', params: { key: '^+c' }, description: 'Trigger Voice Call (Ctrl+Shift+C)' }
-        ];
-
-        spokenReplyUrdu = `Bhai, WhatsApp open karke ${contact} ko call initiate kar di hai!`;
-    } else {
-        executionType = 'openclaw_action';
-        const isAppLaunch = lowerPrompt.includes('open') || lowerPrompt.includes('launch') || lowerPrompt.includes('kholo');
-        const isNotepad = lowerPrompt.includes('notepad');
-        const isCalc = lowerPrompt.includes('calc') || lowerPrompt.includes('calculator');
-        const isChrome = lowerPrompt.includes('chrome') || lowerPrompt.includes('browser');
-
-        if (isNotepad) {
-            scriptToRun = 'Start-Process notepad.exe';
-            openClawSteps = [
-                { step_index: 1, action_type: 'launch', params: { path: 'notepad.exe' }, description: 'Launch Notepad' },
-                { step_index: 2, action_type: 'sleep', params: { ms: 600 }, description: 'Wait for window' },
-                { step_index: 3, action_type: 'type', params: { text: `[Zenvora AI Pilot] Auto-generated on ${new Date().toLocaleString()}`, press_enter: true }, description: 'Type greeting' }
-            ];
-            steps = ['Spawning Notepad', 'Injecting autonomous typing via OpenClaw', 'Focusing active editor'];
-            spokenReplyUrdu = `Bhai, Notepad open karke text type kar diya hai!`;
-        } else if (isCalc) {
-            scriptToRun = 'Start-Process calc.exe';
-            openClawSteps = [
-                { step_index: 1, action_type: 'launch', params: { path: 'calc.exe' }, description: 'Launch Calculator' }
-            ];
-            steps = ['Launching Calculator'];
-            spokenReplyUrdu = `Bhai, Calculator screen par open kar diya hai!`;
-        } else if (isChrome) {
-            scriptToRun = 'Start-Process chrome.exe';
-            openClawSteps = [
-                { step_index: 1, action_type: 'launch', params: { path: 'chrome.exe' }, description: 'Launch Chrome Browser' }
-            ];
-            steps = ['Launching Chrome Browser'];
-            spokenReplyUrdu = `Bhai, Chrome browser launch kar diya hai!`;
-        } else {
-            scriptToRun = `Write-Output "[OpenClaw] Action: ${prompt.replace(/["`]/g, '')}"`;
-            openClawSteps = [
-                { step_index: 1, action_type: 'turbo_script', params: { script: scriptToRun, runtime: 'powershell' }, description: 'Execute action' }
-            ];
-            steps = [
-                'Analyzing system context & device state',
-                'Formulating OpenClaw & Microsoft UFO execution primitives',
-                'Executing securely via Zenvora agent native engine'
-            ];
-            spokenReplyUrdu = `Bhai, aapka command process karke target device pe execute kar diya hai.`;
-        }
+    // 2. If no LLM available or offline, use the generalized dynamic desktop planner (Zero hardcoded apps)
+    if (!plan || !plan.steps || !plan.spokenReplyUrdu) {
+        plan = generateGenericDynamicPlan(prompt, {});
     }
 
     // Save interaction into long-term memory
     recordInteraction(userId, {
         userMessage: prompt,
-        assistantReply: spokenReplyUrdu,
+        assistantReply: plan.spokenReplyUrdu,
         mood,
-        topic: isExcel ? 'Excel Automation' : isWord ? 'Word Automation' : 'OpenClaw System Control',
-        actionsTaken: steps,
+        topic: plan.executionType || 'Autonomous Desktop Control',
+        actionsTaken: plan.steps,
     });
 
     const elapsedMs = Date.now() - startTime;
 
     return {
         success: true,
-        executionType,
-        script: scriptToRun,
-        steps,
-        openClawSteps,
-        spokenReplyUrdu,
+        executionType: plan.executionType || 'autonomous_agent',
+        script: plan.script || null,
+        steps: plan.steps || [],
+        openClawSteps: plan.openClawSteps || [],
+        spokenReplyUrdu: plan.spokenReplyUrdu,
         moodDetected: mood,
         elapsedMs,
         memorySizeMB: userMemory.persona?.currentMood ? 'Updated' : 'Active',
@@ -364,4 +550,6 @@ module.exports = {
     planAndExecuteAutonomousTask,
     buildOfficeAutomationScript,
     analyzeMoodAndTone,
+    callLLMForAutonomousPlan,
+    generateGenericDynamicPlan,
 };
