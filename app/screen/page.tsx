@@ -38,6 +38,7 @@ import { FullPageLoader } from "@/components/full-page-loader";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { PeerStatusBadge } from "@/components/peer-status-badge";
 import { PeerDirectTransport } from "@/lib/peer-direct-transport";
+import { AiPilotModal } from "@/components/cockpit/ai-pilot-modal";
 
 type StreamQuality = "fast" | "high" | "ultra" | "medium" | "saver" | "low";
 
@@ -156,6 +157,7 @@ export default function ScreenPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [controlEnabled, setControlEnabled] = useState(true);
   const [showPanel, setShowPanel] = useState(true);
+  const [showAiPilot, setShowAiPilot] = useState(false);
   const [brightness, setBrightness] = useState(100);
   const [volume, setVolume] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -767,6 +769,15 @@ export default function ScreenPage() {
             <Button
               size="sm"
               variant="outline"
+              disabled={!selectedDevice}
+              onClick={() => setShowAiPilot(true)}
+              className="gap-1.5 border-purple-500/30 text-purple-600 dark:text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 font-medium"
+            >
+              <Sparkles className="h-3.5 w-3.5 animate-pulse" /> AI Pilot
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => setShowPanel((v) => !v)}
               className="border-border"
             >
@@ -1050,6 +1061,8 @@ export default function ScreenPage() {
           )}
         </div>
       </main>
+
+      <AiPilotModal open={showAiPilot} onOpenChange={setShowAiPilot} deviceId={selectedDevice} />
     </div>
   );
 }

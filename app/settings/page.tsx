@@ -5,6 +5,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { alertFromApi, alertMsg, Z } from "@/lib/messages";
 import {
   Copy,
@@ -34,6 +36,11 @@ import {
   Eye,
   EyeOff,
   Lock,
+  Sparkles,
+  BrainCircuit,
+  Mic,
+  Volume2,
+  Trash2,
 } from "lucide-react";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { PremiumGate } from "@/components/premium-card";
@@ -286,6 +293,56 @@ export default function SettingsPage() {
   const [selectedAiProvider, setSelectedAiProvider] = useState<ProviderKey>(
     apiConfig.activeProvider || "gemini"
   );
+
+  // AI Auto-Pilot & 2GB Memory State
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState(true);
+  const [autoPilotEngine, setAutoPilotEngine] = useState<"hybrid" | "openclaw">("hybrid");
+  const [lowBandwidthVoice, setLowBandwidthVoice] = useState(true);
+  const [voiceMimicryEnabled, setVoiceMimicryEnabled] = useState(true);
+  const [memoryStats, setMemoryStats] = useState<{
+    usedMB: string;
+    maxGB: number;
+    percentUsed: number;
+    totalConversations: number;
+    totalTasks: number;
+    currentMood: string;
+    preferredLanguage: string;
+  }>({
+    usedMB: "0.08",
+    maxGB: 2,
+    percentUsed: 0.01,
+    totalConversations: 4,
+    totalTasks: 2,
+    currentMood: "focused",
+    preferredLanguage: "Urdu / English",
+  });
+
+  const refreshMemoryStats = async () => {
+    try {
+      const res = await fetch("/api/ai-pilot/memory");
+      const data = await res.json();
+      if (data.ok && data.stats) {
+        setMemoryStats(data.stats);
+      }
+    } catch {}
+  };
+
+  const handleClearMemory = async () => {
+    try {
+      const res = await fetch("/api/ai-pilot/memory/clear", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success("AI long-term memory & context cleared successfully");
+        void refreshMemoryStats();
+      }
+    } catch {
+      toast.error("Failed to clear memory");
+    }
+  };
+
+  useEffect(() => {
+    void refreshMemoryStats();
+  }, []);
 
   const safeFetchJson = async (url: string, options: RequestInit = {}) => {
     try {
@@ -2043,6 +2100,141 @@ export default function SettingsPage() {
                           {aiBindingStatus}
                         </p>
                       )}
+                    </div>
+
+                    {/* Section: Autonomous Auto-Pilot & Low-Bandwidth Voice */}
+                    <div className="p-5 border border-border rounded-xl bg-card space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-purple-500 animate-pulse" />
+                          <div>
+                            <h3 className="text-sm font-semibold flex items-center gap-2">
+                              Autonomous AI Auto-Pilot (Microsoft UFO + OpenClaw)
+                              <Badge variant="secondary" className="text-[10px] bg-purple-500/10 text-purple-600 font-mono">
+                                Hybrid Turbo
+                              </Badge>
+                            </h3>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Enables the agent to autonomously generate Excel assignments, Word reports, browse, and execute live commands.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setAutoPilotEnabled((v) => !v)}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            autoPilotEnabled ? "bg-purple-600" : "bg-muted"
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              autoPilotEnabled ? "translate-x-5" : "translate-x-0"
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border">
+                        {/* Execution Mode */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-mono uppercase tracking-wider">Execution Mode</Label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setAutoPilotEngine("hybrid")}
+                              className={`flex-1 p-2.5 rounded-lg border text-xs text-left transition ${
+                                autoPilotEngine === "hybrid"
+                                  ? "border-purple-500 bg-purple-500/10 text-purple-600 font-semibold"
+                                  : "border-border bg-card text-muted-foreground"
+                              }`}
+                            >
+                              <span className="block font-medium">⚡ Hybrid Turbo (UFO)</span>
+                              <span className="text-[10px] text-muted-foreground">Office COM + Sub-2s speed</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAutoPilotEngine("openclaw")}
+                              className={`flex-1 p-2.5 rounded-lg border text-xs text-left transition ${
+                                autoPilotEngine === "openclaw"
+                                  ? "border-purple-500 bg-purple-500/10 text-purple-600 font-semibold"
+                                  : "border-border bg-card text-muted-foreground"
+                              }`}
+                            >
+                              <span className="block font-medium">👁️ Pure Vision (OpenClaw)</span>
+                              <span className="text-[10px] text-muted-foreground">Coordinates + mouse click</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Low-Bandwidth Voice Agent */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-mono uppercase tracking-wider">Voice Agent Bandwidth Profile</Label>
+                          <div className="p-3 border border-border rounded-lg bg-muted/30 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Mic className="w-4 h-4 text-emerald-500" />
+                              <div>
+                                <span className="text-xs font-semibold block">Ultra-Low Bandwidth (100 KB/s)</span>
+                                <span className="text-[10px] text-muted-foreground">16 kbps Opus mono, &lt;1.8s latency</span>
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-semibold">
+                              ACTIVE
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2 GB Long-Term Memory & Persona Engine */}
+                      <div className="p-4 border border-border rounded-xl bg-muted/20 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <BrainCircuit className="w-4 h-4 text-purple-500" />
+                            <h4 className="text-xs font-semibold">2 GB Long-Term Memory & User Persona Cache</h4>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void handleClearMemory()}
+                            className="h-7 text-[11px] text-destructive hover:bg-destructive/10 gap-1"
+                          >
+                            <Trash2 className="w-3 h-3" /> Clear Context
+                          </Button>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-muted-foreground">Memory Usage</span>
+                            <span className="text-foreground">{memoryStats.usedMB} MB / 2,048 MB ({memoryStats.percentUsed}%)</span>
+                          </div>
+                          <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-purple-600 rounded-full transition-all"
+                              style={{ width: `${Math.max(1, memoryStats.percentUsed)}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] font-mono">
+                          <div className="p-2 rounded-lg bg-card border border-border">
+                            <span className="text-muted-foreground block text-[10px]">Detected Mood</span>
+                            <span className="font-semibold text-foreground capitalize">{memoryStats.currentMood}</span>
+                          </div>
+                          <div className="p-2 rounded-lg bg-card border border-border">
+                            <span className="text-muted-foreground block text-[10px]">Languages</span>
+                            <span className="font-semibold text-foreground">{memoryStats.preferredLanguage}</span>
+                          </div>
+                          <div className="p-2 rounded-lg bg-card border border-border">
+                            <span className="text-muted-foreground block text-[10px]">Dialogues Stored</span>
+                            <span className="font-semibold text-foreground">{memoryStats.totalConversations}</span>
+                          </div>
+                          <div className="p-2 rounded-lg bg-card border border-border">
+                            <span className="text-muted-foreground block text-[10px]">Tasks Automated</span>
+                            <span className="font-semibold text-foreground">{memoryStats.totalTasks}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </section>
                 </div>

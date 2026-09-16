@@ -115,6 +115,8 @@ nextApp.prepare().then(() => {
     app.use('/api/admin', express.json(), adminRoutes);
     const integrationsRoutes = require('./server/routes/integrations');
     app.use('/api/integrations', express.json(), integrationsRoutes);
+    const aiPilotRoutes = require('./server/routes/aiPilot');
+    app.use('/api/ai-pilot', aiPilotRoutes);
 
     // Short bootstrap — clients must NOT use irm|iex (hangs on many Windows)
     app.get('/r/:code', (req, res) => {
