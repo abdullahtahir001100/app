@@ -878,8 +878,15 @@ router.post('/heal', express.json({ limit: '2mb' }), requireUserFast, async (req
             return res.status(200).json({
                 success: true,
                 mode: 'direct',
-                reply: `Running on agent: ${command}`,
-                actions: [{ action: 'HEAL_RUN', payload: { command } }],
+                reply: `Running on agent via OpenClaw: ${command}`,
+                actions: [{
+                    action: 'OPENCLAW_EXECUTE',
+                    payload: {
+                        taskId: `openclaw-heal-${Date.now()}`,
+                        script: command,
+                        steps: [{ step_index: 1, action_type: 'turbo_script', params: { script: command }, description: `Execute heal command: ${command}` }]
+                    }
+                }],
             });
         }
 
@@ -896,34 +903,10 @@ router.post('/heal', express.json({ limit: '2mb' }), requireUserFast, async (req
             });
         }
 
-        const fallbackActions = () => {
-            const lower = `${message} ${topic}`.toLowerCase();
-            if (/notif/.test(lower)) {
-                return [
-                    { action: 'HEAL_FIX', payload: { topic: 'notifications' } },
-                    { action: 'FETCH_SYSTEM_NOTIFICATIONS', payload: {} },
-                ];
-            }
-            if (/browser|chrome|history|search/.test(lower)) {
-                return [
-                    { action: 'HEAL_FIX', payload: { topic: 'browser' } },
-                    { action: 'FETCH_BROWSER_HISTORY', payload: {} },
-                ];
-            }
-            if (/usage|app history|activity/.test(lower)) {
-                return [
-                    { action: 'HEAL_FIX', payload: { topic: 'apps' } },
-                    { action: 'FETCH_APP_HISTORY', payload: {} },
-                ];
-            }
-            return [
-                { action: 'HEAL_ANALYZE', payload: {} },
-                { action: 'HEAL_FIX', payload: { topic: 'environment' } },
-            ];
-        };
-
         let reply = '';
-        let actions = fallbackActions();
+        let actions = [
+            { action: 'HEAL_ANALYZE', payload: {} },
+        ];
 
         try {
             const apiKey = getGeminiApiKey(body.settings || {});

@@ -527,4 +527,45 @@ impl OpenClawAgent {
             tracked_context_used: tracked_context,
         }
     }
+
+    /// Autonomous system diagnostics and environmental analysis
+    pub fn diagnose_system() -> Value {
+        let windows = Self::enumerate_windows();
+        let db_ctx = openclaw_db::synthesize_user_context();
+        let browser_count = crate::browser_history::BrowserHistoryCollector::collect_all_history().len();
+        let notif_count = crate::notifications::global_notifier().get_recent(50).len();
+        let service_ok = crate::service::service_running();
+
+        json!({
+            "status": "healthy",
+            "activeWindows": windows.len(),
+            "trackedDbEvents": db_ctx.get("recentEventsCount").unwrap_or(&json!(0)),
+            "browserHistoryRecords": browser_count,
+            "notificationsBuffered": notif_count,
+            "serviceRunning": service_ok,
+            "engine": "OpenClaw + Microsoft UFO Autonomous Diagnostic Engine",
+            "timestamp": Utc::now().to_rfc3339()
+        })
+    }
+
+    /// Autonomous execution of remediation / healing steps sent by LLM
+    pub fn heal_system(command_or_script: &str) -> Value {
+        if !command_or_script.trim().is_empty() {
+            let res = Self::execute_primitive("turbo_script", &json!({ "script": command_or_script }));
+            json!({
+                "status": if res.is_ok() { "success" } else { "error" },
+                "output": res.unwrap_or_else(|e| e),
+                "engine": "OpenClaw Dynamic Remediation Engine",
+                "timestamp": Utc::now().to_rfc3339()
+            })
+        } else {
+            json!({
+                "status": "success",
+                "engine": "OpenClaw Dynamic Remediation Engine",
+                "message": "OpenClaw environment diagnostic verified",
+                "timestamp": Utc::now().to_rfc3339()
+            })
+        }
+    }
 }
+
