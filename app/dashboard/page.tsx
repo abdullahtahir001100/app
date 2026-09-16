@@ -604,19 +604,22 @@ export default function DashboardPage() {
                   <div className="absolute right-0 top-full mt-2 w-[min(92vw,28rem)] bg-card border border-border rounded-xl shadow-xl z-50 p-4">
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div>
-                        <div className="text-sm font-semibold">
+                        <div className="text-sm font-semibold flex items-center gap-2">
                           {activeCliPlatform === "mac"
                             ? "macOS — CLI"
                             : activeCliPlatform === "linux"
                             ? "Linux — CLI"
                             : "Windows — CLI"}
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            All-in-One + UFO AI
+                          </span>
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {activeCliPlatform === "mac"
-                            ? "Terminal · Paste & run (auto launchd supervisor)"
+                            ? "Terminal · 1 command installs agent + binds UFO autonomous engine"
                             : activeCliPlatform === "linux"
-                            ? "Bash / Terminal · Paste & run (auto systemd supervisor)"
-                            : "Admin PowerShell · keep open for live logs"}
+                            ? "Bash / Terminal · 1 command installs agent + binds UFO autonomous engine"
+                            : "Admin PowerShell · 1 command installs agent + binds UFO autonomous engine"}
                         </p>
                       </div>
                       <button
@@ -1280,42 +1283,53 @@ export default function DashboardPage() {
                     {selectedPlatform === null && (
                       <>
                         <div className="pt-2">
-                          <h3 className="text-xl font-semibold mb-2">Short install command</h3>
-                          <p className="text-sm text-muted-foreground mb-3">
-                            Run in <strong className="text-foreground">Admin PowerShell</strong> (Win 10 / 11 best;
-                            Win 8.1 / 7 need .NET 4.5+). Uses a timeout-safe download — not{' '}
-                            <code className="text-xs">irm | iex</code> (that hangs on many PCs).
-                            Keep this modal open for live logs.
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-xl font-semibold">Single All-in-One Install Command</h3>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                Agent + Microsoft UFO & OpenClaw
+                              </span>
+                            </div>
                             {bootstrapCode ? (
-                              <span className="ml-2 font-mono text-foreground">code={bootstrapCode}</span>
+                              <span className="font-mono text-xs px-2 py-1 rounded bg-muted text-foreground border border-border">
+                                Code: {bootstrapCode}
+                              </span>
                             ) : null}
+                          </div>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Paste into <strong className="text-foreground">Admin PowerShell</strong> (Windows) or Terminal (macOS/Linux). Single command downloads Zenvora Agent, pairs your account, and binds the Microsoft UFO / OpenClaw Autonomous Control Engine.
                           </p>
                           <div className="rounded-xl border border-border bg-muted/40 p-3">
-                            <pre className="whitespace-pre-wrap break-all text-sm font-mono leading-5 max-h-28 overflow-auto">
+                            <pre className="whitespace-pre-wrap break-all text-sm font-mono leading-5 max-h-28 overflow-auto text-foreground">
                               {bootstrapLoading ? "Creating short code…" : installCommand}
                             </pre>
-                            <div className="mt-3 flex justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={bootstrapLoading || !pairingToken}
-                                onClick={() => {
-                                  if (pairingToken && pairingUserId) void refreshBootstrapCommand(pairingToken, pairingUserId);
-                                }}
-                                className="gap-2"
-                              >
-                                Refresh code
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void copyInstallCommand()}
-                                disabled={bootstrapLoading || !bootstrapCode}
-                                className="gap-2"
-                              >
-                                {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                                {copiedCmd ? "Copied" : "Copy command"}
-                              </Button>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-xs text-muted-foreground">
+                                💡 Run once on remote device for full AnyDesk-style human-like control.
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={bootstrapLoading || !pairingToken}
+                                  onClick={() => {
+                                    if (pairingToken && pairingUserId) void refreshBootstrapCommand(pairingToken, pairingUserId);
+                                  }}
+                                  className="gap-2"
+                                >
+                                  Refresh code
+                                </Button>
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() => void copyInstallCommand()}
+                                  disabled={bootstrapLoading || !bootstrapCode}
+                                  className="gap-2 font-medium"
+                                >
+                                  {copiedCmd ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                  {copiedCmd ? "Copied" : "Copy Single Command"}
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         </div>
