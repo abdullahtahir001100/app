@@ -255,6 +255,43 @@ async function planAndExecuteAutonomousTask({
             }
         ];
         spokenReplyUrdu = `Bhai, device ke SQLite tracking database se aapki recent activity aur window history fetch kar li hai!`;
+    } else if (lowerPrompt.includes('whatsapp') || lowerPrompt.includes('whats app')) {
+        executionType = 'ufo_whatsapp';
+        let contact = prompt.replace(/(whatsapp|whats app|open|karke|kar ke|ko|call|laga|do|de|dial|audio|video|message|aur|bhi)/gi, '').trim() || 'Tahir';
+        contact = contact.replace(/[^a-zA-Z0-9\s]/g, '').trim() || 'Tahir';
+
+        scriptToRun = `# Microsoft UFO WhatsApp Action
+Start-Process "whatsapp:"
+Start-Sleep -Milliseconds 800
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait('^f')
+Start-Sleep -Milliseconds 300
+Set-Clipboard -Value "${contact}"
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 500
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+Start-Sleep -Milliseconds 500
+[System.Windows.Forms.SendKeys]::SendWait('^+c')
+Write-Output "[SUCCESS] WhatsApp opened and voice call initiated to ${contact}."
+`;
+
+        steps = [
+            'Launching WhatsApp via native Windows protocol',
+            `Focusing search bar and querying contact "${contact}"`,
+            `Opening active chat session with "${contact}"`,
+            'Actuating voice call via Microsoft UFO keystrokes (Ctrl+Shift+C)'
+        ];
+
+        openClawSteps = [
+            { step_index: 1, action_type: 'launch', params: { path: 'whatsapp:' }, description: 'Launch WhatsApp' },
+            { step_index: 2, action_type: 'sleep', params: { ms: 800 }, description: 'Wait for WhatsApp UI' },
+            { step_index: 3, action_type: 'hotkey', params: { key: '^f' }, description: 'Focus search bar (Ctrl+F)' },
+            { step_index: 4, action_type: 'type', params: { text: contact, press_enter: true }, description: `Search contact "${contact}"` },
+            { step_index: 5, action_type: 'sleep', params: { ms: 500 }, description: 'Wait for chat session' },
+            { step_index: 6, action_type: 'hotkey', params: { key: '^+c' }, description: 'Trigger Voice Call (Ctrl+Shift+C)' }
+        ];
+
+        spokenReplyUrdu = `Bhai, WhatsApp open karke ${contact} ko call initiate kar di hai!`;
     } else {
         executionType = 'openclaw_action';
         const isAppLaunch = lowerPrompt.includes('open') || lowerPrompt.includes('launch') || lowerPrompt.includes('kholo');

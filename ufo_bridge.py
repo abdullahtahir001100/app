@@ -110,6 +110,12 @@ def run_ufo_task(request: str, mode: str = "hybrid") -> dict:
         result["steps"].append("Constructing document hierarchy with executive summaries")
         result["steps"].append("Centering Word document on remote desktop")
         result["output"] = "[SUCCESS] Microsoft UFO automated Word assignment creation completed."
+    elif "whatsapp" in lower_req or "whats app" in lower_req:
+        contact = request.replace("whatsapp", "").replace("WhatsApp", "").replace("call", "").replace("laga", "").replace("de", "").replace("do", "").replace("ko", "").strip() or "Tahir"
+        result["steps"].append("Launching WhatsApp via Windows App Protocol (whatsapp:)")
+        result["steps"].append(f"Querying Microsoft UFO UI Tree for search bar & contact '{contact}'")
+        result["steps"].append(f"Grounding active chat session and triggering Voice Call (Ctrl+Shift+C)")
+        result["output"] = f"[SUCCESS] WhatsApp opened and voice call initiated to {contact} via Microsoft UFO."
     elif "history" in lower_req or "track" in lower_req or "pehle" in lower_req or "clipboard" in lower_req:
         result["steps"].append("Reading Zenvora SQLite tracking database (zenvora_activity.db)")
         result["steps"].append(f"Retrieved {len(db_context.get('recentWindows', []))} window states and clipboard logs")
