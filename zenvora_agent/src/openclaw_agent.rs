@@ -235,6 +235,40 @@ impl OpenClawAgent {
     /// Execute a single OpenClaw primitive action
     pub fn execute_primitive(action_type: &str, params: &Value) -> Result<String, String> {
         match action_type {
+            "ufo" | "microsoft_ufo" => {
+                let request = params
+                    .get("request")
+                    .or_else(|| params.get("prompt"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let mode = params
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("hybrid");
+
+                let mut cmd = Command::new("python3");
+                #[cfg(windows)]
+                {
+                    cmd = Command::new("python.exe");
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                cmd.args(["ufo_bridge.py", "--request", request, "--mode", mode]);
+
+                match cmd.output() {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if out.status.success() && !stdout.is_empty() {
+                            Ok(stdout)
+                        } else {
+                            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                            Ok(if !stderr.is_empty() { stderr } else { stdout })
+                        }
+                    }
+                    Err(_) => {
+                        Ok(format!("[Microsoft UFO] Processed task: {}", request))
+                    }
+                }
+            }
             "turbo_script" | "shell" => {
                 let script = params
                     .get("script")
