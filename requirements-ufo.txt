@@ -1,0 +1,16 @@
+# Microsoft UFO & OpenClaw Core Requirements for Zenvora Autonomous Desktop Control
+pyyaml>=6.0
+pydantic>=2.0.0
+psutil>=5.9.0
+pillow>=10.0.0
+requests>=2.31.0
+openai>=1.20.0
+rich>=13.0.0
+aiofiles>=23.0.0
+colorama>=0.4.6
+
+# Windows UI Automation & Human-like Execution (Windows platform)
+pywinauto>=0.6.8; sys_platform == 'win32'
+pywin32>=306; sys_platform == 'win32'
+comtypes>=1.2.0; sys_platform == 'win32'
+pyautogui>=0.9.54

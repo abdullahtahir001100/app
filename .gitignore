@@ -19,6 +19,13 @@ yarn-error.log*
 
 # env files
 .env*
+*agents.yaml
+!agents.yaml.template
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 
 # kotlin 
 # Android project
