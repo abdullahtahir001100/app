@@ -292,6 +292,7 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     provider: 'openrouter',
                     error: String(err.message || err),
                 });
+            }
         }
 
         clearTimeout(timeoutId);

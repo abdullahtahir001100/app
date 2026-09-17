@@ -321,6 +321,9 @@ router.put('/pairing', attachUser, async (req, res) => {
             success: false,
             message: error.message || 'Could not update pairing credentials.',
         });
+    }
+});
+
 /** Web client telemetry heartbeat (tracks active web presence, current page, and dwell time). */
 router.post('/telemetry/heartbeat', attachUser, async (req, res) => {
     try {
