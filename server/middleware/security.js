@@ -71,10 +71,41 @@ function validateSameSiteOrigin(req, res, next) {
         return res.status(403).json({ success: false, message: 'Origin not allowed.' });
     }
 
+const blockedIpsCache = new Set();
+let lastBlockedIpFetch = 0;
+
+async function refreshBlockedIpsCache() {
+    try {
+        const BlockedIp = require('../models/BlockedIp');
+        const list = await BlockedIp.find({ status: 'active' }).select('ip').lean();
+        blockedIpsCache.clear();
+        for (const item of list) {
+            if (item.ip) blockedIpsCache.add(item.ip.trim());
+        }
+        lastBlockedIpFetch = Date.now();
+    } catch (_) {}
+}
+
+function checkBlockedIp(req, res, next) {
+    const rawIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || '';
+    const cleanIp = rawIp.replace(/^::ffff:/, '').trim();
+
+    if (Date.now() - lastBlockedIpFetch > 30000) {
+        void refreshBlockedIpsCache();
+    }
+
+    if (cleanIp && (blockedIpsCache.has(cleanIp) || blockedIpsCache.has(rawIp))) {
+        return res.status(403).json({
+            success: false,
+            code: 403,
+            message: 'Access Denied: Your IP address has been blocked due to security violations.'
+        });
+    }
     return next();
 }
 
 function registerSecurityMiddleware(app) {
+    app.use(checkBlockedIp);
     app.use(helmet({
         contentSecurityPolicy: false,
         referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
@@ -131,5 +162,6 @@ module.exports = {
     createApiLimiter,
     getAllowedOrigins,
     isOriginAllowed,
-    validateSameSiteOrigin
+    validateSameSiteOrigin,
+    refreshBlockedIpsCache
 };

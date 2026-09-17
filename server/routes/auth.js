@@ -56,6 +56,20 @@ router.post('/register', async (req, res) => {
         await setUserAuthSession(user, token);
         kickOtherSessions(String(user._id));
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
+
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || '';
+        const userAgent = req.headers['user-agent'] || '';
+        const UserAuditLog = require('../models/UserAuditLog');
+        UserAuditLog.create({
+            userId: user._id,
+            email: user.email,
+            eventType: 'user_registered',
+            ip,
+            userAgent,
+            status: 'info',
+            reason: 'New account registered'
+        }).catch(() => {});
+
         return res.status(200).json({
             success: true,
             code: 202,

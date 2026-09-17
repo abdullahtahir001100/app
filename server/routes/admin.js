@@ -7,7 +7,9 @@ const AgentCredential = require('../models/AgentCredential');
 const VirtualFile = require('../models/VirtualFile');
 const ActivityLog = require('../models/ActivityLog');
 const UserAuditLog = require('../models/UserAuditLog');
+const BlockedIp = require('../models/BlockedIp');
 const { attachUser, requireAdmin } = require('../middleware/auth');
+const { refreshBlockedIpsCache } = require('../middleware/security');
 const { getConnectionRegistry } = require('../sockets/registry');
 const { forceLogoutUserDashboards } = require('../sockets/fanout');
 const { overlayDeviceStatus } = require('../services/androidBeat');
@@ -850,6 +852,247 @@ router.post('/security/test-admin-db', async (req, res) => {
             success: false,
             error: `Connection Failed: ${err.message || String(err)}`,
         });
+    }
+});
+
+// 1. Get Users who configured APIs / Keys
+router.get('/security/api-users', async (_req, res) => {
+    try {
+        const users = await User.find({})
+            .select('name email role avatarUrl createdAt lastActiveAt')
+            .lean();
+
+        const [credentials, devices] = await Promise.all([
+            AgentCredential.find({}).lean(),
+            Device.find({ cloudinaryEnabled: true }).lean()
+        ]);
+
+        const credsByUser = new Map();
+        for (const c of credentials) {
+            const uid = String(c.userId);
+            if (!credsByUser.has(uid)) credsByUser.set(uid, []);
+            credsByUser.get(uid).push(c.deviceId);
+        }
+
+        const cloudinaryUsers = new Set(devices.map((d) => String(d.userId)));
+
+        const apiUsers = users.map((u) => {
+            const uid = String(u._id);
+            const userCreds = credsByUser.get(uid) || [];
+            const hasCloudinary = cloudinaryUsers.has(uid);
+
+            const configuredApis = [];
+            if (userCreds.length > 0) {
+                configuredApis.push({
+                    name: 'Agent Nodes Token',
+                    type: 'agent_key',
+                    count: userCreds.length,
+                    status: 'active'
+                });
+            }
+            if (hasCloudinary) {
+                configuredApis.push({
+                    name: 'Cloudinary Media Storage',
+                    type: 'cloudinary',
+                    count: 1,
+                    status: 'active'
+                });
+            }
+            configuredApis.push({
+                name: 'Zenvora Multi-LLM Gateway',
+                type: 'ai_pilot',
+                providers: ['Gemini', 'OpenAI', 'Claude', 'Grok', 'DeepSeek', 'OpenRouter'],
+                status: 'active'
+            });
+
+            return {
+                id: uid,
+                name: u.name || 'User',
+                email: u.email,
+                role: u.role || 'user',
+                avatarUrl: u.avatarUrl || '',
+                apis: configuredApis,
+                agentKeysCount: userCreds.length,
+                lastActiveAt: u.lastActiveAt || u.createdAt,
+            };
+        });
+
+        res.json({ success: true, apiUsers });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 2. Blocked IPs Management
+router.get('/security/blocked-ips', async (_req, res) => {
+    try {
+        const blocked = await BlockedIp.find({ status: 'active' })
+            .sort({ createdAt: -1 })
+            .lean();
+        res.json({
+            success: true,
+            blockedIPs: blocked.map(b => ({
+                id: String(b._id),
+                ip: b.ip,
+                reason: b.reason,
+                blockedBy: b.blockedBy,
+                attempts: b.attempts || 1,
+                date: b.createdAt
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.post('/security/blocked-ips', async (req, res) => {
+    try {
+        const ip = String(req.body?.ip || '').trim();
+        const reason = String(req.body?.reason || 'Suspicious network activity').trim();
+
+        if (!ip) {
+            return res.status(400).json({ success: false, message: 'Valid IP address is required.' });
+        }
+
+        const doc = await BlockedIp.findOneAndUpdate(
+            { ip },
+            {
+                ip,
+                reason,
+                blockedBy: req.user.email || 'Admin',
+                status: 'active',
+                $inc: { attempts: 1 }
+            },
+            { upsert: true, new: true }
+        );
+
+        refreshBlockedIpsCache();
+
+        await UserAuditLog.create({
+            email: req.user.email || 'admin@zenvora',
+            eventType: 'ip_blocked',
+            ip,
+            status: 'warning',
+            reason: `IP ${ip} was added to blocklist: ${reason}`,
+            metadata: { blockedBy: req.user.email }
+        }).catch(() => {});
+
+        res.json({ success: true, message: `IP ${ip} blocked successfully.`, blockedIp: doc });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.post('/security/blocked-ips/:id/unblock', async (req, res) => {
+    try {
+        const doc = await BlockedIp.findByIdAndUpdate(
+            req.params.id,
+            { status: 'unblocked' },
+            { new: true }
+        );
+
+        refreshBlockedIpsCache();
+
+        if (doc) {
+            await UserAuditLog.create({
+                email: req.user.email || 'admin@zenvora',
+                eventType: 'ip_unblocked',
+                ip: doc.ip,
+                status: 'success',
+                reason: `IP ${doc.ip} was unblocked.`,
+                metadata: { unblockedBy: req.user.email }
+            }).catch(() => {});
+        }
+
+        res.json({ success: true, message: 'IP unblocked successfully.' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+router.delete('/security/blocked-ips/:id', async (req, res) => {
+    try {
+        const doc = await BlockedIp.findByIdAndDelete(req.params.id);
+        refreshBlockedIpsCache();
+        res.json({ success: true, message: 'IP record removed.' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 3. Real Security Alerts (Login failures, successes, registrations, and blocks)
+router.get('/security/alerts', async (req, res) => {
+    try {
+        const filterType = String(req.query?.filter || req.query?.type || 'all').toLowerCase();
+        let query = {};
+
+        if (filterType === 'failures' || filterType === 'failed_login') {
+            query.eventType = 'login_failure';
+        } else if (filterType === 'successful_login') {
+            query.eventType = 'login_success';
+        } else if (filterType === 'logins') {
+            query.eventType = { $in: ['login_success', 'login_failure'] };
+        } else if (filterType === 'registrations' || filterType === 'user_registered') {
+            query.eventType = 'user_registered';
+        } else if (filterType === 'blocks' || filterType === 'ip_blocked') {
+            query.eventType = { $in: ['account_blocked', 'account_unblocked', 'ip_blocked', 'ip_unblocked'] };
+        } else {
+            query.eventType = {
+                $in: [
+                    'login_failure',
+                    'login_success',
+                    'user_registered',
+                    'account_blocked',
+                    'account_unblocked',
+                    'account_deleted',
+                    'ip_blocked',
+                    'ip_unblocked'
+                ]
+            };
+        }
+
+        const logs = await UserAuditLog.find(query)
+            .sort({ createdAt: -1 })
+            .limit(100)
+            .lean();
+
+        const alerts = logs.map((log) => {
+            let level = 'info';
+            let title = 'Security Event';
+
+            if (log.eventType === 'login_failure') {
+                level = 'critical';
+                title = 'Failed Login Attempt';
+            } else if (log.eventType === 'login_success') {
+                level = 'success';
+                title = 'Successful Sign-in';
+            } else if (log.eventType === 'user_registered') {
+                level = 'info';
+                title = 'New User Registration';
+            } else if (log.eventType === 'account_blocked' || log.eventType === 'ip_blocked') {
+                level = 'warning';
+                title = log.eventType === 'account_blocked' ? 'Account Blocked' : 'IP Address Blocked';
+            } else if (log.eventType === 'account_unblocked' || log.eventType === 'ip_unblocked') {
+                level = 'info';
+                title = log.eventType === 'account_unblocked' ? 'Account Unblocked' : 'IP Unblocked';
+            }
+
+            return {
+                id: String(log._id),
+                level,
+                title,
+                eventType: log.eventType,
+                email: log.email,
+                ip: log.ip,
+                description: log.reason || `${title} for ${log.email || log.ip || 'user'}`,
+                userAgent: log.userAgent,
+                timestamp: log.createdAt
+            };
+        });
+
+        res.json({ success: true, alerts });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 

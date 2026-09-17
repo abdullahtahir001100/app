@@ -64,25 +64,8 @@ function VerifyOTPPageContent() {
       return;
     }
 
-    setLoading(true);
-    try {
-      const res = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp: code, newPassword: "changeme123" })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alertFromApi(data, Z.VERIFY_FAILED);
-        return;
-      }
-      alertMsg(Z.VERIFIED);
-      router.push("/login");
-    } catch (err) {
-      alertMsg(Z.VERIFY_FAILED, err instanceof Error ? err.message : undefined);
-    } finally {
-      setLoading(false);
-    }
+    // Forward to password reset page with entered code
+    router.push(`/reset-password?email=${encodeURIComponent(email)}&otp=${encodeURIComponent(code)}`);
   };
 
   const handleResend = async () => {

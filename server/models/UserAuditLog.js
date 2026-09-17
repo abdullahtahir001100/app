@@ -19,12 +19,15 @@ const UserAuditLogSchema = new mongoose.Schema({
         enum: [
             'login_success',
             'login_failure',
+            'user_registered',
             'page_visit',
             'page_dwell',
             'logout',
             'account_blocked',
             'account_unblocked',
-            'account_deleted'
+            'account_deleted',
+            'ip_blocked',
+            'ip_unblocked'
         ],
         required: true,
         index: true

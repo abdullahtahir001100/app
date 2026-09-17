@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { 
   AlertCircle, 
   Shield, 
@@ -26,7 +28,12 @@ import {
   X,
   Layers,
   Activity,
-  Smartphone
+  Smartphone,
+  Globe,
+  User,
+  Clock,
+  Unlock,
+  ShieldAlert
 } from "lucide-react";
 import { alertMsg, Z } from "@/lib/messages";
 
@@ -132,60 +139,53 @@ export default function AdminSecurityPage() {
   const [storageData, setStorageData] = useState<StorageAnalyticsData | null>(null);
   const [loadingStorage, setLoadingStorage] = useState(false);
 
-  // Security Alerts & Blocklist mock/seed
-  const securityAlerts = [
-    {
-      id: 1,
-      level: "critical",
-      title: "Failed Login Attempts",
-      description: "12 failed attempts detected from IP 203.0.113.45",
-      time: "30 mins ago",
-    },
-    {
-      id: 2,
-      level: "warning",
-      title: "Unusual Activity",
-      description: "High file transfer detected across 3 connected devices",
-      time: "2 hours ago",
-    },
-    {
-      id: 3,
-      level: "info",
-      title: "Master Database Replicated",
-      description: "Admin sync policy verified active for all tenant devices",
-      time: "1 day ago",
-    },
-  ];
+  // Dynamic Security Alerts
+  const [securityAlerts, setSecurityAlerts] = useState<Array<{
+    id: string;
+    level: string;
+    title: string;
+    description: string;
+    eventType: string;
+    email: string;
+    ip: string;
+    timestamp: string;
+  }>>([]);
+  const [loadingAlerts, setLoadingAlerts] = useState(false);
+  const [alertFilter, setAlertFilter] = useState("all");
 
-  const blockedIPs = [
-    { ip: "203.0.113.45", reason: "Multiple failed logins", date: "2 hours ago" },
-    { ip: "198.51.100.89", reason: "Suspicious telemetry burst", date: "1 day ago" },
-    { ip: "192.0.2.15", reason: "Brute force pin attempt", date: "3 days ago" },
-  ];
+  // Dynamic Blocked IPs
+  const [blockedIPs, setBlockedIPs] = useState<Array<{
+    id: string;
+    ip: string;
+    reason: string;
+    blockedBy?: string;
+    attempts?: number;
+    date: string;
+  }>>([]);
+  const [loadingBlockedIPs, setLoadingBlockedIPs] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [newBlockIp, setNewBlockIp] = useState("");
+  const [newBlockReason, setNewBlockReason] = useState("Suspicious login attempt activity");
+  const [blockingInProgress, setBlockingInProgress] = useState(false);
 
-  const apiKeys = [
-    {
-      name: "Device Agent Master Key",
-      key: "sk_live_agent_master_****",
-      status: "active",
-      created: "12 days ago",
-      lastUsed: "Just now",
-    },
-    {
-      name: "Admin Panel API",
-      key: "sk_live_admin_panel_****",
-      status: "active",
-      created: "30 days ago",
-      lastUsed: "5 mins ago",
-    },
-    {
-      name: "Cloudinary Webhook Secret",
-      key: "sk_live_cld_webhook_****",
-      status: "active",
-      created: "60 days ago",
-      lastUsed: "1 hour ago",
-    },
-  ];
+  // Dynamic API Users
+  const [apiUsers, setApiUsers] = useState<Array<{
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    avatarUrl?: string;
+    apis: Array<{
+      name: string;
+      type: string;
+      count?: number;
+      providers?: string[];
+      status: string;
+    }>;
+    agentKeysCount: number;
+    lastActiveAt?: string;
+  }>>([]);
+  const [loadingApiUsers, setLoadingApiUsers] = useState(false);
 
   // Fetch Database Sync Settings
   const fetchSyncSettings = async () => {
@@ -219,13 +219,119 @@ export default function AdminSecurityPage() {
     }
   };
 
+  // Fetch Dynamic Security Alerts
+  const fetchSecurityAlerts = async (filter?: string) => {
+    setLoadingAlerts(true);
+    try {
+      const activeF = filter !== undefined ? filter : alertFilter;
+      const res = await fetch(`/api/admin/security/alerts?filter=${encodeURIComponent(activeF)}`);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSecurityAlerts(data.alerts || []);
+      }
+    } catch (err) {
+      console.error("Failed to load security alerts:", err);
+    } finally {
+      setLoadingAlerts(false);
+    }
+  };
+
+  // Fetch Dynamic Blocked IPs
+  const fetchBlockedIPs = async () => {
+    setLoadingBlockedIPs(true);
+    try {
+      const res = await fetch("/api/admin/security/blocked-ips");
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBlockedIPs(data.blockedIPs || []);
+      }
+    } catch (err) {
+      console.error("Failed to load blocked IPs:", err);
+    } finally {
+      setLoadingBlockedIPs(false);
+    }
+  };
+
+  // Handle Add Blocked IP
+  const handleBlockIpSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newBlockIp.trim()) {
+      alertMsg("Validation Error", "Please enter a valid IP address.");
+      return;
+    }
+    setBlockingInProgress(true);
+    try {
+      const res = await fetch("/api/admin/security/blocked-ips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ip: newBlockIp.trim(),
+          reason: newBlockReason.trim() || "Suspicious traffic / administrator action",
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alertMsg("IP Blocked", data.message || `IP ${newBlockIp} has been blocked.`);
+        setNewBlockIp("");
+        setShowBlockModal(false);
+        fetchBlockedIPs();
+      } else {
+        alertMsg("Block Failed", data.message || "Failed to block IP.");
+      }
+    } catch {
+      alertMsg("Error", "Network error while blocking IP.");
+    } finally {
+      setBlockingInProgress(false);
+    }
+  };
+
+  // Handle Unblock IP
+  const handleUnblockIp = async (id: string, ip: string) => {
+    try {
+      const res = await fetch(`/api/admin/security/blocked-ips/${id}/unblock`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alertMsg("IP Unblocked", `IP ${ip} has been removed from the blocklist.`);
+        fetchBlockedIPs();
+      } else {
+        alertMsg("Unblock Failed", data.message || "Could not unblock IP.");
+      }
+    } catch {
+      alertMsg("Error", "Network error unblocking IP.");
+    }
+  };
+
+  // Fetch Dynamic API Users
+  const fetchApiUsers = async () => {
+    setLoadingApiUsers(true);
+    try {
+      const res = await fetch("/api/admin/security/api-users");
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setApiUsers(data.users || []);
+      }
+    } catch (err) {
+      console.error("Failed to load API users:", err);
+    } finally {
+      setLoadingApiUsers(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "database") {
       fetchSyncSettings();
     } else if (activeTab === "storage") {
       fetchStorageAnalytics();
+    } else if (activeTab === "alerts") {
+      fetchSecurityAlerts(alertFilter);
+    } else if (activeTab === "blocklist") {
+      fetchBlockedIPs();
+    } else if (activeTab === "apikeys") {
+      fetchApiUsers();
     }
-  }, [activeTab]);
+  }, [activeTab, alertFilter]);
 
   // Handle Save Database Sync Settings
   const handleSaveSyncSettings = async () => {
@@ -1026,118 +1132,423 @@ export default function AdminSecurityPage() {
 
           {/* Security Alerts Tab */}
           {activeTab === "alerts" && (
-            <div className="space-y-4">
-              {securityAlerts.map((alert) => (
-                <Card key={alert.id} className="p-6 border border-border bg-card">
-                  <div className="flex items-start gap-4">
-                    <div
-                      className={`p-3 rounded-lg flex-shrink-0 ${
-                        alert.level === "critical"
-                          ? "bg-red-500/20 text-red-600"
-                          : alert.level === "warning"
-                          ? "bg-orange-500/20 text-orange-600"
-                          : "bg-blue-500/20 text-blue-600"
-                      }`}
-                    >
-                      <AlertCircle className="w-5 h-5" />
-                    </div>
+            <div className="space-y-6">
+              {/* Filter and Controls Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-display mb-1">Security Audit & Real-time Alerts</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Live system audit events: failed logins, successful sign-ins, new registrations, and IP block incidents.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchSecurityAlerts(alertFilter)}
+                  disabled={loadingAlerts}
+                  className="gap-2 self-start md:self-auto"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingAlerts ? "animate-spin" : ""}`} />
+                  Refresh Alerts
+                </Button>
+              </div>
 
-                    <div className="flex-1">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h3 className="font-semibold text-base mb-1">{alert.title}</h3>
-                          <p className="text-sm text-muted-foreground mb-3">{alert.description}</p>
-                          <span className="text-xs text-muted-foreground font-mono">{alert.time}</span>
+              {/* Filter Chips */}
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: "all", label: "All Alerts" },
+                  { id: "failed_login", label: "Login Failures" },
+                  { id: "successful_login", label: "Successful Sign-ins" },
+                  { id: "user_registered", label: "New Registrations" },
+                  { id: "ip_blocked", label: "IP & Account Blocks" },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => {
+                      setAlertFilter(f.id);
+                      fetchSecurityAlerts(f.id);
+                    }}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                      alertFilter === f.id
+                        ? "bg-foreground text-background shadow-sm"
+                        : "bg-accent/30 text-muted-foreground hover:text-foreground hover:bg-accent/60"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Alerts List */}
+              <div className="space-y-3">
+                {loadingAlerts ? (
+                  <Card className="p-8 text-center text-muted-foreground border border-border bg-card">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-muted-foreground" />
+                    Loading security audit logs...
+                  </Card>
+                ) : securityAlerts.length === 0 ? (
+                  <Card className="p-8 text-center text-muted-foreground border border-border bg-card">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                    <p className="font-semibold text-foreground">No alerts found</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      No security audit events recorded for the selected filter.
+                    </p>
+                  </Card>
+                ) : (
+                  securityAlerts.map((alert) => (
+                    <Card key={alert.id} className="p-5 border border-border bg-card hover:border-border/80 transition-colors">
+                      <div className="flex items-start gap-4">
+                        <div
+                          className={`p-2.5 rounded-lg flex-shrink-0 ${
+                            alert.level === "critical"
+                              ? "bg-red-500/15 text-red-500"
+                              : alert.level === "warning"
+                              ? "bg-amber-500/15 text-amber-500"
+                              : "bg-emerald-500/15 text-emerald-500"
+                          }`}
+                        >
+                          {alert.level === "critical" ? (
+                            <ShieldAlert className="w-5 h-5" />
+                          ) : alert.level === "warning" ? (
+                            <AlertTriangle className="w-5 h-5" />
+                          ) : (
+                            <CheckCircle2 className="w-5 h-5" />
+                          )}
                         </div>
-                        <Button variant="outline" size="sm">
-                          Investigate
-                        </Button>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-sm">{alert.title}</h3>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] uppercase font-mono px-2 py-0.5 ${
+                                  alert.level === "critical"
+                                    ? "border-red-500/30 text-red-500 bg-red-500/5"
+                                    : alert.level === "warning"
+                                    ? "border-amber-500/30 text-amber-500 bg-amber-500/5"
+                                    : "border-emerald-500/30 text-emerald-500 bg-emerald-500/5"
+                                }`}
+                              >
+                                {alert.eventType.replace("_", " ")}
+                              </Badge>
+                            </div>
+                            <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {alert.timestamp ? new Date(alert.timestamp).toLocaleString() : "-"}
+                            </span>
+                          </div>
+
+                          <p className="text-xs text-muted-foreground mb-3">{alert.description}</p>
+
+                          <div className="flex items-center gap-4 flex-wrap text-xs text-muted-foreground">
+                            {alert.email && (
+                              <span className="flex items-center gap-1.5 font-mono">
+                                <User className="w-3.5 h-3.5 text-muted-foreground/70" />
+                                {alert.email}
+                              </span>
+                            )}
+                            {alert.ip && alert.ip !== "Unknown" && (
+                              <span className="flex items-center gap-1.5 font-mono">
+                                <Globe className="w-3.5 h-3.5 text-muted-foreground/70" />
+                                {alert.ip}
+                              </span>
+                            )}
+                            {alert.ip && alert.ip !== "Unknown" && alert.ip !== "127.0.0.1" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-[11px] text-destructive hover:bg-destructive/10 ml-auto"
+                                onClick={() => {
+                                  setNewBlockIp(alert.ip);
+                                  setNewBlockReason(`Blocked from security alert: ${alert.title}`);
+                                  setShowBlockModal(true);
+                                  setActiveTab("blocklist");
+                                }}
+                              >
+                                Block this IP
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                </Card>
-              ))}
+                    </Card>
+                  ))
+                )}
+              </div>
             </div>
           )}
 
           {/* IP Blocklist Tab */}
           {activeTab === "blocklist" && (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center mb-4">
-                <p className="text-sm text-muted-foreground">Currently blocking 3 suspicious IP addresses</p>
-                <Button className="bg-foreground hover:bg-foreground/90 text-background gap-2">
-                  <Plus className="w-4 h-4" />
-                  Block IP
-                </Button>
+            <div className="space-y-6">
+              {/* Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-display mb-1">IP Blocklist & Firewall Protection</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Currently blocking {blockedIPs.length} suspicious IP addresses. Enforced instantly at the middleware layer.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchBlockedIPs}
+                    disabled={loadingBlockedIPs}
+                    className="gap-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingBlockedIPs ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="bg-foreground hover:bg-foreground/90 text-background gap-2"
+                    onClick={() => setShowBlockModal(true)}
+                  >
+                    <Plus className="w-4 h-4" />
+                    Block IP
+                  </Button>
+                </div>
               </div>
 
-              <div className="space-y-3">
-                {blockedIPs.map((item, index) => (
-                  <Card key={index} className="p-4 border border-border bg-card">
-                    <div className="flex items-center justify-between">
+              {/* Block IP Modal / Form Dialog */}
+              {showBlockModal && (
+                <Card className="p-6 border-2 border-destructive/30 bg-card shadow-lg relative">
+                  <button
+                    onClick={() => setShowBlockModal(false)}
+                    className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Lock className="w-5 h-5 text-destructive" />
+                    <h3 className="font-semibold text-base">Block an IP Address</h3>
+                  </div>
+                  <form onSubmit={handleBlockIpSubmit} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <p className="font-mono font-semibold">{item.ip}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {item.reason} • Blocked {item.date}
-                        </p>
+                        <label className="text-xs font-semibold uppercase text-muted-foreground mb-1 block">
+                          IP Address
+                        </label>
+                        <Input
+                          placeholder="e.g. 192.168.1.100 or 45.33.32.156"
+                          value={newBlockIp}
+                          onChange={(e) => setNewBlockIp(e.target.value)}
+                          className="font-mono text-sm"
+                          required
+                        />
                       </div>
-                      <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10">
-                        Unblock
+                      <div>
+                        <label className="text-xs font-semibold uppercase text-muted-foreground mb-1 block">
+                          Reason for Blocking
+                        </label>
+                        <Input
+                          placeholder="e.g. Brute force login attempts, credential stuffing"
+                          value={newBlockReason}
+                          onChange={(e) => setNewBlockReason(e.target.value)}
+                          className="text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowBlockModal(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={blockingInProgress || !newBlockIp.trim()}
+                        className="bg-destructive hover:bg-destructive/90 text-destructive-foreground gap-2"
+                      >
+                        {blockingInProgress ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Lock className="w-4 h-4" />
+                        )}
+                        Confirm Block
                       </Button>
                     </div>
+                  </form>
+                </Card>
+              )}
+
+              {/* Blocklist Table / Cards */}
+              <div className="space-y-3">
+                {loadingBlockedIPs ? (
+                  <Card className="p-8 text-center text-muted-foreground border border-border bg-card">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-muted-foreground" />
+                    Loading IP blocklist...
                   </Card>
-                ))}
+                ) : blockedIPs.length === 0 ? (
+                  <Card className="p-8 text-center text-muted-foreground border border-border bg-card">
+                    <Shield className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                    <p className="font-semibold text-foreground">No Blocked IPs</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      No IP addresses are currently blocked. Your perimeter is clear.
+                    </p>
+                  </Card>
+                ) : (
+                  blockedIPs.map((item) => (
+                    <Card key={item.id} className="p-4 border border-border bg-card hover:border-border/80 transition-colors">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono font-bold text-sm text-destructive">{item.ip}</span>
+                            <Badge variant="outline" className="text-[10px] border-destructive/30 text-destructive bg-destructive/5 font-mono">
+                              BLOCKED
+                            </Badge>
+                            {item.attempts && item.attempts > 1 && (
+                              <Badge variant="outline" className="text-[10px] font-mono">
+                                {item.attempts} Attempts
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {item.reason} • Blocked on {item.date ? new Date(item.date).toLocaleDateString() : "Active"}
+                            {item.blockedBy ? ` by ${item.blockedBy}` : ""}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleUnblockIp(item.id, item.ip)}
+                          className="text-muted-foreground hover:text-foreground hover:bg-accent gap-1.5 self-start sm:self-auto"
+                        >
+                          <Unlock className="w-4 h-4 text-emerald-500" />
+                          Unblock
+                        </Button>
+                      </div>
+                    </Card>
+                  ))
+                )}
               </div>
             </div>
           )}
 
           {/* API Keys Tab */}
           {activeTab === "apikeys" && (
-            <div className="space-y-4">
-              <div className="flex justify-end mb-4">
-                <Button className="bg-foreground hover:bg-foreground/90 text-background gap-2">
-                  <Plus className="w-4 h-4" />
-                  Generate Key
+            <div className="space-y-6">
+              {/* Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-display mb-1">API Integrations & Keys by User</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Active overview of users who have configured API keys, OpenClaw Agent tokens, Cloudinary, and Multi-LLM Gateways.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchApiUsers}
+                  disabled={loadingApiUsers}
+                  className="gap-2 self-start md:self-auto"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingApiUsers ? "animate-spin" : ""}`} />
+                  Refresh Users
                 </Button>
               </div>
 
-              <div className="space-y-3">
-                {apiKeys.map((key, index) => (
-                  <Card key={index} className="p-4 border border-border bg-card">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h3 className="font-semibold">{key.name}</h3>
-                          <div
-                            className={`text-xs font-mono px-2 py-1 rounded ${
-                              key.status === "active"
-                                ? "bg-green-500/20 text-green-700"
-                                : "bg-gray-500/20 text-gray-700"
-                            }`}
-                          >
-                            {key.status}
+              {/* Users and their APIs List */}
+              <div className="space-y-4">
+                {loadingApiUsers ? (
+                  <Card className="p-8 text-center text-muted-foreground border border-border bg-card">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-muted-foreground" />
+                    Loading API users...
+                  </Card>
+                ) : apiUsers.length === 0 ? (
+                  <Card className="p-8 text-center text-muted-foreground border border-border bg-card">
+                    <Key className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
+                    <p className="font-semibold text-foreground">No API Users Found</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      No users have configured custom third-party APIs or fleet agent tokens yet.
+                    </p>
+                  </Card>
+                ) : (
+                  apiUsers.map((user) => (
+                    <Card key={user.id} className="p-6 border border-border bg-card">
+                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-4">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm">
+                            {user.name ? user.name.slice(0, 2).toUpperCase() : "US"}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-semibold text-base">{user.name}</h3>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] uppercase font-mono ${
+                                  user.role === "admin"
+                                    ? "border-purple-500/30 text-purple-500 bg-purple-500/5"
+                                    : "border-blue-500/30 text-blue-500 bg-blue-500/5"
+                                }`}
+                              >
+                                {user.role}
+                              </Badge>
+                            </div>
+                            <p className="text-xs font-mono text-muted-foreground">{user.email}</p>
+                            {user.lastActiveAt && (
+                              <p className="text-[11px] text-muted-foreground mt-1">
+                                Last active: {new Date(user.lastActiveAt).toLocaleString()}
+                              </p>
+                            )}
                           </div>
                         </div>
-                        <p className="font-mono text-sm text-muted-foreground mb-2">{key.key}</p>
-                        <div className="flex gap-4 text-xs text-muted-foreground">
-                          <span>Created: {key.created}</span>
-                          <span>Last used: {key.lastUsed}</span>
+
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-600 bg-emerald-500/5 gap-1">
+                            <CheckCircle className="w-3 h-3 text-emerald-500" />
+                            {user.apis.length} API Service{user.apis.length !== 1 ? "s" : ""} Active
+                          </Badge>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button className="p-2 hover:bg-accent/10 rounded transition-colors" title="Copy">
-                          <Key className="w-4 h-4" />
-                        </button>
-                        <button className="p-2 hover:bg-orange-500/10 rounded transition-colors" title="Rotate">
-                          <AlertCircle className="w-4 h-4 text-orange-600" />
-                        </button>
-                        <button className="p-2 hover:bg-red-500/10 rounded transition-colors" title="Delete">
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
+
+                      {/* Configured APIs Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-border">
+                        {user.apis.map((api, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 rounded-lg border border-border bg-accent/20 flex flex-col justify-between"
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Key className="w-3.5 h-3.5 text-primary" />
+                                <span className="font-semibold text-xs">{api.name}</span>
+                              </div>
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                                {api.status}
+                              </span>
+                            </div>
+
+                            {api.providers && api.providers.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {api.providers.map((p, pIdx) => (
+                                  <span
+                                    key={pIdx}
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-background border border-border text-muted-foreground font-mono"
+                                  >
+                                    {p}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {api.count !== undefined && (
+                              <p className="text-xs text-muted-foreground font-mono mt-1">
+                                {api.count} agent token{api.count !== 1 ? "s" : ""} paired
+                              </p>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                  </Card>
-                ))}
+                    </Card>
+                  ))
+                )}
               </div>
             </div>
           )}
