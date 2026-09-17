@@ -2,12 +2,31 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const UserAuditLog = require('../models/UserAuditLog');
 const AgentCredential = require('../models/AgentCredential');
 const Device = require('../models/Device');
 const { ensureMongooseConnected } = require('../db/mongo/connection');
 const { sendPasswordResetOtp } = require('./mailService');
 const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
 const { isUserMasterAdmin, enforceAdminRoleIsolation } = require('./adminAuthService');
+
+async function recordUserAudit({ userId, email, eventType, page, pageTitle, dwellSeconds, ip, userAgent, status, reason, metadata }) {
+    try {
+        await UserAuditLog.create({
+            userId: userId || null,
+            email: String(email || '').trim().toLowerCase(),
+            eventType,
+            page: String(page || ''),
+            pageTitle: String(pageTitle || ''),
+            dwellSeconds: Number(dwellSeconds) || 0,
+            ip: String(ip || ''),
+            userAgent: String(userAgent || ''),
+            status: status || 'info',
+            reason: String(reason || ''),
+            metadata: metadata || {}
+        });
+    } catch (_) {}
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
@@ -86,6 +105,7 @@ async function verifyUserToken(token) {
             ? await getMysqlAdapter().findUserById(payload.sub)
             : await User.findById(payload.sub).lean();
         if (!user) return null;
+        if (user.isBlocked) return null;
         if (user.authTokenHash) {
             const matches = await bcrypt.compare(token, user.authTokenHash);
             if (!matches) return null;
@@ -394,18 +414,54 @@ async function registerUser({ email, password, passwordHash, name, provider = 'l
     return user;
 }
 
-async function loginUser({ email, password }) {
+async function loginUser({ email, password, ip = '', userAgent = '' }) {
     const normalized = String(email || '').trim().toLowerCase();
     let user = isMysql()
         ? await getMysqlAdapter().findUserByEmail(normalized)
         : await User.findOne({ email: normalized });
     if (!user) {
+        await recordUserAudit({
+            email: normalized,
+            eventType: 'login_failure',
+            ip,
+            userAgent,
+            status: 'failed',
+            reason: 'User account does not exist'
+        });
         const error = new Error('Invalid email or password.');
         error.status = 401;
         throw error;
     }
 
+    if (user.isBlocked) {
+        await recordUserAudit({
+            userId: user._id,
+            email: normalized,
+            eventType: 'login_failure',
+            ip,
+            userAgent,
+            status: 'failed',
+            reason: user.blockedReason || 'Account is blocked by administrator'
+        });
+        const error = new Error(
+            user.blockedReason
+                ? `Account blocked: ${user.blockedReason}. Access denied.`
+                : 'Your account has been blocked by an administrator. Access denied.'
+        );
+        error.status = 403;
+        throw error;
+    }
+
     if (!user.passwordHash) {
+        await recordUserAudit({
+            userId: user._id,
+            email: normalized,
+            eventType: 'login_failure',
+            ip,
+            userAgent,
+            status: 'failed',
+            reason: 'Requires Google sign-in'
+        });
         const error = new Error('This account requires Google sign-in.');
         error.status = 401;
         throw error;
@@ -413,10 +469,46 @@ async function loginUser({ email, password }) {
 
     const ok = await bcrypt.compare(String(password || ''), user.passwordHash);
     if (!ok) {
+        if (!isMysql()) {
+            await User.findByIdAndUpdate(user._id, {
+                $inc: { failedLoginCount: 1 },
+                $set: { lastFailedLoginAt: new Date() }
+            });
+        }
+        await recordUserAudit({
+            userId: user._id,
+            email: normalized,
+            eventType: 'login_failure',
+            ip,
+            userAgent,
+            status: 'failed',
+            reason: 'Invalid password'
+        });
         const error = new Error('Invalid email or password.');
         error.status = 401;
         throw error;
     }
+
+    if (!isMysql()) {
+        await User.findByIdAndUpdate(user._id, {
+            $inc: { loginCount: 1 },
+            $set: {
+                failedLoginCount: 0,
+                lastLoginIp: ip,
+                lastActiveAt: new Date()
+            }
+        });
+    }
+
+    await recordUserAudit({
+        userId: user._id,
+        email: normalized,
+        eventType: 'login_success',
+        ip,
+        userAgent,
+        status: 'success',
+        reason: 'Signed in successfully'
+    });
 
     user = await enforceAdminRoleIsolation(user);
     return await ensureUserPairingFields(user);
@@ -780,6 +872,12 @@ async function pairAgent(body, req) {
         throw error;
     }
 
+    if (user.isBlocked) {
+        const error = new Error('This account has been blocked by an administrator. Device pairing rejected.');
+        error.status = 403;
+        throw error;
+    }
+
     const userIdStr = String(user._id || user.id);
 
     if (isMysql()) {
@@ -1045,4 +1143,5 @@ module.exports = {
     generateStrongSixDigitCode,
     isWeakPairingCode,
     verifyAdminUnlockPin,
+    recordUserAudit,
 };

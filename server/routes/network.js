@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Device = require('../models/Device');
+const AgentCredential = require('../models/AgentCredential');
 const { getLiveDeviceOptions } = require('../sockets/handler');
 const { verifyAgentToken } = require('../services/authService');
 const { persistHistoryPayload } = require('../services/historySyncService');
@@ -18,35 +19,94 @@ const syncManager = require('../services/syncManager');
 router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const seeAll = await userCanAccessAnyDevice(req.user);
-        const query = seeAll ? {} : { userId: req.user.id };
-        let allDevices;
+        const userIdStr = String(req.user.id || '');
+        const query = seeAll
+            ? {}
+            : {
+                $or: [
+                    { userId: req.user.id },
+                    { userId: userIdStr }
+                ]
+            };
+
+        let allDevices = [];
+        let credentials = [];
         if (isMysql()) {
-            allDevices = await getMysqlAdapter().listDevices(seeAll ? {} : { userId: req.user.id });
+            const adapter = getMysqlAdapter();
+            allDevices = await adapter.listDevices(seeAll ? {} : { userId: req.user.id });
+            credentials = await adapter.listAllAgentCredentials(500);
+            if (!seeAll) {
+                credentials = credentials.filter((c) => String(c.userId) === userIdStr);
+            }
         } else {
-            allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
+            [allDevices, credentials] = await Promise.all([
+                Device.find(query).sort({ lastSeen: -1 }).lean(),
+                AgentCredential.find(seeAll ? {} : { userId: req.user.id }).lean()
+            ]);
         }
+
         const liveDevices = getLiveDeviceOptions(req.user.id, { seeAll });
         const liveDeviceIds = new Set(liveDevices.map((device) => String(device.value)));
+        const registry = getConnectionRegistry();
+        const { isCommandReady } = require('../sockets/dispatchAgent');
 
-        const devices = allDevices.map((device) => {
+        const deviceMap = new Map();
+
+        // 1. Add database Device records
+        for (const device of allDevices) {
             const deviceId = String(device.deviceId || '');
+            if (!deviceId) continue;
             const isLive = liveDeviceIds.has(deviceId);
-            const registry = getConnectionRegistry();
-            const { isCommandReady } = require('../sockets/dispatchAgent');
-            return {
+            deviceMap.set(deviceId, {
                 ...device,
                 deviceId,
                 status: overlayDeviceStatus(deviceId, device.platform, device.lastAndroidBeatAt, isLive, registry),
                 commandReady: isCommandReady(deviceId, registry),
                 label: device.hostname || deviceId,
                 value: deviceId
-            };
-        });
+            });
+        }
 
-        res.status(200).json({ success: true, devices });
+        // 2. Synthesize missing devices from registered AgentCredentials
+        for (const cred of credentials) {
+            const deviceId = String(cred.deviceId || '');
+            if (!deviceId || deviceMap.has(deviceId)) continue;
+            const isLive = liveDeviceIds.has(deviceId);
+            deviceMap.set(deviceId, {
+                deviceId,
+                userId: cred.userId,
+                hostname: cred.label || deviceId,
+                platform: 'unknown',
+                status: isLive ? 'online' : 'offline',
+                commandReady: isCommandReady(deviceId, registry),
+                label: cred.label || deviceId,
+                value: deviceId,
+                lastSeen: cred.lastConnectedAt || cred.updatedAt || new Date()
+            });
+        }
+
+        // 3. Synthesize any currently active live devices connected via WebSocket
+        for (const liveDev of liveDevices) {
+            const deviceId = String(liveDev.value || '');
+            if (!deviceId || deviceMap.has(deviceId)) continue;
+            deviceMap.set(deviceId, {
+                deviceId,
+                userId: req.user.id,
+                hostname: liveDev.label || deviceId,
+                platform: 'unknown',
+                status: 'online',
+                commandReady: isCommandReady(deviceId, registry),
+                label: liveDev.label || deviceId,
+                value: deviceId,
+                lastSeen: new Date()
+            });
+        }
+
+        const devices = Array.from(deviceMap.values());
+        return res.status(200).json({ success: true, devices });
 
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        return res.status(500).json({ success: false, error: error.message });
     }
 });
 

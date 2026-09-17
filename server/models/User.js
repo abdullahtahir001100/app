@@ -70,6 +70,48 @@ const UserSchema = new mongoose.Schema({
     adminPinHash: {
         type: String,
         default: ''
+    },
+    isBlocked: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+    blockedAt: {
+        type: Date,
+        default: null
+    },
+    blockedReason: {
+        type: String,
+        default: ''
+    },
+    blockedBy: {
+        type: String,
+        default: ''
+    },
+    loginCount: {
+        type: Number,
+        default: 0
+    },
+    failedLoginCount: {
+        type: Number,
+        default: 0
+    },
+    lastFailedLoginAt: {
+        type: Date,
+        default: null
+    },
+    lastLoginIp: {
+        type: String,
+        default: ''
+    },
+    lastActiveAt: {
+        type: Date,
+        default: Date.now,
+        index: true
+    },
+    currentPage: {
+        type: String,
+        default: ''
     }
 }, {
     timestamps: true

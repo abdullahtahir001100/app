@@ -6,8 +6,10 @@ const Device = require('../models/Device');
 const AgentCredential = require('../models/AgentCredential');
 const VirtualFile = require('../models/VirtualFile');
 const ActivityLog = require('../models/ActivityLog');
+const UserAuditLog = require('../models/UserAuditLog');
 const { attachUser, requireAdmin } = require('../middleware/auth');
 const { getConnectionRegistry } = require('../sockets/registry');
+const { forceLogoutUserDashboards } = require('../sockets/fanout');
 const { overlayDeviceStatus } = require('../services/androidBeat');
 const { isMysql, getMysqlAdapter, getActiveProvider } = require('../db/DatabaseFactory');
 const { testMysqlConnection } = require('../db/mysql/connection');
@@ -178,6 +180,356 @@ router.put('/users/:id/role', async (req, res) => {
         res.json({ success: true, user });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * GET /api/admin/online-users
+ * Returns live online users, web session status, blocking status, and active page.
+ */
+router.get('/online-users', async (_req, res) => {
+    try {
+        const users = await User.find({})
+            .select('name email role provider isBlocked blockedReason blockedAt blockedBy loginCount failedLoginCount lastFailedLoginAt lastLoginIp lastActiveAt currentPage createdAt avatarUrl')
+            .sort({ lastActiveAt: -1 })
+            .lean();
+
+        const registry = getConnectionRegistry();
+        const activeWebUserIds = new Set();
+        try {
+            for (const [key, socket] of registry.entries()) {
+                if (key.startsWith('DASHBOARD_') && socket?.authContext?.userId) {
+                    activeWebUserIds.add(String(socket.authContext.userId));
+                }
+            }
+        } catch (_) {}
+
+        // Gather device counts per user
+        const deviceCounts = await Device.aggregate([
+            { $match: { userId: { $ne: null } } },
+            { $group: { _id: '$userId', count: { $sum: 1 } } }
+        ]);
+        const deviceCountMap = new Map(deviceCounts.map((d) => [String(d._id), d.count]));
+
+        const credentialCounts = await AgentCredential.aggregate([
+            { $match: { userId: { $ne: null } } },
+            { $group: { _id: '$userId', count: { $sum: 1 } } }
+        ]);
+        for (const c of credentialCounts) {
+            const current = deviceCountMap.get(String(c._id)) || 0;
+            if (c.count > current) deviceCountMap.set(String(c._id), c.count);
+        }
+
+        const now = Date.now();
+        const ONLINE_THRESHOLD_MS = 3 * 60 * 1000; // Active within last 3 minutes
+
+        let onlineCount = 0;
+        let blockedCount = 0;
+
+        const enrichedUsers = users.map((u) => {
+            const uid = String(u._id);
+            const lastActiveTs = u.lastActiveAt ? new Date(u.lastActiveAt).getTime() : 0;
+            const isSocketOnline = activeWebUserIds.has(uid);
+            const isRecentActive = lastActiveTs > 0 && (now - lastActiveTs) < ONLINE_THRESHOLD_MS;
+            const isOnline = isSocketOnline || isRecentActive;
+
+            if (isOnline) onlineCount++;
+            if (u.isBlocked) blockedCount++;
+
+            return {
+                id: uid,
+                name: u.name || 'User',
+                email: u.email,
+                role: u.role || 'user',
+                provider: u.provider || 'local',
+                isOnline,
+                isBlocked: !!u.isBlocked,
+                blockedReason: u.blockedReason || '',
+                blockedAt: u.blockedAt || null,
+                blockedBy: u.blockedBy || '',
+                currentPage: u.currentPage || '',
+                lastActiveAt: u.lastActiveAt || u.createdAt,
+                lastLoginIp: u.lastLoginIp || '',
+                loginCount: u.loginCount || 0,
+                failedLoginCount: u.failedLoginCount || 0,
+                lastFailedLoginAt: u.lastFailedLoginAt || null,
+                devicesCount: deviceCountMap.get(uid) || 0,
+                avatarUrl: u.avatarUrl || '',
+                createdAt: u.createdAt
+            };
+        });
+
+        return res.json({
+            success: true,
+            totalUsers: users.length,
+            onlineCount,
+            blockedCount,
+            users: enrichedUsers
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * POST /api/admin/users/:id/block
+ * Blocks a user, invalidates all sessions, forces immediate WebSocket logout, and audits event.
+ */
+router.post('/users/:id/block', async (req, res) => {
+    try {
+        const targetUserId = req.params.id;
+        const reason = String(req.body?.reason || 'Account blocked by administrator').trim();
+
+        // Safety: Do not allow admin to block themselves
+        if (String(req.user.id) === String(targetUserId)) {
+            return res.status(400).json({ success: false, message: 'You cannot block your own account.' });
+        }
+
+        const user = await User.findById(targetUserId);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        user.isBlocked = true;
+        user.blockedReason = reason;
+        user.blockedAt = new Date();
+        user.blockedBy = req.user.email || 'Admin';
+        user.authTokenHash = ''; // Revoke current session token
+        await user.save();
+
+        // Force terminate active dashboard sessions
+        try {
+            const registry = getConnectionRegistry();
+            forceLogoutUserDashboards(registry, targetUserId, 'account_blocked');
+        } catch (_) {}
+
+        // Log audit event
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || '';
+        await UserAuditLog.create({
+            userId: user._id,
+            email: user.email,
+            eventType: 'account_blocked',
+            ip,
+            status: 'warning',
+            reason,
+            metadata: { blockedBy: req.user.email }
+        });
+
+        return res.json({
+            success: true,
+            message: `User ${user.email} has been blocked and active sessions were terminated.`,
+            user: {
+                id: String(user._id),
+                email: user.email,
+                isBlocked: true,
+                blockedReason: reason
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * POST /api/admin/users/:id/unblock
+ * Unblocks a user and restores their ability to sign in.
+ */
+router.post('/users/:id/unblock', async (req, res) => {
+    try {
+        const targetUserId = req.params.id;
+        const user = await User.findById(targetUserId);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        user.isBlocked = false;
+        user.blockedReason = '';
+        user.blockedAt = null;
+        user.blockedBy = '';
+        await user.save();
+
+        // Log audit event
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || '';
+        await UserAuditLog.create({
+            userId: user._id,
+            email: user.email,
+            eventType: 'account_unblocked',
+            ip,
+            status: 'success',
+            reason: 'Account unblocked by administrator',
+            metadata: { unblockedBy: req.user.email }
+        });
+
+        return res.json({
+            success: true,
+            message: `User ${user.email} has been unblocked.`,
+            user: {
+                id: String(user._id),
+                email: user.email,
+                isBlocked: false
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * DELETE /api/admin/users/:id
+ * Permanently deletes a user and associated data.
+ */
+router.delete('/users/:id', async (req, res) => {
+    try {
+        const targetUserId = req.params.id;
+        if (String(req.user.id) === String(targetUserId)) {
+            return res.status(400).json({ success: false, message: 'You cannot delete your own account.' });
+        }
+
+        const user = await User.findById(targetUserId);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        // Kick all active sessions
+        try {
+            const registry = getConnectionRegistry();
+            forceLogoutUserDashboards(registry, targetUserId, 'account_deleted');
+        } catch (_) {}
+
+        await Promise.all([
+            User.findByIdAndDelete(targetUserId),
+            Permission.deleteMany({ userId: targetUserId }),
+            AgentCredential.deleteMany({ userId: targetUserId })
+        ]);
+
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || '';
+        await UserAuditLog.create({
+            userId: targetUserId,
+            email: user.email,
+            eventType: 'account_deleted',
+            ip,
+            status: 'warning',
+            reason: 'Account deleted by admin',
+            metadata: { deletedBy: req.user.email }
+        });
+
+        return res.json({ success: true, message: `User ${user.email} permanently deleted.` });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * GET /api/admin/users/:id/audit
+ * Returns deep-dive audit logs (login attempts, page visits, dwell time, and user devices).
+ */
+router.get('/users/:id/audit', async (req, res) => {
+    try {
+        const targetUserId = req.params.id;
+        const user = await User.findById(targetUserId)
+            .select('name email role provider isBlocked blockedReason blockedAt blockedBy loginCount failedLoginCount lastFailedLoginAt lastLoginIp lastActiveAt currentPage createdAt avatarUrl')
+            .lean();
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        // Fetch audit logs for this user
+        const logs = await UserAuditLog.find({
+            $or: [
+                { userId: targetUserId },
+                { email: user.email }
+            ]
+        })
+            .sort({ createdAt: -1 })
+            .limit(200)
+            .lean();
+
+        // Fetch all devices associated with this user
+        const [devices, credentials] = await Promise.all([
+            Device.find({ userId: targetUserId }).sort({ lastSeen: -1 }).lean(),
+            AgentCredential.find({ userId: targetUserId }).sort({ updatedAt: -1 }).lean()
+        ]);
+
+        const registry = getConnectionRegistry();
+        const onlineDevices = new Set();
+        try {
+            for (const key of registry.keys()) {
+                if (key.startsWith('AGENT_')) onlineDevices.add(key.slice('AGENT_'.length));
+                if (key.startsWith('DEVICE_')) onlineDevices.add(key.slice('DEVICE_'.length));
+            }
+        } catch (_) {}
+
+        const devicesMap = new Map();
+        for (const d of devices) {
+            const devId = String(d.deviceId);
+            devicesMap.set(devId, {
+                deviceId: devId,
+                hostname: d.hostname || devId,
+                platform: d.platform || 'unknown',
+                status: overlayDeviceStatus(devId, d.platform, d.lastAndroidBeatAt, onlineDevices.has(devId), registry),
+                lastSeen: d.lastSeen || d.updatedAt,
+                publicIp: d.publicIp || '',
+                localIp: d.localIp || '',
+                battery: metricPercent(d.battery),
+                storage: metricPercent(d.storage),
+                osVersion: d.osVersion || '',
+                cpu: d.cpu || '',
+                ram: d.ram || null
+            });
+        }
+
+        for (const c of credentials) {
+            const devId = String(c.deviceId);
+            if (!devicesMap.has(devId)) {
+                devicesMap.set(devId, {
+                    deviceId: devId,
+                    hostname: c.label || devId,
+                    platform: 'unknown',
+                    status: onlineDevices.has(devId) ? 'online' : 'offline',
+                    lastSeen: c.lastConnectedAt || c.updatedAt,
+                    publicIp: '',
+                    localIp: '',
+                    battery: null,
+                    storage: null,
+                    osVersion: '',
+                    cpu: '',
+                    ram: null
+                });
+            }
+        }
+
+        // Aggregate stats
+        const loginSuccesses = logs.filter((l) => l.eventType === 'login_success').length;
+        const loginFailures = logs.filter((l) => l.eventType === 'login_failure').length;
+        const pageVisits = logs.filter((l) => l.eventType === 'page_visit' || l.eventType === 'page_dwell');
+        const totalDwellSeconds = pageVisits.reduce((sum, l) => sum + (l.dwellSeconds || 0), 0);
+
+        return res.json({
+            success: true,
+            user: {
+                ...user,
+                id: String(user._id),
+                loginSuccessCount: loginSuccesses || user.loginCount || 0,
+                loginFailureCount: loginFailures || user.failedLoginCount || 0,
+                totalDwellSeconds
+            },
+            logs: logs.map((l) => ({
+                id: String(l._id),
+                eventType: l.eventType,
+                page: l.page || '',
+                pageTitle: l.pageTitle || '',
+                dwellSeconds: l.dwellSeconds || 0,
+                ip: l.ip || '',
+                userAgent: l.userAgent || '',
+                status: l.status || 'info',
+                reason: l.reason || '',
+                timestamp: l.createdAt
+            })),
+            devices: Array.from(devicesMap.values())
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 

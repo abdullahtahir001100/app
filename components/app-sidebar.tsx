@@ -395,6 +395,7 @@ function AppSidebarContent() {
   const adminMenuItems = can("admin")
     ? [
         { icon: Shield, label: "Admin Dashboard", href: "/admin" },
+        { icon: Activity, label: "Live Online & Audit", href: "/admin/online-users" },
         { icon: Smartphone, label: "All Devices", href: "/admin/devices" },
         { icon: FileText, label: "Users", href: "/admin/users" },
         { icon: History, label: "Permissions", href: "/admin/permissions" },

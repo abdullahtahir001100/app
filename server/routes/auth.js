@@ -77,7 +77,9 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
     try {
-        const user = await loginUser(req.body || {});
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || '';
+        const userAgent = req.headers['user-agent'] || '';
+        const user = await loginUser({ ...(req.body || {}), ip, userAgent });
         const token = signUserToken(user);
         await setUserAuthSession(user, token);
         kickOtherSessions(String(user._id));
@@ -319,6 +321,45 @@ router.put('/pairing', attachUser, async (req, res) => {
             success: false,
             message: error.message || 'Could not update pairing credentials.',
         });
+/** Web client telemetry heartbeat (tracks active web presence, current page, and dwell time). */
+router.post('/telemetry/heartbeat', attachUser, async (req, res) => {
+    try {
+        if (!req.user?.id) {
+            return res.status(401).json({ success: false, message: 'Authentication required' });
+        }
+        const { page, pageTitle, dwellSeconds } = req.body || {};
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || '';
+        const userAgent = req.headers['user-agent'] || '';
+
+        const User = require('../models/User');
+        const UserAuditLog = require('../models/UserAuditLog');
+
+        await User.findByIdAndUpdate(req.user.id, {
+            $set: {
+                lastActiveAt: new Date(),
+                currentPage: String(page || '').slice(0, 200),
+                lastLoginIp: ip
+            }
+        });
+
+        if (Number(dwellSeconds) > 0 && page) {
+            await UserAuditLog.create({
+                userId: req.user.id,
+                email: req.user.email || '',
+                eventType: 'page_dwell',
+                page: String(page || '').slice(0, 200),
+                pageTitle: String(pageTitle || '').slice(0, 200),
+                dwellSeconds: Math.min(Math.round(Number(dwellSeconds) || 0), 86400),
+                ip,
+                userAgent,
+                status: 'info',
+                reason: 'Active session dwell'
+            });
+        }
+
+        return res.status(200).json({ success: true, timestamp: Date.now() });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 

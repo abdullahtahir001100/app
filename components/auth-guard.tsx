@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { notFound, usePathname, useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { bindDeviceCacheUser, clearDeviceRegistryCache, gatewayClient } from "@/lib/gateway-client";
+import { usePageTelemetry } from "@/hooks/use-page-telemetry";
 
 const PUBLIC_PATHS = ["/", "/login", "/register", "/forgot-password", "/verify-otp"];
 
@@ -63,6 +64,7 @@ function redirectToLogin(router: ReturnType<typeof useRouter>, pathname: string,
 }
 
 export function AuthGuard({ children }: { children: ReactNode }) {
+  usePageTelemetry();
   const pathname = usePathname();
   const router = useRouter();
   const [ready, setReady] = useState(false);
