@@ -71,6 +71,9 @@ function validateSameSiteOrigin(req, res, next) {
         return res.status(403).json({ success: false, message: 'Origin not allowed.' });
     }
 
+    return next();
+}
+
 const blockedIpsCache = new Set();
 let lastBlockedIpFetch = 0;
 
