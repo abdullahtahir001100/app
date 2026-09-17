@@ -52,14 +52,17 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     });
                 }
 
-                const modelList = Array.isArray(data?.models) ? data.models : [];
+                const modelList = Array.isArray(data?.models)
+                    ? data.models.filter(m => m.supportedGenerationMethods?.includes('generateContent') || m.name.includes('gemini')).map(m => m.name.replace(/^models\//, ''))
+                    : [];
                 return res.status(200).json({
                     success: true,
                     provider: 'gemini',
                     latencyMs,
-                    model: model || 'gemini-1.5-flash',
+                    model: model || 'gemini-2.0-flash',
+                    models: modelList,
                     availableModelsCount: modelList.length,
-                    message: `✓ Gemini API key is valid and verified! (${latencyMs}ms)`,
+                    message: `✓ Gemini API key is valid! Found ${modelList.length} live models (${latencyMs}ms)`,
                 });
             } catch (err) {
                 clearTimeout(timeoutId);
@@ -73,7 +76,7 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
         }
 
         // 2. OpenAI
-        if (provider === 'openai') {
+        if (provider === 'openai' || provider === 'chatgpt') {
             try {
                 const apiRes = await fetch('https://api.openai.com/v1/models', {
                     method: 'GET',
@@ -95,11 +98,17 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     });
                 }
 
+                const modelList = Array.isArray(data?.data)
+                    ? data.data.filter(m => m.id.includes('gpt') || m.id.startsWith('o1') || m.id.startsWith('o3')).map(m => m.id).sort()
+                    : [];
+
                 return res.status(200).json({
                     success: true,
                     provider: 'openai',
                     latencyMs,
-                    message: `✓ OpenAI API key is valid and verified! (${latencyMs}ms)`,
+                    models: modelList,
+                    availableModelsCount: modelList.length,
+                    message: `✓ OpenAI API key is valid! Found ${modelList.length} models (${latencyMs}ms)`,
                 });
             } catch (err) {
                 clearTimeout(timeoutId);
@@ -134,11 +143,15 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     });
                 }
 
+                const modelList = Array.isArray(data?.data) ? data.data.map(m => m.id).sort() : [];
+
                 return res.status(200).json({
                     success: true,
                     provider: 'groq',
                     latencyMs,
-                    message: `✓ Groq API key is valid and verified! (${latencyMs}ms)`,
+                    models: modelList,
+                    availableModelsCount: modelList.length,
+                    message: `✓ Groq API key is valid! Found ${modelList.length} models (${latencyMs}ms)`,
                 });
             } catch (err) {
                 clearTimeout(timeoutId);
@@ -151,7 +164,7 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
         }
 
         // 4. Anthropic
-        if (provider === 'anthropic') {
+        if (provider === 'anthropic' || provider === 'claude') {
             try {
                 const apiRes = await fetch('https://api.anthropic.com/v1/models', {
                     method: 'GET',
@@ -176,11 +189,15 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     });
                 }
 
+                const modelList = Array.isArray(data?.data) ? data.data.map(m => m.id).sort() : [];
+
                 return res.status(200).json({
                     success: true,
                     provider: 'anthropic',
                     latencyMs,
-                    message: `✓ Anthropic API key is valid and verified! (${latencyMs}ms)`,
+                    models: modelList,
+                    availableModelsCount: modelList.length,
+                    message: `✓ Anthropic API key is valid! Found ${modelList.length} models (${latencyMs}ms)`,
                 });
             } catch (err) {
                 clearTimeout(timeoutId);
@@ -215,11 +232,15 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     });
                 }
 
+                const modelList = Array.isArray(data?.data) ? data.data.map(m => m.id).sort() : [];
+
                 return res.status(200).json({
                     success: true,
                     provider: 'deepseek',
                     latencyMs,
-                    message: `✓ DeepSeek API key is valid and verified! (${latencyMs}ms)`,
+                    models: modelList,
+                    availableModelsCount: modelList.length,
+                    message: `✓ DeepSeek API key is valid! Found ${modelList.length} models (${latencyMs}ms)`,
                 });
             } catch (err) {
                 clearTimeout(timeoutId);
@@ -234,7 +255,7 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
         // 6. OpenRouter
         if (provider === 'openrouter') {
             try {
-                const apiRes = await fetch('https://openrouter.ai/api/v1/auth/key', {
+                const apiRes = await fetch('https://openrouter.ai/api/v1/models', {
                     method: 'GET',
                     headers: { Authorization: `Bearer ${trimmedKey}` },
                     signal: controller.signal,
@@ -254,11 +275,15 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     });
                 }
 
+                const modelList = Array.isArray(data?.data) ? data.data.map(m => m.id).slice(0, 80) : [];
+
                 return res.status(200).json({
                     success: true,
                     provider: 'openrouter',
                     latencyMs,
-                    message: `✓ OpenRouter API key is valid and verified! (${latencyMs}ms)`,
+                    models: modelList,
+                    availableModelsCount: modelList.length,
+                    message: `✓ OpenRouter API key is valid! Found ${modelList.length} models (${latencyMs}ms)`,
                 });
             } catch (err) {
                 clearTimeout(timeoutId);
@@ -267,7 +292,6 @@ router.post('/test-ai', attachUser, requirePagePermission('settings.ai'), async 
                     provider: 'openrouter',
                     error: String(err.message || err),
                 });
-            }
         }
 
         clearTimeout(timeoutId);

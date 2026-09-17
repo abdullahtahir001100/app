@@ -317,6 +317,55 @@ export default function SettingsPage() {
     preferredLanguage: "Urdu / English",
   });
 
+  // Dynamic Models State (Loaded from API per company)
+  const [dynamicModels, setDynamicModels] = useState<Record<string, string[]>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("zenvora-dynamic-ai-models");
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return {};
+  });
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [customModelMode, setCustomModelMode] = useState(false);
+
+  const fetchLiveModelsForProvider = async () => {
+    if (!activeProviderConfig?.apiKey?.trim()) {
+      setError("Please enter an API key for " + (activeProviderConfig?.label || selectedAiProvider) + " before fetching live models.");
+      return;
+    }
+    setFetchingModels(true);
+    setError("");
+    try {
+      const res = await safeFetchJson("/api/ai-pilot/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: selectedAiProvider,
+          apiKey: activeProviderConfig.apiKey.trim(),
+        }),
+      });
+      if (res.ok && Array.isArray(res.models) && res.models.length > 0) {
+        setDynamicModels((prev) => {
+          const next = { ...prev, [selectedAiProvider]: res.models };
+          if (typeof window !== "undefined") {
+            localStorage.setItem("zenvora-dynamic-ai-models", JSON.stringify(next));
+          }
+          return next;
+        });
+        setSuccessMsg(`✓ Successfully fetched ${res.models.length} live models from ${activeProviderConfig.label}!`);
+      } else {
+        setError(res.error || "Could not retrieve models from provider API.");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError("Error fetching models: " + msg);
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
   const refreshMemoryStats = async () => {
     try {
       const res = await fetch("/api/ai-pilot/memory");
@@ -581,6 +630,15 @@ export default function SettingsPage() {
       });
       setAiTestResult(data);
       if (data.success) {
+        if (Array.isArray(data.models) && data.models.length > 0) {
+          setDynamicModels((prev) => {
+            const next = { ...prev, [selectedAiProvider]: data.models };
+            if (typeof window !== "undefined") {
+              localStorage.setItem("zenvora-dynamic-ai-models", JSON.stringify(next));
+            }
+            return next;
+          });
+        }
         setSuccessMsg(data.message || "AI API Key verified successfully!");
       } else {
         setError(data.error || "AI API Key verification failed.");
@@ -2017,20 +2075,68 @@ export default function SettingsPage() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label className="text-xs font-mono uppercase tracking-wider">
-                            Model
-                          </Label>
-                          <select
-                            value={activeProviderConfig.model}
-                            onChange={(e) => setProviderModel(selectedAiProvider, e.target.value)}
-                            className="w-full h-10 px-3 border border-border rounded-md bg-background text-sm font-mono"
-                          >
-                            {PROVIDER_OPTIONS.find((p) => p.key === selectedAiProvider)?.models.map((m) => (
-                              <option key={m} value={m}>
-                                {m}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Label className="text-xs font-mono uppercase tracking-wider">
+                                Model
+                              </Label>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                {Array.from(new Set([
+                                  ...(dynamicModels[selectedAiProvider] || []),
+                                  ...(PROVIDER_OPTIONS.find((p) => p.key === selectedAiProvider)?.models || [])
+                                ])).length} models available
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCustomModelMode(!customModelMode)}
+                                className="h-6 text-[11px] text-muted-foreground hover:text-foreground px-2"
+                              >
+                                {customModelMode ? "Choose from list" : "Type custom model"}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void fetchLiveModelsForProvider()}
+                                disabled={fetchingModels || !activeProviderConfig?.apiKey?.trim()}
+                                className="h-6 text-[11px] gap-1 px-2.5 border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                                title="Fetch all live models directly from provider API"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${fetchingModels ? "animate-spin" : ""}`} />
+                                {fetchingModels ? "Fetching live models…" : "Fetch all live models from API"}
+                              </Button>
+                            </div>
+                          </div>
+
+                          {customModelMode ? (
+                            <Input
+                              type="text"
+                              placeholder={`e.g. ${activeProviderConfig.model || "custom-model-id"}`}
+                              value={activeProviderConfig.model}
+                              onChange={(e) => setProviderModel(selectedAiProvider, e.target.value)}
+                              className="font-mono text-sm"
+                            />
+                          ) : (
+                            <select
+                              value={activeProviderConfig.model}
+                              onChange={(e) => setProviderModel(selectedAiProvider, e.target.value)}
+                              className="w-full h-10 px-3 border border-border rounded-md bg-background text-sm font-mono"
+                            >
+                              {Array.from(new Set([
+                                ...(dynamicModels[selectedAiProvider] || []),
+                                ...(PROVIDER_OPTIONS.find((p) => p.key === selectedAiProvider)?.models || []),
+                                ...(activeProviderConfig.model ? [activeProviderConfig.model] : [])
+                              ])).map((m) => (
+                                <option key={m} value={m}>
+                                  {m}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
 
                         {/* Test API Key Button */}

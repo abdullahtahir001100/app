@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 /* ── Provider definitions ─────────────────────────────────── */
 
-export type ProviderKey = "gemini" | "chatgpt" | "openrouter" | "grok" | "claude";
+export type ProviderKey = "gemini" | "chatgpt" | "openrouter" | "grok" | "claude" | "deepseek";
 
 export type ApiProviderConfig = {
   provider: ProviderKey;
@@ -23,13 +23,35 @@ export const PROVIDER_OPTIONS: { key: ProviderKey; label: string; defaultModel: 
     key: "gemini",
     label: "Google Gemini",
     defaultModel: "gemini-2.0-flash",
-    models: ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"],
+    models: [
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+      "gemini-2.0-flash-lite",
+      "gemini-2.0-pro-exp-02-05",
+      "gemini-1.5-pro",
+      "gemini-1.5-flash",
+      "gemini-1.5-flash-8b",
+      "gemini-1.0-pro",
+    ],
   },
   {
     key: "chatgpt",
     label: "OpenAI ChatGPT",
     defaultModel: "gpt-4o",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+    models: [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "o1",
+      "o1-mini",
+      "o1-preview",
+      "o3-mini",
+      "chatgpt-4o-latest",
+      "gpt-4-turbo",
+      "gpt-4-turbo-preview",
+      "gpt-4",
+      "gpt-3.5-turbo",
+    ],
   },
   {
     key: "openrouter",
@@ -37,26 +59,54 @@ export const PROVIDER_OPTIONS: { key: ProviderKey; label: string; defaultModel: 
     defaultModel: "openai/gpt-4o",
     models: [
       "openai/gpt-4o",
+      "openai/gpt-4o-mini",
+      "openai/o3-mini",
+      "anthropic/claude-3.7-sonnet",
       "anthropic/claude-3.5-sonnet",
-      "google/gemini-2.0-flash",
+      "anthropic/claude-3.5-haiku",
+      "deepseek/deepseek-r1",
+      "deepseek/deepseek-chat",
+      "google/gemini-2.0-flash-001",
+      "google/gemini-2.5-pro",
+      "meta-llama/llama-3.3-70b-instruct",
+      "meta-llama/llama-3.1-405b-instruct",
       "meta-llama/llama-3.1-70b-instruct",
+      "qwen/qwen-2.5-72b-instruct",
+      "mistralai/mistral-large-2411",
     ],
   },
   {
     key: "grok",
     label: "xAI Grok",
     defaultModel: "grok-3",
-    models: ["grok-3", "grok-3-mini", "grok-2"],
+    models: [
+      "grok-3",
+      "grok-3-mini",
+      "grok-2-1212",
+      "grok-2-vision-1212",
+      "grok-beta",
+    ],
   },
   {
     key: "claude",
     label: "Anthropic Claude",
-    defaultModel: "claude-sonnet-4-20250514",
+    defaultModel: "claude-3-7-sonnet-20250219",
     models: [
-      "claude-sonnet-4-20250514",
+      "claude-3-7-sonnet-20250219",
       "claude-3-5-sonnet-20241022",
+      "claude-3-5-haiku-20241022",
       "claude-3-opus-20240229",
+      "claude-3-sonnet-20240229",
       "claude-3-haiku-20240307",
+    ],
+  },
+  {
+    key: "deepseek",
+    label: "DeepSeek AI",
+    defaultModel: "deepseek-chat",
+    models: [
+      "deepseek-chat",
+      "deepseek-reasoner",
     ],
   },
 ];
