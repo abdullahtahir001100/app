@@ -87,7 +87,7 @@ function AppSidebarContent() {
             };
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     return null;
   });
@@ -394,15 +394,15 @@ function AppSidebarContent() {
 
   const adminMenuItems = can("admin")
     ? [
-        { icon: Shield, label: "Admin Dashboard", href: "/admin" },
-        { icon: Activity, label: "Live Online & Audit", href: "/admin/online-users" },
-        { icon: Smartphone, label: "All Devices", href: "/admin/devices" },
-        { icon: FileText, label: "Users", href: "/admin/users" },
-        { icon: History, label: "Permissions", href: "/admin/permissions" },
-        { icon: Eye, label: "Security", href: "/admin/security" },
-        { icon: ScrollText, label: "Live Console", href: "/console" },
-        { icon: Layers, label: "Architecture", href: "/architecture" },
-      ]
+      { icon: Shield, label: "Admin Dashboard", href: "/admin" },
+      { icon: Activity, label: "Dashboard logs", href: "/admin/online-users" },
+      { icon: Smartphone, label: "All Devices", href: "/admin/devices" },
+      { icon: FileText, label: "Users", href: "/admin/users" },
+      { icon: History, label: "Permissions", href: "/admin/permissions" },
+      { icon: Eye, label: "Security", href: "/admin/security" },
+      { icon: ScrollText, label: "Live Console", href: "/console" },
+      { icon: Layers, label: "Architecture", href: "/architecture" },
+    ]
     : [];
 
   useEffect(() => {
@@ -412,11 +412,11 @@ function AppSidebarContent() {
 
   const initials = userProfile?.name
     ? userProfile.name
-        .split(" ")
-        .map((part) => part[0])
-        .slice(0, 2)
-        .join("")
-        .toUpperCase()
+      .split(" ")
+      .map((part) => part[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase()
     : "U";
 
   return (
@@ -449,9 +449,8 @@ function AppSidebarContent() {
       )}
 
       <aside
-        className={`fixed left-0 top-0 h-screen w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out z-40 overflow-y-auto custom-scrollbar ${
-          isOpen ? "translate-x-0" : "-translate-x-full"
-        } ${collapsed ? "lg:-translate-x-full" : "lg:translate-x-0"}`}
+        className={`fixed left-0 top-0 h-screen w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 ease-in-out z-40 overflow-y-auto custom-scrollbar ${isOpen ? "translate-x-0" : "-translate-x-full"
+          } ${collapsed ? "lg:-translate-x-full" : "lg:translate-x-0"}`}
       >
         {/* Desktop-only: hide/collapse the sidebar. */}
         <button
@@ -524,11 +523,10 @@ function AppSidebarContent() {
                             <li key={dev.value}>
                               <button
                                 type="button"
-                                className={`w-full truncate px-2.5 py-1 text-left outline-none focus:outline-none ${
-                                  listeningDeviceId === dev.value
+                                className={`w-full truncate px-2.5 py-1 text-left outline-none focus:outline-none ${listeningDeviceId === dev.value
                                     ? "text-sidebar-foreground"
                                     : "text-sidebar-foreground/65 hover:text-sidebar-foreground"
-                                }`}
+                                  }`}
                                 onClick={() => {
                                   setListeningDeviceId(dev.value);
                                   requestMicList(dev.value);
@@ -629,11 +627,10 @@ function AppSidebarContent() {
                     key={item.href}
                     href={item.href}
                     onClick={() => setIsOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 text-sm rounded-lg transition-colors group ${
-                      isLocked
+                    className={`flex items-center gap-3 px-4 py-3 text-sm rounded-lg transition-colors group ${isLocked
                         ? "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
                         : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                    }`}
+                      }`}
                   >
                     <item.icon className={`w-4 h-4 shrink-0 ${isLocked ? "text-sidebar-foreground/50" : ""}`} />
                     <span className="flex-1 truncate">{item.label}</span>
@@ -662,11 +659,10 @@ function AppSidebarContent() {
                       key={item.href}
                       href={item.href}
                       onClick={() => setIsOpen(false)}
-                      className={`flex items-center gap-3 px-4 py-3 text-sm rounded-lg transition-colors group ${
-                        isLocked
+                      className={`flex items-center gap-3 px-4 py-3 text-sm rounded-lg transition-colors group ${isLocked
                           ? "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
                           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                      }`}
+                        }`}
                     >
                       <item.icon className={`w-4 h-4 shrink-0 ${isLocked ? "text-sidebar-foreground/50" : ""}`} />
                       <span className="flex-1 truncate">{item.label}</span>
