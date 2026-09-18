@@ -59,7 +59,9 @@ function broadcastMediaFrame(deviceId, channel, payloadBuf) {
     const envelope = wrapBinaryForDevice(deviceId, payloadBuf);
     // Keep media sockets "live": drop when already congested so the browser
     // never plays a multi-second backlog of old JPEGs (AnyDesk-like latency).
-    const MAX_BUFFERED = 192 * 1024;
+    // Lowered from 192KB → 96KB: on slow connections 192KB allows 2-3s of stale
+    // frames to queue; 96KB keeps the viewer within ~1s of real-time.
+    const MAX_BUFFERED = 96 * 1024;
 
     let sent = 0;
     let considered = 0;

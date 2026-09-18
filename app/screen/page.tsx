@@ -127,6 +127,7 @@ export default function ScreenPage() {
     hasLiveFrame,
     measuredFps,
     frameCount,
+    frameLagMs,
     telemetry,
     detectedDisplays,
     activeDisplay,
@@ -163,6 +164,18 @@ export default function ScreenPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamQuality, setStreamQuality] = useState<StreamQuality>(loadSavedQuality);
   const [streamFps, setStreamFps] = useState<number>(loadSavedFps);
+
+  // Low-bandwidth adaptive: auto quality downgrade/upgrade
+  const [autoDowngraded, setAutoDowngraded] = useState(false);
+  const userQualityRef = useRef<StreamQuality>(streamQuality);
+  const userFpsRef = useRef<number>(streamFps);
+  const lagHighSinceRef = useRef<number>(0);
+  const lagLowSinceRef = useRef<number>(0);
+  const isLowBandwidth = hasLiveFrame && isStreaming && frameLagMs > 800;
+  const isFrameStale = hasLiveFrame && isStreaming && frameLagMs > 500;
+  // Click ripple state
+  const [clickRipple, setClickRipple] = useState<{ x: number; y: number; id: number } | null>(null);
+  const rippleIdRef = useRef(0);
 
   // Stable link light: green live/online, amber connecting, red only when truly offline.
   const linkState = useMemo<"online" | "connecting" | "offline">(() => {
@@ -489,6 +502,39 @@ export default function ScreenPage() {
     [controlEnabled, dispatchControl, isStreaming, mapPointerToRemote, sendUdpControl]
   );
 
+  // Auto quality downgrade when frame lag > 1s for 3+ seconds
+  useEffect(() => {
+    if (!isStreaming || !hasLiveFrame) return;
+    const now = Date.now();
+    if (frameLagMs > 1000) {
+      if (lagHighSinceRef.current === 0) lagHighSinceRef.current = now;
+      lagLowSinceRef.current = 0;
+      // 3 seconds of sustained high lag → downgrade
+      if (!autoDowngraded && now - lagHighSinceRef.current > 3000) {
+        userQualityRef.current = streamQuality;
+        userFpsRef.current = streamFps;
+        handleQualityChange("saver");
+        handleFpsChange(15);
+        setAutoDowngraded(true);
+        setCommandStatus("⚡ Auto-switched to Low Bandwidth mode");
+      }
+    } else if (frameLagMs < 200) {
+      lagHighSinceRef.current = 0;
+      if (lagLowSinceRef.current === 0) lagLowSinceRef.current = now;
+      // 5 seconds of good connection → restore user quality
+      if (autoDowngraded && now - lagLowSinceRef.current > 5000) {
+        handleQualityChange(userQualityRef.current);
+        handleFpsChange(userFpsRef.current);
+        setAutoDowngraded(false);
+        setCommandStatus(`Restored quality to ${userQualityRef.current}`);
+      }
+    } else {
+      // In the middle range, reset both timers
+      lagHighSinceRef.current = 0;
+      lagLowSinceRef.current = 0;
+    }
+  }, [frameLagMs, isStreaming, hasLiveFrame, autoDowngraded, streamQuality, streamFps]);
+
   const cursorRef = useRef<HTMLDivElement>(null);
   const containerRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
 
@@ -529,8 +575,12 @@ export default function ScreenPage() {
       }
     }
     const now = performance.now();
-    // 0ms delay on WebRTC UDP for instantaneous buttery smooth tracking; 4ms on WebSocket
-    const throttleMs = isUdpConnected ? 0 : 4;
+    // Scale throttle based on frame lag: normal=0-4ms, stale=50ms, very stale=150ms
+    // This prevents mouse events from piling up ahead of visual feedback
+    let throttleMs = isUdpConnected ? 0 : 4;
+    if (frameLagMs > 1500) throttleMs = 150;
+    else if (frameLagMs > 800) throttleMs = 80;
+    else if (frameLagMs > 500) throttleMs = 50;
     if (throttleMs > 0 && now - moveThrottleRef.current < throttleMs) return;
     moveThrottleRef.current = now;
     sendPointer("REMOTE_MOUSE_MOVE", e);
@@ -547,6 +597,13 @@ export default function ScreenPage() {
     canvasRef.current?.focus();
     const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
     sendPointer("REMOTE_MOUSE_DOWN", e, { button });
+    // Show click ripple when frames are stale so user gets feedback
+    if (isFrameStale && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const id = ++rippleIdRef.current;
+      setClickRipple({ x: e.clientX - rect.left, y: e.clientY - rect.top, id });
+      setTimeout(() => setClickRipple((r) => (r?.id === id ? null : r)), 600);
+    }
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
@@ -841,10 +898,25 @@ export default function ScreenPage() {
               <div
                 ref={cursorRef}
                 className="pointer-events-none absolute z-30 top-0 left-0 -translate-x-1/2 -translate-y-1/2 hidden will-change-transform"
+                style={{ opacity: isFrameStale ? 0.4 : 1, transition: "opacity 0.3s" }}
               >
                 <div className="relative flex items-center justify-center">
-                  <div className="h-2.5 w-2.5 rounded-full bg-cyan-400 border border-white shadow-[0_0_10px_rgba(34,211,238,0.9)] ring-2 ring-cyan-500/60" />
+                  <div className={`h-2.5 w-2.5 rounded-full border border-white ring-2 ${
+                    isFrameStale
+                      ? "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.7)] ring-amber-500/60"
+                      : "bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.9)] ring-cyan-500/60"
+                  }`} />
                 </div>
+              </div>
+            )}
+
+            {/* Click ripple feedback when frames are lagging */}
+            {clickRipple && (
+              <div
+                className="pointer-events-none absolute z-30"
+                style={{ left: clickRipple.x, top: clickRipple.y, transform: "translate(-50%, -50%)" }}
+              >
+                <div className="h-6 w-6 rounded-full border-2 border-amber-400/80 animate-ping" />
               </div>
             )}
 
@@ -860,15 +932,25 @@ export default function ScreenPage() {
 
             {hasLiveFrame && (
               <>
-                <div className="absolute top-4 right-4 z-30 rounded-full bg-red-600/90 px-3 py-1 text-xs font-mono font-bold text-white">
-                  LIVE • {measuredFps} FPS
+                <div className="absolute top-4 right-4 z-30 flex items-center gap-2">
+                  <div className="rounded-full bg-red-600/90 px-3 py-1 text-xs font-mono font-bold text-white">
+                    LIVE • {measuredFps} FPS
+                  </div>
+                  {isLowBandwidth && (
+                    <div className="rounded-full bg-amber-500/90 px-3 py-1 text-xs font-mono font-bold text-white flex items-center gap-1.5 animate-pulse">
+                      <span className="h-1.5 w-1.5 rounded-full bg-white/80" />
+                      Low Bandwidth{autoDowngraded ? " (Auto Saver)" : ""}
+                    </div>
+                  )}
                 </div>
                 <div className="absolute bottom-4 left-4 z-30 rounded-full bg-black/60 px-3 py-1 text-xs font-mono text-white backdrop-blur-sm">
-                  {telemetry.resolution} • {telemetry.displayName} • {frameCount} frames
+                  {telemetry.resolution} • {telemetry.displayName} • {frameCount} frames{frameLagMs > 300 ? ` • ${Math.round(frameLagMs)}ms lag` : ""}
                 </div>
                 {controlEnabled && (
-                  <div className="absolute bottom-4 right-4 z-30 rounded-full bg-emerald-600/85 px-3 py-1 text-xs font-mono text-white flex items-center gap-1">
-                    <Keyboard className="h-3 w-3" /> Click to type
+                  <div className={`absolute bottom-4 right-4 z-30 rounded-full px-3 py-1 text-xs font-mono text-white flex items-center gap-1 ${
+                    isFrameStale ? "bg-amber-600/85" : "bg-emerald-600/85"
+                  }`}>
+                    <Keyboard className="h-3 w-3" /> {isFrameStale ? "Controls throttled" : "Click to type"}
                   </div>
                 )}
               </>

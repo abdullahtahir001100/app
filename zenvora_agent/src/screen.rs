@@ -36,7 +36,8 @@ pub fn quality_preset(name: &str) -> (u32, u8, u32) {
     // The server still drops frames when a socket buffers >1MB, so a weak link
     // degrades to fewer fps gracefully rather than stalling.
     match name.to_lowercase().as_str() {
-        "saver" | "low" => (960, 52, 20),
+        "minimal" => (640, 38, 12),
+        "saver" | "low" => (800, 45, 15),
         "fast" => (1280, 58, 60),
         "high" => (1600, 72, 45),
         "ultra" => (1920, 84, 30),

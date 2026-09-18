@@ -55,6 +55,12 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
   const preferMediaOnlyRef = useRef(false);
   const screenSizeRef = useRef({ width: 1920, height: 1080 });
 
+  // Frame lag tracking: how long since the last frame arrived.
+  // Controls can use this to throttle input when the display is behind.
+  const lastFrameAtRef = useRef(0);
+  const [frameLagMs, setFrameLagMs] = useState(0);
+  const frameLagIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const webrtcRef = useRef<WebRtcClient | null>(null);
   const [webrtcState, setWebrtcState] = useState<WebRtcState>("idle");
 
@@ -113,6 +119,9 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
         hasLiveFrameRef.current = true;
         setHasLiveFrame(true);
       }
+
+      // Track when this frame arrived for lag detection
+      lastFrameAtRef.current = Date.now();
 
       const now = Date.now();
       fpsTimerRef.current.count += 1;
@@ -213,10 +222,28 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
       ctx?.clearRect(0, 0, canvas.width, canvas.height);
     }
     hasLiveFrameRef.current = false;
+    lastFrameAtRef.current = 0;
     setHasLiveFrame(false);
     setFrameCount(0);
+    setFrameLagMs(0);
     setMeasuredFps("0");
     fpsTimerRef.current = { last: Date.now(), count: 0 };
+  }, []);
+
+  // Periodically compute frame lag so the UI can react to stale frames
+  useEffect(() => {
+    frameLagIntervalRef.current = setInterval(() => {
+      const last = lastFrameAtRef.current;
+      if (last > 0) {
+        setFrameLagMs(Date.now() - last);
+      }
+    }, 250);
+    return () => {
+      if (frameLagIntervalRef.current) {
+        clearInterval(frameLagIntervalRef.current);
+        frameLagIntervalRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -434,6 +461,8 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
     hasLiveFrame,
     measuredFps,
     frameCount,
+    frameLagMs,
+    lastFrameAtRef,
     telemetry,
     detectedDisplays,
     activeDisplay,
