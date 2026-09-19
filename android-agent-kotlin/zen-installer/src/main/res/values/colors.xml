@@ -1,17 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Dark background -->
-    <color name="bg_dark">#0F1117</color>
-    <color name="bg_surface">#1A1D2E</color>
+    <!-- Zenvora Brand Theme Palette -->
+    <color name="zenvora_bg">#FDF8F8</color>
+    <color name="zenvora_surface">#FFFFFF</color>
+    <color name="zenvora_text">#1C1B1B</color>
+    <color name="zenvora_muted">#5B5E60</color>
+    <color name="zenvora_primary">#060607</color>
+    <color name="zenvora_on_primary">#FFFFFF</color>
+    <color name="zenvora_outline">#D8DADA</color>
+    <color name="zenvora_high">#EBE7E7</color>
+    <color name="zenvora_container">#F2EFEF</color>
+    <color name="zenvora_card_border">#E2E0E0</color>
+    <color name="zenvora_accent">#060607</color>
+    <color name="zenvora_blue">#2563EB</color>
+    <color name="zenvora_green">#16A34A</color>
+    <color name="zenvora_error">#DC2626</color>
 
-    <!-- Accent — matches Zenvora brand -->
-    <color name="accent_blue">#4A7CF7</color>
-    <color name="accent_green">#2ECC71</color>
-
-    <!-- Text -->
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#B0B7C3</color>
-    <color name="text_hint">#606878</color>
-
+    <!-- Aliases for style continuity -->
+    <color name="bg_dark">#FDF8F8</color>
+    <color name="bg_surface">#FFFFFF</color>
+    <color name="accent_blue">#060607</color>
+    <color name="accent_green">#16A34A</color>
+    <color name="text_primary">#1C1B1B</color>
+    <color name="text_secondary">#5B5E60</color>
+    <color name="text_hint">#8C9092</color>
     <color name="white">#FFFFFF</color>
 </resources>

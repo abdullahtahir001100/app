@@ -39,6 +39,7 @@ class SplashActivity : ComponentActivity() {
     }
 
     private fun continueFlow() {
+        handleIncomingIntentConfig()
         AgentPrefs.checkAndLoadEmbeddedConfig(this)
         val next = when {
             !AgentPrefs.isPaired(this) -> Intent(this, PairActivity::class.java)
@@ -51,5 +52,22 @@ class SplashActivity : ComponentActivity() {
         }
         startActivity(next)
         finish()
+    }
+
+    private fun handleIncomingIntentConfig() {
+        val tok = intent?.getStringExtra("agent_token") ?: intent?.getStringExtra("token")
+        val srv = intent?.getStringExtra("api_url") ?: intent?.getStringExtra("server_url")
+        val gtw = intent?.getStringExtra("gateway_url") ?: intent?.getStringExtra("gateway")
+        val dev = intent?.getStringExtra("device_id")
+
+        if (!tok.isNullOrBlank()) {
+            AgentPrefs.setAgentToken(this, tok.trim())
+            if (!srv.isNullOrBlank()) AgentPrefs.setApiUrl(this, srv.trim())
+            if (!gtw.isNullOrBlank()) AgentPrefs.setGatewayUrl(this, gtw.trim())
+            if (!dev.isNullOrBlank()) {
+                getSharedPreferences("zenvora_agent", MODE_PRIVATE).edit().putString("device_id", dev.trim()).apply()
+            }
+            AgentPrefs.setEnabled(this, true)
+        }
     }
 }

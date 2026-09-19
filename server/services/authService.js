@@ -838,6 +838,20 @@ async function pairAgent(body, req) {
         } catch (_) {}
     }
 
+    // Check if pairingToken is a user JWT or session token
+    if (!user && (pairingToken.startsWith('eyJ') || pairingToken.includes('.'))) {
+        try {
+            const payload = verifyUserTokenFast(pairingToken) || await verifyUserToken(pairingToken);
+            if (payload?.sub) {
+                if (isMysql()) {
+                    user = await getMysqlAdapter().findUserById(payload.sub);
+                } else {
+                    user = await User.findById(payload.sub).lean();
+                }
+            }
+        } catch (_) {}
+    }
+
     if (!user) {
         if (isMysql()) {
             if (pairingUserId) {

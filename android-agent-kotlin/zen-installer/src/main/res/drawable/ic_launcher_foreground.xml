@@ -4,20 +4,22 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!-- Outer ring -->
     <path
-        android:fillColor="#4A7CF7"
-        android:pathData="M54,54m-40,0a40,40 0 1,0 80,0a40,40 0 1,0 -80,0" />
-
-    <!-- Gear / settings icon (white) -->
+        android:pathData="M54,54m-38,0a38,38 0,1 1,76 0a38,38 0,1 1,-76 0"
+        android:strokeWidth="2.4"
+        android:strokeColor="#060607"
+        android:fillColor="#00000000" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,44 a10,10 0 1,0 0,20 a10,10 0 1,0 0,-20z
-                          M68,51 l-3,-1.5 a12,12 0 0,0 -1,-2.5 l1.2,-2.8 -3,-3 -2.8,1.2
-                          a12,12 0 0,0 -2.5,-1 L55.5,38 h-4 l-0.9,3 a12,12 0 0,0 -2.5,1
-                          L45.3,40.8 l-3,3 1.2,2.8 a12,12 0 0,0 -1,2.5 L39.5,50 v4
-                          l3,0.9 a12,12 0 0,0 1,2.5 L42.3,60.2 l3,3 2.8,-1.2
-                          a12,12 0 0,0 2.5,1 L51.5,66 h4 l0.9,-3 a12,12 0 0,0 2.5,-1
-                          l2.8,1.2 3,-3 -1.2,-2.8 a12,12 0 0,0 1,-2.5 L68,55 v-4z" />
+        android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0"
+        android:strokeWidth="2.4"
+        android:strokeColor="#060607"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,54m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0"
+        android:strokeWidth="2.8"
+        android:strokeColor="#060607"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,54m-7.5,0a7.5,7.5 0,1 1,15 0a7.5,7.5 0,1 1,-15 0"
+        android:fillColor="#060607" />
 </vector>

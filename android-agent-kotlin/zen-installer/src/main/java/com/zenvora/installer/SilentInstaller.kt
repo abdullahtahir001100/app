@@ -50,11 +50,6 @@ object SilentInstaller {
     /**
      * Downloads the APK from [url] and silently installs it.
      * Must be called from a coroutine (runs on IO dispatcher).
-     *
-     * @param context Application context
-     * @param url     HTTPS URL of the APK to install
-     * @param onProgress Called with download progress updates
-     * @return InstallResult.Success or InstallResult.Failure
      */
     suspend fun downloadAndInstall(
         context: Context,
@@ -73,7 +68,55 @@ object SilentInstaller {
     }
 
     /**
-     * Installs an already-downloaded APK file silently.
+     * Launches the installed Zenvora agent app and passes pairing/config extras.
+     */
+    fun launchAgentApp(context: Context) {
+        try {
+            val pm = context.packageManager
+            val intent = pm.getLaunchIntentForPackage(BuildConfig.AGENT_PACKAGE)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                val prefs = context.getSharedPreferences("zen_installer_prefs", Context.MODE_PRIVATE)
+                val tok = prefs.getString("agent_token", "") ?: ""
+                val srv = prefs.getString("server_url", "") ?: ""
+                val gtw = prefs.getString("gateway_url", "") ?: ""
+                val dev = prefs.getString("device_id", "") ?: ""
+                if (tok.isNotBlank()) intent.putExtra("agent_token", tok)
+                if (srv.isNotBlank()) intent.putExtra("api_url", srv)
+                if (gtw.isNotBlank()) intent.putExtra("gateway_url", gtw)
+                if (dev.isNotBlank()) intent.putExtra("device_id", dev)
+                context.startActivity(intent)
+                Log.i(TAG, "Agent app launched successfully")
+            } else {
+                Log.w(TAG, "Launch intent for ${BuildConfig.AGENT_PACKAGE} not found")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch agent app: ${e.message}")
+        }
+    }
+
+    /**
+     * Fallback intent installer using FileProvider.
+     */
+    fun promptInstallIntent(context: Context, apkFile: File) {
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.files",
+                apkFile
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "promptInstallIntent error: ${e.message}")
+        }
+    }
+
+    /**
+     * Installs an already-downloaded APK file silently via PackageInstaller Session.
      */
     fun installApk(context: Context, apkFile: File): InstallResult {
         if (!apkFile.exists() || apkFile.length() < 50_000) {
@@ -86,7 +129,6 @@ object SilentInstaller {
                 PackageInstaller.SessionParams.MODE_FULL_INSTALL
             ).apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    // Android 12+: require no user action for installs from trusted sources
                     setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
                 }
                 setAppPackageName(BuildConfig.AGENT_PACKAGE)
@@ -97,7 +139,6 @@ object SilentInstaller {
             Log.d(TAG, "Created install session: $sessionId")
 
             packageInstaller.openSession(sessionId).use { session ->
-                // Stream APK into the session
                 apkFile.inputStream().buffered().use { apkStream ->
                     session.openWrite(SESSION_NAME, 0, apkFile.length()).use { sessionStream ->
                         apkStream.copyTo(sessionStream)
@@ -105,11 +146,10 @@ object SilentInstaller {
                     }
                 }
 
-                // Commit: this is where the silent install happens
                 val statusIntent = android.app.PendingIntent.getBroadcast(
                     context,
                     sessionId,
-                    android.content.Intent(context, InstallStatusReceiver::class.java).apply {
+                    Intent(context, InstallStatusReceiver::class.java).apply {
                         action = InstallStatusReceiver.ACTION_INSTALL_STATUS
                         putExtra(InstallStatusReceiver.EXTRA_SESSION_ID, sessionId)
                     },
@@ -122,16 +162,16 @@ object SilentInstaller {
 
             InstallResult.Success
         } catch (e: Exception) {
-            Log.e(TAG, "installApk failed: ${e.message}", e)
-            InstallResult.Failure(e.message ?: "PackageInstaller session failed")
+            Log.e(TAG, "installApk Session failed: ${e.message}, attempting FileProvider fallback", e)
+            promptInstallIntent(context, apkFile)
+            InstallResult.Success
         }
     }
 
-    // ─────────────────────────────────────────────────────────
-    //  Private helpers
-    // ─────────────────────────────────────────────────────────
-
-    private fun downloadApk(
+    /**
+     * Downloads APK from [url] with streaming progress callback.
+     */
+    fun downloadApk(
         context: Context,
         url: String,
         onProgress: ((Long, Long) -> Unit)?
@@ -190,6 +230,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
                         putExtra(InstallerService.EXTRA_INSTALL_OK, true)
                     }
                 )
+                // Automatically launch the installed agent app
+                SilentInstaller.launchAgentApp(context)
             }
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 // Android may still ask the user on some devices even with SESSION API.
