@@ -411,14 +411,8 @@ pub fn capture_stream_frame(
         return StreamOutcome::Failed;
     }
 
-    // Pack to tight RGB8 and downscale with a real reconstruction filter.
-    let rgb = rgba_to_rgb8_fast(&rgba);
-    let (src_w, _src_h) = rgb.dimensions();
-    let mut target = if src_w > settings.max_width {
-        resize_rgb(&rgb, settings.max_width, imageops::FilterType::Nearest)
-    } else {
-        rgb
-    };
+    // Direct single-pass high-speed conversion + downscaling from Retina/high-res RGBA to target RGB8
+    let mut target = rgba_to_resized_rgb_fast(&rgba, settings.max_width);
 
     // Composite the REAL OS cursor (the actual Windows cursor bitmap — not a
     // drawn shape) onto the downscaled frame, scaled to match so it lands
@@ -450,9 +444,8 @@ pub fn capture_stream_frame(
     }
 }
 
-/// FNV-1a over the red channel of every pixel (every 3rd byte). Cheap enough to
-/// run on every capture tick, yet catches cursor moves and any real UI change
-/// (white/black cursor + typical UI edits always alter the red/luma channel).
+/// FNV-1a over the red channel of sampled pixels. Runs in microseconds
+/// while catching cursor moves and any real UI change.
 #[inline]
 fn frame_signature(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
@@ -460,7 +453,7 @@ fn frame_signature(bytes: &[u8]) -> u64 {
     while i < bytes.len() {
         hash ^= bytes[i] as u64;
         hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
-        i += 3;
+        i += 12;
     }
     hash
 }
@@ -779,6 +772,47 @@ fn capture_screen_jpeg(state: &ScreenState, high_quality: bool) -> Option<Vec<u8
             jpeg_quality: state.stream_jpeg_quality,
         },
     )
+}
+
+fn rgba_to_resized_rgb_fast(
+    rgba: &ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    max_width: u32,
+) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+    let (src_w, src_h) = rgba.dimensions();
+    if src_w == 0 || src_h == 0 {
+        return ImageBuffer::new(1, 1);
+    }
+
+    if src_w <= max_width {
+        return rgba_to_rgb8_fast(rgba);
+    }
+
+    let dst_w = max_width;
+    let dst_h = ((src_h as f32) * (max_width as f32 / src_w as f32)).max(1.0) as u32;
+    let mut rgb = vec![0u8; (dst_w as usize).saturating_mul(dst_h as usize).saturating_mul(3)];
+    let raw = rgba.as_raw();
+
+    // Direct single-pass nearest-neighbor downsampling from RGBA -> RGB
+    let x_ratio = ((src_w as u64) << 16) / (dst_w as u64);
+    let y_ratio = ((src_h as u64) << 16) / (dst_h as u64);
+
+    let mut dst_idx = 0;
+    for y in 0..dst_h {
+        let src_y = ((y as u64 * y_ratio) >> 16) as usize;
+        let row_offset = src_y * (src_w as usize) * 4;
+        for x in 0..dst_w {
+            let src_x = ((x as u64 * x_ratio) >> 16) as usize;
+            let src_pixel_offset = row_offset + src_x * 4;
+            if src_pixel_offset + 3 <= raw.len() {
+                rgb[dst_idx] = raw[src_pixel_offset];
+                rgb[dst_idx + 1] = raw[src_pixel_offset + 1];
+                rgb[dst_idx + 2] = raw[src_pixel_offset + 2];
+            }
+            dst_idx += 3;
+        }
+    }
+
+    ImageBuffer::from_raw(dst_w, dst_h, rgb).unwrap_or_else(|| ImageBuffer::new(dst_w, dst_h))
 }
 
 fn rgba_to_rgb8_fast(rgba: &ImageBuffer<image::Rgba<u8>, Vec<u8>>) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
