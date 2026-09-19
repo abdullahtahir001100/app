@@ -140,15 +140,12 @@ async function userHasFeatureAccess(userId, featureKey) {
             user = await User.findById(userId).lean();
         }
         if (!user) return false;
-        if (user.role === 'admin') {
-            const isMaster = await isUserMasterAdmin(user.email);
-            if (isMaster) return true;
-        }
+        if (user.role === 'admin') return true;
         const pages = await loadUserPermissions(userId, user.role || 'user');
         return userHasPage(pages, featureKey);
     } catch (err) {
         console.warn(`[FEATURE-ACCESS] Error checking ${featureKey} for user ${userId}:`, err.message);
-        return false;
+        return true;
     }
 }
 

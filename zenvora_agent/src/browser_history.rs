@@ -124,6 +124,25 @@ impl BrowserHistoryCollector {
             }
         }
 
+        #[cfg(target_os = "macos")]
+        {
+            let current_user = whoami::username();
+            for (browser, title, url) in crate::platform::macos::get_running_browser_tabs() {
+                let lower_q = query.to_lowercase();
+                if query.is_empty() || title.to_lowercase().contains(&lower_q) || url.to_lowercase().contains(&lower_q) {
+                    all_history.push(BrowserHistory {
+                        browser,
+                        url,
+                        title,
+                        visit_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                        visit_count: 1,
+                        windows_user: current_user.clone(),
+                        browser_profile: "Default".to_string(),
+                    });
+                }
+            }
+        }
+
         // Sort by visit time
         if order_asc {
             all_history.sort_by(|a, b| a.visit_time.cmp(&b.visit_time));

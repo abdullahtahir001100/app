@@ -135,34 +135,64 @@ pub fn get_active_window_info() -> Option<(String, String)> {
 
 pub fn get_active_browser_info() -> Option<(String, String, String)> {
     let script = r#"
+        set appName to ""
+        set windowTitle to ""
+        set activeUrl to ""
+
         tell application "System Events"
-            set frontApp to first application process whose frontmost is true
-            set appName to name of frontApp
-            set windowTitle to ""
             try
-                set windowTitle to name of first window of frontApp
-            on error
-                set windowTitle to appName
+                set frontApp to first application process whose frontmost is true
+                set appName to name of frontApp
+                try
+                    set windowTitle to name of first window of frontApp
+                on error
+                    set windowTitle to appName
+                end try
             end try
         end tell
 
-        set activeUrl to ""
+        if appName is "" then
+            return ""
+        end if
+
         if appName is "Safari" then
             try
-                tell application "Safari" to set activeUrl to URL of current tab of front window
+                tell application "Safari"
+                    set activeUrl to URL of current tab of front window
+                    try
+                        set tabTitle to name of current tab of front window
+                        if tabTitle is not "" then
+                            set windowTitle to tabTitle
+                        end if
+                    end try
+                end tell
             end try
-        else if appName is "Google Chrome" then
+        else if appName is "Google Chrome" or appName is "Brave Browser" or appName is "Microsoft Edge" or appName is "Arc" or appName is "Opera" or appName is "Vivaldi" then
             try
-                tell application "Google Chrome" to set activeUrl to URL of active tab of front window
+                set res to run script "tell application \"" & appName & "\" to return (URL of active tab of front window) & \"|||\" & (title of active tab of front window)"
+                set AppleScript's text item delimiters to "|||"
+                set activeUrl to text item 1 of res
+                set tabTitle to text item 2 of res
+                if tabTitle is not "" then
+                    set windowTitle to tabTitle
+                end if
             end try
-        else if appName is "Brave Browser" then
-            try
-                tell application "Brave Browser" to set activeUrl to URL of active tab of front window
-            end try
-        else if appName is "Microsoft Edge" then
-            try
-                tell application "Microsoft Edge" to set activeUrl to URL of active tab of front window
-            end try
+        else
+            if windowTitle is "" or windowTitle is appName then
+                tell application "System Events"
+                    try
+                        tell frontApp
+                            if (count of windows) > 0 then
+                                set windowTitle to name of window 1
+                            end if
+                        end tell
+                    end try
+                end tell
+            end if
+        end if
+
+        if windowTitle is "" then
+            set windowTitle to appName
         end if
 
         return appName & "|||" & windowTitle & "|||" & activeUrl
@@ -170,6 +200,9 @@ pub fn get_active_browser_info() -> Option<(String, String, String)> {
     let output = Command::new("osascript").args(["-e", script]).output().ok()?;
     if output.status.success() {
         let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if raw.is_empty() {
+            return None;
+        }
         let parts: Vec<&str> = raw.split("|||").collect();
         if parts.len() >= 3 {
             return Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()));
@@ -178,6 +211,85 @@ pub fn get_active_browser_info() -> Option<(String, String, String)> {
         }
     }
     None
+}
+
+/// Collects all open tabs from running browsers on macOS (Safari, Chrome)
+pub fn get_running_browser_tabs() -> Vec<(String, String, String)> {
+    let mut results = Vec::new();
+
+    // 1. Safari tabs
+    let safari_script = r#"
+        tell application "System Events"
+            set isSafariRunning to (count of (every process whose name is "Safari")) > 0
+        end tell
+        if isSafariRunning then
+            try
+                tell application "Safari"
+                    set out to ""
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            set out to out & (name of t) & "|||" & (URL of t) & linefeed
+                        end repeat
+                    end repeat
+                    return out
+                end tell
+            end try
+        end if
+        return ""
+    "#;
+    if let Ok(output) = Command::new("osascript").args(["-e", safari_script]).output() {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split("|||").collect();
+                if parts.len() == 2 {
+                    let title = parts[0].trim().to_string();
+                    let url = parts[1].trim().to_string();
+                    if !url.is_empty() && url.starts_with("http") {
+                        results.push(("Safari".to_string(), title, url));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Chrome tabs (if Chrome is running)
+    let chrome_script = r#"
+        tell application "System Events"
+            set isChromeRunning to (count of (every process whose name is "Google Chrome")) > 0
+        end tell
+        if isChromeRunning then
+            try
+                run script "tell application \"Google Chrome\"
+                    set out to \"\"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            set out to out & (title of t) & \"|||\" & (URL of t) & linefeed
+                        end repeat
+                    end repeat
+                    return out
+                end tell"
+            end try
+        end if
+        return ""
+    "#;
+    if let Ok(output) = Command::new("osascript").args(["-e", chrome_script]).output() {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split("|||").collect();
+                if parts.len() == 2 {
+                    let title = parts[0].trim().to_string();
+                    let url = parts[1].trim().to_string();
+                    if !url.is_empty() && url.starts_with("http") {
+                        results.push(("Chrome".to_string(), title, url));
+                    }
+                }
+            }
+        }
+    }
+
+    results
 }
 
 pub fn get_battery_status() -> Option<(u32, bool)> {

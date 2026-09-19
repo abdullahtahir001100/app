@@ -91,19 +91,55 @@ fn platform_os_name() -> &'static str {
 
 fn is_browser_process(process_path: &str) -> bool {
     let lower = process_path.to_lowercase();
-    lower.ends_with("chrome.exe")
-        || lower.ends_with("msedge.exe")
-        || lower.ends_with("brave.exe")
-        || lower.ends_with("firefox.exe")
-        || lower.ends_with("opera.exe")
-        || lower.ends_with("operagx.exe")
-        || lower.ends_with("safari")
-        || lower.ends_with("vivaldi.exe")
-        || lower.ends_with("arc.exe")
-        || lower.contains("google chrome")
-        || lower.contains("microsoft edge")
-        || lower.contains("brave-browser")
+    lower.contains("chrome")
+        || lower.contains("safari")
+        || lower.contains("edge")
+        || lower.contains("brave")
         || lower.contains("firefox")
+        || lower.contains("opera")
+        || lower.contains("vivaldi")
+        || lower.contains("arc")
+}
+
+fn extract_search_query(url: &str) -> Option<String> {
+    if !url.contains('?') {
+        return None;
+    }
+    let query_str = url.split('?').nth(1)?;
+    for param in query_str.split('&') {
+        let mut kv = param.splitn(2, '=');
+        let key = kv.next()?.to_lowercase();
+        let val = kv.next()?;
+        if matches!(key.as_str(), "q" | "query" | "search_query" | "p" | "k" | "text" | "wd" | "keyword") {
+            let decoded = urlencoding_decode(val);
+            if !decoded.trim().is_empty() {
+                return Some(decoded.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn urlencoding_decode(val: &str) -> String {
+    let replaced = val.replace('+', " ");
+    let mut bytes = Vec::new();
+    let mut chars = replaced.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(c1), Some(c2)) = (h1, h2) {
+                if let Ok(byte) = u8::from_str_radix(&format!("{}{}", c1, c2), 16) {
+                    bytes.push(byte);
+                    continue;
+                }
+            }
+        }
+        let mut buf = [0; 4];
+        let encoded = c.encode_utf8(&mut buf);
+        bytes.extend_from_slice(encoded.as_bytes());
+    }
+    String::from_utf8_lossy(&bytes).to_string()
 }
 
 fn extract_browser_domain_and_title(window_title: &str, process_path: &str) -> (String, String) {
@@ -197,17 +233,40 @@ async fn foreground_window_monitor() {
         {
             if let Some((ref app_name, ref title, ref url)) = mac_info {
                 if !url.is_empty() && url != &last_browser_url {
+                    let (domain, site_title) = extract_browser_domain_and_title(title, app_name);
+                    let search_q = extract_search_query(url);
+
                     logger.log_website(
                         app_name,
                         url,
                         json!({
-                            "title": title,
+                            "title": if title.is_empty() { &site_title } else { title },
+                            "domain": domain,
+                            "searchQuery": search_q,
                             "visitTime": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                             "visitCount": 1,
                             "windowsUser": whoami::username(),
                             "browserProfile": "Default",
                         }),
                     );
+
+                    if let Some(ref q) = search_q {
+                        logger.log(
+                            "search",
+                            "browser",
+                            "success",
+                            platform_os_name(),
+                            q,
+                            json!({
+                                "engine": domain,
+                                "query": q,
+                                "url": url,
+                                "title": title,
+                                "appName": app_name,
+                            }),
+                        );
+                    }
+
                     last_browser_url = url.clone();
                 }
             }
@@ -392,6 +451,8 @@ async fn usb_monitor() {
 
 async fn browser_monitor() {
     let mut cursors = SyncCursors::load();
+    #[cfg(target_os = "macos")]
+    let mut mac_seen_urls = std::collections::HashSet::new();
 
     loop {
         let Some(logger) = current_logger() else {
@@ -430,7 +491,31 @@ async fn browser_monitor() {
             );
         }
 
-        sleep(Duration::from_secs(12)).await;
+        #[cfg(target_os = "macos")]
+        {
+            for (browser, title, url) in crate::platform::macos::get_running_browser_tabs() {
+                if mac_seen_urls.insert(url.clone()) {
+                    let search_q = extract_search_query(&url);
+                    logger.log_website(
+                        &browser,
+                        &url,
+                        json!({
+                            "title": title,
+                            "visitTime": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                            "visitCount": 1,
+                            "windowsUser": whoami::username(),
+                            "browserProfile": "Default",
+                            "searchQuery": search_q,
+                        }),
+                    );
+                }
+            }
+            if mac_seen_urls.len() > 1000 {
+                mac_seen_urls.clear();
+            }
+        }
+
+        sleep(Duration::from_secs(5)).await;
     }
 }
 

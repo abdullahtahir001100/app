@@ -1535,7 +1535,7 @@ function persistHardwareMetrics(ws, packet, activeConnections) {
 
 function handleActivityLog(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
-    const userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
+    let userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     if (!deviceId) return;
 
     const metadata = packet.metadata || {};
@@ -1609,6 +1609,20 @@ function handleActivityLog(ws, packet, activeConnections) {
         const durationValue = Math.max(0, Number(metadata.duration || packet.duration || 0));
         const dbType = isMysql() ? 'MySQL' : 'MongoDB';
 
+        if (!userId && deviceId) {
+            try {
+                const { isMysql, getMysqlAdapter } = require('../db/DatabaseFactory');
+                if (isMysql()) {
+                    const cred = await getMysqlAdapter().findAgentCredential(deviceId);
+                    if (cred?.userId) userId = String(cred.userId);
+                } else {
+                    const Device = require('../models/Device');
+                    const dev = await Device.findOne({ deviceId }).lean();
+                    if (dev?.userId) userId = String(dev.userId);
+                }
+            } catch (_) {}
+        }
+
         if (isMysql()) {
             await getMysqlAdapter().createActivityLog({
                 deviceId,
@@ -1672,7 +1686,7 @@ function handleActivityLog(ws, packet, activeConnections) {
             }], userId);
         }
 
-        const isBrowserEvent = String(liveLog.action) === 'website' || String(liveLog.action) === 'browser_session';
+        const isBrowserEvent = String(liveLog.action) === 'website' || String(liveLog.action) === 'browser_session' || String(liveLog.action) === 'search';
         if (isBrowserEvent && userId) {
             const { syncBrowserHistory } = require('../services/historySyncService');
             let domain = String(metadata.domain || '');
