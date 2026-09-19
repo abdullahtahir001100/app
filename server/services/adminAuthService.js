@@ -140,12 +140,21 @@ async function userHasFeatureAccess(userId, featureKey) {
             user = await User.findById(userId).lean();
         }
         if (!user) return false;
-        if (user.role === 'admin') return true;
-        const pages = await loadUserPermissions(userId, user.role || 'user');
-        return userHasPage(pages, featureKey);
+
+        // 1. Verify against Master Admin validation (anti-hijack protection)
+        const isMaster = await isUserMasterAdmin(user.email);
+        if (isMaster) return true;
+
+        // 2. Enforce role isolation: if DB role claims admin but user is not master admin, demote to 'user'
+        const effectiveRole = (user.role === 'admin' && !isMaster) ? 'user' : (user.role || 'user');
+
+        // 3. Check granular permission list
+        const pages = await loadUserPermissions(userId, effectiveRole);
+        return Boolean(userHasPage(pages, featureKey));
     } catch (err) {
-        console.warn(`[FEATURE-ACCESS] Error checking ${featureKey} for user ${userId}:`, err.message);
-        return true;
+        console.error(`[FEATURE-ACCESS] Security check failed for ${featureKey} (user ${userId}):`, err.message);
+        // Fail closed: Never grant access on errors
+        return false;
     }
 }
 
