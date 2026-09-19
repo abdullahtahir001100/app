@@ -312,37 +312,64 @@ pub fn get_battery_status() -> Option<(u32, bool)> {
     None
 }
 
-pub fn request_screen_capture_permission() {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        extern "C" {
-            fn CGRequestScreenCaptureAccess() -> bool;
-        }
-        let _ = CGRequestScreenCaptureAccess();
-    }
-    let _ = Command::new("osascript")
-        .args(["-e", "tell application \"System Events\" to get every window"])
-        .output();
-}
-
 pub fn check_screen_capture_permission() -> bool {
     #[cfg(target_os = "macos")]
     unsafe {
         extern "C" {
             fn CGPreflightScreenCaptureAccess() -> bool;
         }
-        if CGPreflightScreenCaptureAccess() {
-            return true;
-        }
+        return CGPreflightScreenCaptureAccess();
     }
-    // Fallback test via xcap monitor enumeration
-    xcap::Monitor::all().map(|m| !m.is_empty()).unwrap_or(false)
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+pub fn check_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        return AXIsProcessTrusted();
+    }
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+pub fn request_screen_capture_permission() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe {
+            extern "C" {
+                fn CGRequestScreenCaptureAccess() -> bool;
+                fn CGPreflightScreenCaptureAccess() -> bool;
+            }
+            if CGPreflightScreenCaptureAccess() {
+                return;
+            }
+            let _ = CGRequestScreenCaptureAccess();
+        }
+        let _ = open_screen_recording_settings();
+        let _ = Command::new("osascript")
+            .args([
+                "-e",
+                "display notification \"Please enable Screen Recording for Zenvora in System Settings.\" with title \"Zenvora Screen Access\"",
+            ])
+            .output();
+    }
 }
 
 pub fn request_accessibility_permission() {
-    let _ = Command::new("osascript")
-        .args(["-e", "tell application \"System Events\" to return true"])
-        .output();
+    #[cfg(target_os = "macos")]
+    {
+        if check_accessibility_permission() {
+            return;
+        }
+        let _ = Command::new("osascript")
+            .args(["-e", "tell application \"System Events\" to return true"])
+            .output();
+        let _ = open_accessibility_settings();
+    }
 }
 
 pub fn request_camera_and_mic_permissions() {
@@ -488,11 +515,7 @@ pub fn inject_key(key: &str, down: bool) -> Result<(), String> {
 
 pub fn check_permissions() -> (bool, bool, bool) {
     // Accessibility, Screen Recording, Full Disk Access status
-    let accessibility = Command::new("osascript")
-        .args(["-e", "tell application \"System Events\" to return true"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let accessibility = check_accessibility_permission();
 
     let screen_record = check_screen_capture_permission();
     let full_disk = dirs::home_dir()

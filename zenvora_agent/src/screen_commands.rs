@@ -141,9 +141,19 @@ pub fn handle_screen_command(
                         }
                         None => {
                             state.streaming_active = false;
-                            action_message = Some(
-                                "Screen capture failed on this display. Check Windows display permissions / RDP / locked screen.".into(),
-                            );
+                            #[cfg(target_os = "macos")]
+                            {
+                                crate::platform::request_screen_capture_permission();
+                                action_message = Some(
+                                    "macOS Screen Recording permission required. System Settings prompt opened on target Mac.".into(),
+                                );
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                action_message = Some(
+                                    "Screen capture failed on this display. Check display permissions / RDP / locked screen.".into(),
+                                );
+                            }
                             eprintln!(
                                 "[RUST AGENT] Screen stream NOT started — capture_display_jpeg returned None"
                             );
