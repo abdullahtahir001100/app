@@ -150,30 +150,50 @@ export function useScreenRemote({ subscribe, selectedDeviceRef, mediaDeviceId, s
     });
   }, [drawBitmapDirect]);
 
+  const drainNextBlob = useCallback(async () => {
+    if (isDecodingRef.current) return;
+    const blob = pendingBlobRef.current;
+    if (!blob) return;
+    pendingBlobRef.current = null;
+    isDecodingRef.current = true;
+
+    try {
+      const bitmap = await createImageBitmap(blob, {
+        premultiplyAlpha: "none",
+        colorSpaceConversion: "none",
+      }).catch(() => createImageBitmap(blob));
+
+      if (pendingBitmapRef.current) {
+        pendingBitmapRef.current.close();
+      }
+      pendingBitmapRef.current = bitmap;
+      scheduleFrameRender();
+    } catch {
+      // frame decode error ignored for continuity
+    } finally {
+      isDecodingRef.current = false;
+      // If a newer frame arrived while decoding, skip old ones and decode the latest immediately
+      if (pendingBlobRef.current) {
+        void drainNextBlob();
+      }
+    }
+  }, [scheduleFrameRender]);
+
   const paintFrame = useCallback(
-    async (blobOrBuffer: Blob | ArrayBuffer) => {
-      try {
-        const blob =
-          blobOrBuffer instanceof Blob
-            ? blobOrBuffer
-            : new Blob([blobOrBuffer], { type: "image/jpeg" });
-        if (blob.size < 100) return;
+    (blobOrBuffer: Blob | ArrayBuffer) => {
+      const blob =
+        blobOrBuffer instanceof Blob
+          ? blobOrBuffer
+          : new Blob([blobOrBuffer], { type: "image/jpeg" });
+      if (blob.size < 100) return;
 
-        const bitmap = await createImageBitmap(blob, {
-          premultiplyAlpha: "none",
-          colorSpaceConversion: "none",
-        }).catch(() => createImageBitmap(blob));
-
-        if (pendingBitmapRef.current) {
-          pendingBitmapRef.current.close();
-        }
-        pendingBitmapRef.current = bitmap;
-        scheduleFrameRender();
-      } catch {
-        // frame decode error ignored for continuity
+      // Drop stale frames: always store latest blob
+      pendingBlobRef.current = blob;
+      if (!isDecodingRef.current) {
+        void drainNextBlob();
       }
     },
-    [scheduleFrameRender]
+    [drainNextBlob]
   );
 
   paintFrameRef.current = paintFrame;

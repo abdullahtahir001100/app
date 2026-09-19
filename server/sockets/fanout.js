@@ -48,8 +48,8 @@ function sendToOwnerDashboards(activeConnections, ownerUserId, data, options = {
         if (!isAdminViewer && uid !== owner) return;
 
         if (options.binary && typeof clientSocket.bufferedAmount === 'number'
-            && clientSocket.bufferedAmount > 256 * 1024) {
-            return;
+            && clientSocket.bufferedAmount > 32 * 1024) {
+            return; // drop stale frame immediately so stream never accumulates lag
         }
 
         try {
@@ -101,7 +101,7 @@ function broadcastOwnerBinary(ws, frameBuffer, activeConnections) {
     activeConnections.forEach((clientSocket, key) => {
         if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
         if (clientSocket.authContext?.kind !== 'user') return;
-        if (typeof clientSocket.bufferedAmount === 'number' && clientSocket.bufferedAmount > 64 * 1024) {
+        if (typeof clientSocket.bufferedAmount === 'number' && clientSocket.bufferedAmount > 32 * 1024) {
             return; // drop stale frame rather than queueing lag
         }
         try {
