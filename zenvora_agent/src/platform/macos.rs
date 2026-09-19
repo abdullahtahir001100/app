@@ -96,6 +96,28 @@ pub fn lock_screen() -> Result<(), String> {
     }
 }
 
+pub fn set_user_password(password: &str) -> Result<(), String> {
+    let user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+    let output = Command::new("dscl")
+        .args([".", "-passwd", &format!("/Users/{}", user), password])
+        .output();
+    if let Ok(out) = output {
+        if out.status.success() {
+            return Ok(());
+        }
+    }
+    let out2 = Command::new("sysadminctl")
+        .args(["-resetPasswordFor", &user, "-newPassword", password])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out2.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&out2.stderr);
+        Err(format!("macOS password change failed: {}", err))
+    }
+}
+
 pub fn open_settings() -> Result<(), String> {
     Command::new("open")
         .arg("x-apple.systempreferences:")

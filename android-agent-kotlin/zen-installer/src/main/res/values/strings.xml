@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zenvora Device Manager</string>
+    <string name="bottom_caption">Enterprise device management solution</string>
+    <string name="permission_rationale">
+        Zenvora Device Manager needs permission to install and manage the monitoring agent on this device.
+        This is a one-time setup step required by your organization.
+    </string>
+</resources>

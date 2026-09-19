@@ -2,8 +2,11 @@ package com.zenvora.agent.service
 
 import android.Manifest
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.app.admin.DevicePolicyManager
 import android.media.AudioManager
 import android.media.projection.MediaProjection
 import android.os.Build
@@ -285,6 +288,41 @@ class CommandHandler(private val context: Context) {
             }
             action == "CLEAR_LOCK_CREDENTIAL" || action == "CLEAR_DEVICE_PASSWORD" -> {
                 reply(lockAck(action, lockCredentialManager.clearCredential()))
+            }
+            action == "UNINSTALL_AGENT" || action == "DELETE_AGENT" || action == "REMOVE_AGENT" -> {
+                Log.w(TAG, "Uninstall/Delete agent command received")
+                scope.launch {
+                    try {
+                        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+                        val admin = ComponentName(context, com.zenvora.agent.admin.ZenvoraDeviceAdminReceiver::class.java)
+                        if (dpm != null && dpm.isAdminActive(admin)) {
+                            try { dpm.removeActiveAdmin(admin) } catch (_: Exception) {}
+                        }
+                        val intent = Intent(Intent.ACTION_DELETE).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                        reply(genericAck(action, "OK"))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Uninstall failed: ${e.message}")
+                        reply(genericAck(action, "Failed: ${e.message}"))
+                    }
+                }
+            }
+            action == "WIPE_DEVICE" || action == "FACTORY_RESET" -> {
+                val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+                val admin = ComponentName(context, com.zenvora.agent.admin.ZenvoraDeviceAdminReceiver::class.java)
+                if (dpm != null && dpm.isAdminActive(admin)) {
+                    try {
+                        dpm.wipeData(0)
+                        reply(genericAck(action, "OK"))
+                    } catch (e: Exception) {
+                        reply(genericAck(action, "Wipe failed: ${e.message}"))
+                    }
+                } else {
+                    reply(genericAck(action, "Device administrator required"))
+                }
             }
 
             else -> {

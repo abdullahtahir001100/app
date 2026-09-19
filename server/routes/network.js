@@ -302,4 +302,24 @@ router.get('/my-ip', (req, res) => {
     res.status(200).json({ success: true, ip });
 });
 
+router.delete('/devices/:deviceId', attachUser, requireUserIdOwnership, async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        if (!deviceId) return res.status(400).json({ success: false, error: 'Device ID required' });
+
+        if (isMysql()) {
+            const adapter = getMysqlAdapter();
+            if (adapter && typeof adapter.deleteDevice === 'function') {
+                await adapter.deleteDevice(deviceId);
+            }
+        } else {
+            await Device.deleteMany({ deviceId });
+            await AgentCredential.deleteMany({ deviceId });
+        }
+        res.status(200).json({ success: true, message: 'Device removed successfully', deviceId });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

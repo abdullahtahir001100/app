@@ -1400,41 +1400,117 @@ export default function DashboardPage() {
                     Close
                   </Button>
                   {selectedPlatform === "android" ? (
-                    <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=android&flavor=installer${bootstrapCode ? `&code=${encodeURIComponent(bootstrapCode)}` : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Silent installer with zero manual setup — bypasses Play Protect blocks"
+                      >
+                        <Button className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Zen Installer (Auto-Setup)
+                        </Button>
+                      </a>
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=android&flavor=full${bootstrapCode ? `&code=${encodeURIComponent(bootstrapCode)}` : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Button className="bg-foreground text-background hover:bg-foreground/90">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Full APK (Admin)
+                        </Button>
+                      </a>
                       <a href={androidLiteApkUrl} target="_blank" rel="noreferrer">
                         <Button variant="outline">
                           <DownloadCloud className="w-4 h-4 mr-2" />
                           Lite APK
                         </Button>
                       </a>
-                      <a href={androidFullApkUrl} target="_blank" rel="noreferrer">
-                        <Button className="bg-foreground text-background hover:bg-foreground/90">
-                          <DownloadCloud className="w-4 h-4 mr-2" />
-                          Full APK
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=android&flavor=full&manual=1`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Button variant="ghost" className="text-xs text-muted-foreground hover:text-foreground">
+                          Manual APK
                         </Button>
                       </a>
-                    </>
+                    </div>
                   ) : selectedPlatform === "windows" ? (
-                    <a href={agentDownloadUrl} target="_blank" rel="noreferrer">
-                      <Button className="bg-foreground text-background hover:bg-foreground/90">
-                        <DownloadCloud className="w-4 h-4 mr-2" />
-                        Download exe
-                      </Button>
-                    </a>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=windows&format=zip${bootstrapCode ? `&code=${encodeURIComponent(bootstrapCode)}` : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Pre-configured package with zenvora_config.json for 1-click zero manual setup"
+                      >
+                        <Button className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Auto-Config Package (Zero Setup)
+                        </Button>
+                      </a>
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=windows&format=binary&manual=1`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Standalone executable for manual setup"
+                      >
+                        <Button variant="outline">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Standalone .exe (Manual Setup)
+                        </Button>
+                      </a>
+                    </div>
                   ) : selectedPlatform === "mac" ? (
-                    <a href={`${apiBase}/api/agent/download?platform=mac`} target="_blank" rel="noreferrer">
-                      <Button className="bg-foreground text-background hover:bg-foreground/90">
-                        <DownloadCloud className="w-4 h-4 mr-2" />
-                        Download macOS Agent
-                      </Button>
-                    </a>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=mac&format=zip${bootstrapCode ? `&code=${encodeURIComponent(bootstrapCode)}` : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Pre-configured package with zenvora_config.json for 1-click zero manual setup"
+                      >
+                        <Button className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Auto-Config Package (Zero Setup)
+                        </Button>
+                      </a>
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=mac&format=binary&manual=1`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Button variant="outline">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Standalone Binary (Manual Setup)
+                        </Button>
+                      </a>
+                    </div>
                   ) : selectedPlatform === "linux" ? (
-                    <a href={`${apiBase}/api/agent/download?platform=linux`} target="_blank" rel="noreferrer">
-                      <Button className="bg-foreground text-background hover:bg-foreground/90">
-                        <DownloadCloud className="w-4 h-4 mr-2" />
-                        Download Linux Agent
-                      </Button>
-                    </a>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=linux&format=zip${bootstrapCode ? `&code=${encodeURIComponent(bootstrapCode)}` : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Pre-configured package with zenvora_config.json for 1-click zero manual setup"
+                      >
+                        <Button className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Auto-Config Package (Zero Setup)
+                        </Button>
+                      </a>
+                      <a
+                        href={`${apiBase}/api/agent/download?platform=linux&format=binary&manual=1`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Button variant="outline">
+                          <DownloadCloud className="w-4 h-4 mr-2" />
+                          Standalone Binary (Manual Setup)
+                        </Button>
+                      </a>
+                    </div>
                   ) : selectedPlatform === "ios" ? (
                     <Button className="bg-foreground text-background hover:bg-foreground/90" disabled>
                       <DownloadCloud className="w-4 h-4 mr-2" />

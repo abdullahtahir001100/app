@@ -8,7 +8,8 @@ import {
   Laptop, Smartphone, Tablet, Battery, Cpu, Activity,
   MapPin, Bell, Globe, AppWindow, RefreshCw, Layers, ShieldCheck,
   ChevronRight, Calendar, Search, X, Network, Database, Info,
-  Stethoscope, Wifi, Server, Sparkles, CheckCircle2, AlertTriangle, Play, Wrench, ShieldAlert
+  Stethoscope, Wifi, Server, Sparkles, CheckCircle2, AlertTriangle, Play, Wrench, ShieldAlert,
+  KeyRound, Trash2, Lock, Unlock, DownloadCloud, Shield
 } from "lucide-react";
 import { Suspense, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -130,6 +131,149 @@ function DevicesPageContent() {
   const [selectedSymptom, setSelectedSymptom] = useState<string>("all");
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnosticResult, setDiagnosticResult] = useState<any>(null);
+
+  // Device Administration States (Update, Delete, Set PIN / Password)
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinType, setPinType] = useState<"pin" | "password">("pin");
+  const [pinValue, setPinValue] = useState("");
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pinStatus, setPinStatus] = useState<string | null>(null);
+
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateApkUrl, setUpdateApkUrl] = useState("/api/agent/download?platform=android&flavor=full");
+  const [updateLoading, setUpdateLoading] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const [adminBanner, setAdminBanner] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+
+  const handleSetPinOrPassword = async () => {
+    if (!selectedDeviceId) return;
+    const trimmed = pinValue.trim();
+    if (!trimmed) {
+      setPinStatus("Please enter a PIN or Password value.");
+      return;
+    }
+    if (pinType === "pin" && (!/^\d+$/.test(trimmed) || trimmed.length < 4)) {
+      setPinStatus("PIN must be at least 4 numeric digits.");
+      return;
+    }
+    if (pinType === "password" && trimmed.length < 4) {
+      setPinStatus("Password must be at least 4 characters.");
+      return;
+    }
+
+    setPinLoading(true);
+    setPinStatus(null);
+    try {
+      const dispatched = gatewayClient.dispatch("SET_DEVICE_PIN", selectedDeviceId, {
+        type: pinType,
+        value: trimmed,
+        credentialType: pinType,
+        password: trimmed,
+        pin: trimmed,
+      });
+      if (dispatched) {
+        setPinStatus(`Success! ${pinType.toUpperCase()} dispatched to device.`);
+        setAdminBanner({
+          text: `Lock ${pinType.toUpperCase()} dispatched to ${selectedDevice?.hostname || selectedDeviceId}`,
+          type: "success"
+        });
+        setTimeout(() => {
+          setShowPinModal(false);
+          setPinValue("");
+          setPinStatus(null);
+        }, 1400);
+      } else {
+        setPinStatus("Device is unreachable or offline on the gateway.");
+      }
+    } catch (err: any) {
+      setPinStatus(err?.message || "Failed to dispatch command.");
+    } finally {
+      setPinLoading(false);
+    }
+  };
+
+  const handleInstantLock = () => {
+    if (!selectedDeviceId) return;
+    gatewayClient.dispatch("LOCK_DEVICE_NOW", selectedDeviceId, {});
+    setAdminBanner({
+      text: `Instant screen lock dispatched to ${selectedDevice?.hostname || selectedDeviceId}`,
+      type: "info"
+    });
+  };
+
+  const handleClearPin = () => {
+    if (!selectedDeviceId) return;
+    gatewayClient.dispatch("CLEAR_LOCK_CREDENTIAL", selectedDeviceId, {});
+    setAdminBanner({
+      text: `Clear lock credential command dispatched to ${selectedDevice?.hostname || selectedDeviceId}`,
+      type: "info"
+    });
+    setShowPinModal(false);
+  };
+
+  const handleUpdateAgent = async () => {
+    if (!selectedDeviceId) return;
+    setUpdateLoading(true);
+    setUpdateStatus(null);
+    try {
+      const url = updateApkUrl.trim() || "/api/agent/download?platform=android&flavor=full";
+      const dispatched = gatewayClient.dispatch("UPDATE_AGENT", selectedDeviceId, {
+        download_url: url,
+        downloadUrl: url,
+      });
+      if (dispatched) {
+        setUpdateStatus("Update payload successfully dispatched! Agent is downloading full APK.");
+        setAdminBanner({
+          text: `Agent update command dispatched to ${selectedDevice?.hostname || selectedDeviceId}`,
+          type: "success"
+        });
+        setTimeout(() => {
+          setShowUpdateModal(false);
+          setUpdateStatus(null);
+        }, 1500);
+      } else {
+        setUpdateStatus("Gateway connection offline — could not deliver command.");
+      }
+    } catch (err: any) {
+      setUpdateStatus(err?.message || "Failed to trigger update.");
+    } finally {
+      setUpdateLoading(false);
+    }
+  };
+
+  const handleDeleteDevice = async () => {
+    if (!selectedDeviceId) return;
+    setDeleteLoading(true);
+    try {
+      // 1. Dispatch UNINSTALL_AGENT to device
+      gatewayClient.dispatch("UNINSTALL_AGENT", selectedDeviceId, {
+        uninstall: true,
+        removeAdmin: true,
+      });
+
+      // 2. Call backend delete endpoint
+      await fetch(`/api/network/devices/${encodeURIComponent(selectedDeviceId)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+
+      // 3. Update local state
+      setDevices((prev) => prev.filter((d) => d.deviceId !== selectedDeviceId));
+      setAdminBanner({
+        text: `Device ${selectedDeviceId} has been deleted and uninstalled.`,
+        type: "success"
+      });
+      setSelectedDeviceId("");
+      setShowDeleteModal(false);
+    } catch (err: any) {
+      alert("Failed to delete device: " + (err?.message || "Unknown error"));
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   const toggleDirectLan = () => {
     const next = !directLanPreferred;
@@ -618,10 +762,115 @@ if (loadingDevices && devices.length === 0) {
 
               {/* TAB 1: INFO & TELEMETRY */}
               {activeTab === "info" && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                <div className="space-y-6">
 
-                  {/* Left Column: Device Spec & Map */}
-                  <div className="lg:col-span-7 sticky space-y-8">
+                  {/* ADMIN BANNER NOTIFICATION */}
+                  {adminBanner && (
+                    <div className={`p-4 rounded-xl border flex items-center justify-between gap-3 text-sm animate-in fade-in duration-200 ${
+                      adminBanner.type === "success"
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                        : adminBanner.type === "error"
+                        ? "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                        : "bg-blue-500/10 border-blue-500/30 text-blue-300"
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        {adminBanner.type === "success" ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : adminBanner.type === "error" ? (
+                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                        ) : (
+                          <Info className="w-4 h-4 text-blue-400 shrink-0" />
+                        )}
+                        <span>{adminBanner.text}</span>
+                      </div>
+                      <button
+                        onClick={() => setAdminBanner(null)}
+                        className="p-1 hover:bg-white/10 rounded-lg text-xs"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* DEVICE ADMINISTRATOR & SECURITY CONTROL PANEL */}
+                  <Card className="p-5 bg-gradient-to-r from-card/90 via-card/60 to-card/90 backdrop-blur-md border border-border/80 shadow-lg rounded-2xl">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <ShieldCheck className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-base text-foreground">Device Administration & Control</h3>
+                            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              Admin Enabled
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Full APK administrative controls: screen lock PIN/password, agent updates, and safe uninstallation.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Set PIN / Password Button */}
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setShowPinModal(true);
+                            setPinStatus(null);
+                          }}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs h-8 px-3 rounded-lg gap-1.5 shadow-sm"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                          Set PIN / Password
+                        </Button>
+
+                        {/* Instant Lock Screen Button */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleInstantLock}
+                          className="border-amber-500/40 text-amber-400 hover:bg-amber-500/10 text-xs h-8 px-3 rounded-lg gap-1.5"
+                          title="Lock device screen immediately"
+                        >
+                          <Lock className="w-3.5 h-3.5 text-amber-400" />
+                          Lock Screen
+                        </Button>
+
+                        {/* Update Agent Button */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setShowUpdateModal(true);
+                            setUpdateStatus(null);
+                          }}
+                          className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 text-xs h-8 px-3 rounded-lg gap-1.5"
+                        >
+                          <DownloadCloud className="w-3.5 h-3.5 text-emerald-400" />
+                          Update Agent
+                        </Button>
+
+                        {/* Delete / Uninstall Button */}
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => setShowDeleteModal(true)}
+                          className="bg-rose-600/90 hover:bg-rose-600 text-white text-xs h-8 px-3 rounded-lg gap-1.5 shadow-sm"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Delete / Uninstall
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+
+                    {/* Left Column: Device Spec & Map */}
+                    <div className="lg:col-span-7 sticky space-y-8">
 
                     {/* Device System Specs Card */}
                     <Card className="p-6 bg-card/45 backdrop-blur-md border-border/80 shadow-md hover-lift transition-all">
@@ -1288,6 +1537,248 @@ if (loadingDevices && devices.length === 0) {
                 )}
               </div>
             )}
+          </Card>
+        </div>
+      )}
+
+      {/* SET PIN / PASSWORD MODAL */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-md bg-card border-border shadow-2xl p-6 relative flex flex-col">
+            <button
+              onClick={() => setShowPinModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 bg-blue-500/10 rounded-xl text-blue-400 border border-blue-500/20">
+                <KeyRound className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Set Screen Lock / Password</h3>
+                <p className="text-xs text-muted-foreground">
+                  Updates lock credentials on {selectedDevice?.hostname || selectedDeviceId} ({selectedDevice?.platform || "Device"}).
+                </p>
+              </div>
+            </div>
+
+            {/* Type selector */}
+            <div className="flex p-1 bg-muted/40 rounded-xl border border-border/50 mb-4">
+              <button
+                type="button"
+                onClick={() => setPinType("pin")}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  pinType === "pin" ? "bg-card text-foreground shadow-sm font-semibold" : "text-muted-foreground"
+                }`}
+              >
+                PIN (Numeric)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPinType("password")}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  pinType === "password" ? "bg-card text-foreground shadow-sm font-semibold" : "text-muted-foreground"
+                }`}
+              >
+                Password (Alphanumeric)
+              </button>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <label className="text-xs font-semibold text-foreground block">
+                {pinType === "pin" ? "Enter New PIN (min 4 digits):" : "Enter New Password (min 4 characters):"}
+              </label>
+              <input
+                type={pinType === "pin" ? "number" : "text"}
+                value={pinValue}
+                onChange={(e) => setPinValue(e.target.value)}
+                placeholder={pinType === "pin" ? "e.g. 1234" : "e.g. SecretPass123"}
+                className="w-full px-3 py-2 text-sm bg-muted/30 border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {selectedDevice?.platform === "android"
+                  ? "Uses DevicePolicyManager.resetPassword. Requires active Device Administrator."
+                  : selectedDevice?.platform === "windows"
+                  ? "Updates Windows account password and enforces workstation lock."
+                  : selectedDevice?.platform === "mac"
+                  ? "Updates macOS account password via system directory service."
+                  : "Updates Linux user password via system password manager."}
+              </p>
+            </div>
+
+            {pinStatus && (
+              <div className={`p-2.5 rounded-lg text-xs mb-4 ${
+                pinStatus.includes("Success") || pinStatus.includes("sent")
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+              }`}>
+                {pinStatus}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-3 pt-2 border-t border-border/50">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearPin}
+                className="text-xs text-muted-foreground hover:text-foreground h-9"
+              >
+                Clear Lock
+              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowPinModal(false)}
+                  className="text-xs h-9"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSetPinOrPassword}
+                  disabled={pinLoading}
+                  className="bg-blue-600 hover:bg-blue-500 text-white text-xs h-9 px-4 gap-1.5"
+                >
+                  {pinLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  Apply Credential
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* UPDATE AGENT MODAL */}
+      {showUpdateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-lg bg-card border-border shadow-2xl p-6 relative flex flex-col">
+            <button
+              onClick={() => setShowUpdateModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
+                <DownloadCloud className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Update Device Agent</h3>
+                <p className="text-xs text-muted-foreground">
+                  Deploy latest Full APK to {selectedDevice?.hostname || selectedDeviceId}.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <label className="text-xs font-semibold text-foreground block">
+                APK Download URL (Full APK):
+              </label>
+              <input
+                type="text"
+                value={updateApkUrl}
+                onChange={(e) => setUpdateApkUrl(e.target.value)}
+                placeholder="/api/agent/download?platform=android&flavor=full"
+                className="w-full px-3 py-2 text-xs bg-muted/30 border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+              />
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-300">
+                <span className="font-semibold block mb-0.5">Zen Installer / Full Flavor</span>
+                Installs the Full Enterprise APK with Administrator privileges, screen control, and device locking.
+              </div>
+            </div>
+
+            {updateStatus && (
+              <div className={`p-2.5 rounded-lg text-xs mb-4 ${
+                updateStatus.includes("successfully")
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+              }`}>
+                {updateStatus}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/50">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowUpdateModal(false)}
+                className="text-xs h-9"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleUpdateAgent}
+                disabled={updateLoading}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs h-9 px-4 gap-1.5"
+              >
+                {updateLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <DownloadCloud className="w-3.5 h-3.5" />}
+                Send Update Command
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* DELETE / UNINSTALL CONFIRMATION MODAL */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-md bg-card border-rose-500/30 shadow-2xl p-6 relative flex flex-col">
+            <button
+              onClick={() => setShowDeleteModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 bg-rose-500/10 rounded-xl text-rose-400 border border-rose-500/20">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Uninstall & Delete Device?</h3>
+                <p className="text-xs text-muted-foreground font-mono">
+                  Target: {selectedDevice?.hostname || selectedDeviceId}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 mb-5 text-xs text-muted-foreground">
+              <p>This action will:</p>
+              <ul className="list-disc pl-5 space-y-1 text-foreground/90">
+                <li>Send an uninstallation signal to the agent device</li>
+                <li>Deactivate Device Administrator privileges on the phone</li>
+                <li>Remove device telemetry and registration from the dashboard</li>
+              </ul>
+              <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-300 text-[11px] mt-2">
+                This action cannot be undone. To reconnect, the agent must be reinstalled.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/50">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteModal(false)}
+                className="text-xs h-9"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleDeleteDevice}
+                disabled={deleteLoading}
+                className="bg-rose-600 hover:bg-rose-500 text-white text-xs h-9 px-4 gap-1.5"
+              >
+                {deleteLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Confirm Delete & Uninstall
+              </Button>
+            </div>
           </Card>
         </div>
       )}

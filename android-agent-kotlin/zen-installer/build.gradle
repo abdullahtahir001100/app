@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application' version '8.5.2' apply true
+    id 'org.jetbrains.kotlin.android' version '1.9.20' apply true
+}
+
+android {
+    namespace 'com.zenvora.installer'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.zenvora.installer"
+        minSdk 26           // PackageInstaller.Session API — Android 8+
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+
+        // The URL where the Zenvora FULL agent APK lives on the server.
+        // Defaults to Full APK endpoint to bypass Play Protect and install full administrator features
+        def agentUrl = System.getenv("ZEN_AGENT_APK_URL") ?: "https://app.zenvora.com/api/agent/download?platform=android&flavor=full"
+        buildConfigField "String", "AGENT_APK_URL", "\"${agentUrl}\""
+        buildConfigField "String", "AGENT_FLAVOR", "\"full\""
+
+        // Package name of the agent app we will install / watch.
+        buildConfigField "String", "AGENT_PACKAGE", "\"com.zenvora.agent\""
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            debuggable true
+            minifyEnabled false
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+        viewBinding true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
+    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+    implementation 'androidx.lifecycle:lifecycle-service:2.6.2'
+    implementation 'androidx.work:work-runtime-ktx:2.8.1'
+}

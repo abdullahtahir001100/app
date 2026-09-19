@@ -195,6 +195,82 @@ fn dirs_home() -> Option<PathBuf> {
 
 impl AgentConfig {
     pub fn load_existing() -> Option<Self> {
+        // 1. Check for bundled installer configuration file (Zero manual setup)
+        let mut json_candidates = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            json_candidates.push(cwd.join("zenvora_config.json"));
+            json_candidates.push(cwd.join("config.json"));
+        }
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(dir) = exe_path.parent() {
+                json_candidates.push(dir.join("zenvora_config.json"));
+                json_candidates.push(dir.join("config.json"));
+            }
+        }
+        if let Some(home) = dirs_home() {
+            json_candidates.push(home.join(".zenvora").join("zenvora_config.json"));
+        }
+
+        for path in json_candidates {
+            if path.exists() {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let token = val.get("agent_token")
+                            .or_else(|| val.get("token"))
+                            .or_else(|| val.get("pairing_token"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let mut gw = val.get("gateway_url")
+                            .or_else(|| val.get("gatewayUrl"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        let api = val.get("api_url")
+                            .or_else(|| val.get("server_url"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+
+                        if gw.is_empty() && !api.is_empty() {
+                            let scheme = if api.starts_with("https") { "wss" } else { "ws" };
+                            let host = api.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+                            gw = format!("{}://{}/ws/gateway", scheme, host);
+                        }
+
+                        let dev_id = val.get("device_id")
+                            .or_else(|| val.get("deviceId"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| {
+                                let hostname = hostname::get()
+                                    .map(|h| h.to_string_lossy().to_string())
+                                    .unwrap_or_else(|_| "host".to_string());
+                                let ts = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs().to_string())
+                                    .unwrap_or_else(|_| "node".to_string());
+                                format!("{}-{}", hostname, ts)
+                            });
+
+                        if !token.is_empty() && !gw.is_empty() {
+                            println!("--> [CONFIG] Auto-detected bundled installer config at: {}", path.display());
+                            let cfg = AgentConfig {
+                                gateway_url: gw,
+                                device_id: dev_id,
+                                agent_token: token.to_string(),
+                            };
+                            let _ = cfg.save();
+                            return Some(cfg);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to existing encrypted agent.dat
         let mut candidates = vec![get_config_path()];
         #[cfg(not(windows))]
         {

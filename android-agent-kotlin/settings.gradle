@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "android-agent-kotlin"
+include ':zen-installer'

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark background -->
+    <color name="bg_dark">#0F1117</color>
+    <color name="bg_surface">#1A1D2E</color>
+
+    <!-- Accent — matches Zenvora brand -->
+    <color name="accent_blue">#4A7CF7</color>
+    <color name="accent_green">#2ECC71</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B7C3</color>
+    <color name="text_hint">#606878</color>
+
+    <color name="white">#FFFFFF</color>
+</resources>

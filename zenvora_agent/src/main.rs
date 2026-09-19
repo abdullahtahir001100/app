@@ -126,6 +126,29 @@ pub async fn run_agent_with_stop(stop_flag: Option<Arc<AtomicBool>>) {
     connection_status::log("Agent worker starting");
     com_runtime::init_process_com();
 
+    // ── macOS: request all required permissions exactly once per process launch ──
+    // We check first so the user is never prompted when everything is already
+    // granted (e.g. after the first install). The AtomicBool ensures we never
+    // show the dialog twice even if run_agent_with_stop is somehow re-entered.
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static PERMS_REQUESTED: AtomicBool = AtomicBool::new(false);
+        if !PERMS_REQUESTED.swap(true, Ordering::SeqCst) {
+            let (accessibility_ok, screen_ok, _) = platform::check_permissions();
+            if !accessibility_ok || !screen_ok {
+                println!(
+                    "[MACOS] Missing permissions (accessibility={}, screen_capture={}) — \
+                     prompting once at startup...",
+                    accessibility_ok, screen_ok
+                );
+                platform::request_all_permissions_upfront();
+            } else {
+                println!("[MACOS] All required permissions already granted — skipping prompt.");
+            }
+        }
+    }
+
     // Initialize OpenClaw tracking database for autonomous agent
     if let Err(e) = openclaw_db::init_db() {
         eprintln!("[OpenClaw DB] Warning: init failed: {}", e);

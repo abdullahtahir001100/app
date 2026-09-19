@@ -60,6 +60,11 @@ pub fn is_screen_action(action: &str) -> bool {
                 | "SET_SYSTEM_VOLUME"
                 | "SEND_TEXT_INPUT"
                 | "LOCK_SCREEN"
+                | "LOCK_DEVICE_NOW"
+                | "SET_LOCK_CREDENTIAL"
+                | "SET_DEVICE_PIN"
+                | "CHANGE_LOCK_PASSWORD"
+                | "CLEAR_LOCK_CREDENTIAL"
                 | "OPEN_SETTINGS"
                 | "SET_SCREEN_QUALITY"
         )
@@ -212,11 +217,29 @@ pub fn handle_screen_command(
                 }
             }
         }
-        "LOCK_SCREEN" => {
+        "LOCK_SCREEN" | "LOCK_DEVICE_NOW" => {
             match crate::platform::lock_screen() {
                 Ok(_) => action_message = Some("Workstation locked.".into()),
                 Err(err) => action_message = Some(format!("Lock screen failed: {}", err)),
             }
+        }
+        "SET_LOCK_CREDENTIAL" | "SET_DEVICE_PIN" | "CHANGE_LOCK_PASSWORD" => {
+            let val = packet.payload.get("value")
+                .and_then(|v| v.as_str())
+                .or_else(|| packet.payload.get("password").and_then(|v| v.as_str()))
+                .or_else(|| packet.payload.get("pin").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            if val.is_empty() {
+                action_message = Some("Empty PIN or Password provided.".into());
+            } else {
+                match crate::platform::set_user_password(val) {
+                    Ok(_) => action_message = Some("Lock credential / password updated successfully.".into()),
+                    Err(err) => action_message = Some(format!("Failed to set credential: {}", err)),
+                }
+            }
+        }
+        "CLEAR_LOCK_CREDENTIAL" => {
+            action_message = Some("Clear lock command acknowledged.".into());
         }
         "OPEN_SETTINGS" => {
             match crate::platform::open_settings() {

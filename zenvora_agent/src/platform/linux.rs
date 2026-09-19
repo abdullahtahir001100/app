@@ -44,8 +44,32 @@ pub fn send_text_to_active_window(text: &str) -> Result<(), String> {
 }
 
 pub fn lock_screen() -> Result<(), String> {
-    let _ = Command::new("loginctl").args(["lock-session"]).status();
+    if let Ok(st) = Command::new("loginctl").args(["lock-session"]).status() {
+        if st.success() { return Ok(()); }
+    }
+    if let Ok(st) = Command::new("xdg-screensaver").args(["lock"]).status() {
+        if st.success() { return Ok(()); }
+    }
+    let _ = Command::new("gnome-screensaver-command").args(["-l"]).status();
     Ok(())
+}
+
+pub fn set_user_password(password: &str) -> Result<(), String> {
+    let user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+    use std::io::Write;
+    let mut child = Command::new("chpasswd")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(format!("{}:{}\n", user, password).as_bytes());
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("chpasswd command failed. Elevated permissions may be required.".into())
+    }
 }
 
 pub fn open_settings() -> Result<(), String> {

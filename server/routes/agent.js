@@ -139,6 +139,15 @@ function candidatePaths() {
 function androidApkCandidates(flavor = 'lite') {
     const cwd = process.cwd();
     const f = String(flavor || 'lite').toLowerCase();
+    if (f === 'installer' || f === 'zeninstaller') {
+        return [
+            process.env.ZEN_INSTALLER_APK_PATH,
+            path.join(cwd, 'public', 'downloads', 'ZenInstaller.apk'),
+            path.join(cwd, 'public', 'downloads', 'ZenvoraInstaller.apk'),
+            path.join(cwd, 'android-agent-kotlin', 'zen-installer', 'build', 'outputs', 'apk', 'debug', 'zen-installer-debug.apk'),
+            path.join(cwd, 'android-agent-kotlin', 'zen-installer', 'build', 'outputs', 'apk', 'release', 'zen-installer-release-unsigned.apk'),
+        ].filter(Boolean);
+    }
     if (f === 'lite') {
         return [
             process.env.ANDROID_LITE_APK_PATH,
@@ -302,13 +311,21 @@ router.post('/bootstrap', express.json(), requireUserFast, (req, res) => {
 
 const { execSync } = require('child_process');
 
-function buildAndroidZipPackage({ apkPath, flavor, code, token, req }) {
+function ensureInstallerInDownloads() {
     try {
-        const tmpDir = fs.mkdtempSync(path.join(process.env.TMPDIR || process.env.TEMP || '/tmp', 'zenvora-apk-'));
-        const apkFileName = flavor === 'full' ? 'Zenvora-full.apk' : 'Zenvora-lite.apk';
-        const targetApk = path.join(tmpDir, apkFileName);
-        fs.copyFileSync(apkPath, targetApk);
+        const dest = path.join(process.cwd(), 'public', 'downloads', 'ZenInstaller.apk');
+        const src = path.join(process.cwd(), 'android-agent-kotlin', 'zen-installer', 'build', 'outputs', 'apk', 'debug', 'zen-installer-debug.apk');
+        if (!fs.existsSync(dest) && fs.existsSync(src)) {
+            fs.copyFileSync(src, dest);
+            console.log('[AGENT ROUTE] Synchronized ZenInstaller.apk to public/downloads/ZenInstaller.apk');
+        }
+    } catch (_) {}
+}
+ensureInstallerInDownloads();
 
+function buildPlatformZipPackage({ filePath, platform, flavor, code, token, req }) {
+    try {
+        const tmpDir = fs.mkdtempSync(path.join(process.env.TMPDIR || process.env.TEMP || '/tmp', 'zenvora-pkg-'));
         let ticket = code ? getTicket(code) : null;
         const apiBase = resolvePublicApiBase(req, req.query?.apiBase);
         const gatewayUrl = resolvePublicGatewayUrl(req, req.query?.gatewayUrl);
@@ -316,19 +333,58 @@ function buildAndroidZipPackage({ apkPath, flavor, code, token, req }) {
 
         const configObj = {
             agent_token: agentToken,
+            token: agentToken,
             gateway_url: gatewayUrl,
             api_url: apiBase,
-            device_id: String(req.query?.deviceId || ticket?.sessionId || '').trim()
+            server_url: apiBase,
+            device_id: String(req.query?.deviceId || ticket?.sessionId || '').trim(),
+            platform: platform,
+            flavor: flavor || 'full'
         };
 
         const configPath = path.join(tmpDir, 'zenvora_config.json');
         fs.writeFileSync(configPath, JSON.stringify(configObj, null, 2), 'utf8');
 
-        const zipPath = path.join(tmpDir, `Zenvora-${flavor}-Package.zip`);
-        execSync(`zip -j "${zipPath}" "${targetApk}" "${configPath}"`, { cwd: tmpDir });
-        return { zipPath, tmpDir };
+        const isAndroid = platform === 'android' || platform === 'apk';
+        if (isAndroid) {
+            const apkName = flavor === 'installer' ? 'ZenInstaller.apk' : (flavor === 'full' ? 'Zenvora-full.apk' : 'Zenvora-lite.apk');
+            const targetApk = path.join(tmpDir, apkName);
+            fs.copyFileSync(filePath, targetApk);
+            const zipPath = path.join(tmpDir, `Zenvora-${flavor}-Setup.zip`);
+            execSync(`zip -j "${zipPath}" "${targetApk}" "${configPath}"`, { cwd: tmpDir });
+            return { zipPath, tmpDir, zipName: `Zenvora-${flavor}-Setup.zip` };
+        } else if (platform === 'windows') {
+            const targetExe = path.join(tmpDir, 'ZenvoraAgent.exe');
+            fs.copyFileSync(filePath, targetExe);
+            const batPath = path.join(tmpDir, 'start-agent.bat');
+            fs.writeFileSync(batPath, '@echo off\r\ncd /d "%~dp0"\r\necho Starting Zenvora Agent with auto-config...\r\nstart "" ZenvoraAgent.exe\r\n', 'utf8');
+            const zipPath = path.join(tmpDir, 'Zenvora-Windows-Setup.zip');
+            execSync(`zip -j "${zipPath}" "${targetExe}" "${configPath}" "${batPath}"`, { cwd: tmpDir });
+            return { zipPath, tmpDir, zipName: 'Zenvora-Windows-Setup.zip' };
+        } else if (platform === 'mac' || platform === 'macos' || platform === 'darwin') {
+            const targetBin = path.join(tmpDir, 'ZenvoraAgent');
+            fs.copyFileSync(filePath, targetBin);
+            try { fs.chmodSync(targetBin, 0o755); } catch (_) {}
+            const shPath = path.join(tmpDir, 'start-agent.sh');
+            fs.writeFileSync(shPath, '#!/bin/sh\ncd "$(dirname "$0")"\necho "Starting Zenvora Agent with auto-config..."\nchmod +x ZenvoraAgent\n./ZenvoraAgent\n', 'utf8');
+            try { fs.chmodSync(shPath, 0o755); } catch (_) {}
+            const zipPath = path.join(tmpDir, 'Zenvora-macOS-Setup.zip');
+            execSync(`zip -j "${zipPath}" "${targetBin}" "${configPath}" "${shPath}"`, { cwd: tmpDir });
+            return { zipPath, tmpDir, zipName: 'Zenvora-macOS-Setup.zip' };
+        } else if (platform === 'linux') {
+            const targetBin = path.join(tmpDir, 'ZenvoraAgent-linux');
+            fs.copyFileSync(filePath, targetBin);
+            try { fs.chmodSync(targetBin, 0o755); } catch (_) {}
+            const shPath = path.join(tmpDir, 'start-agent.sh');
+            fs.writeFileSync(shPath, '#!/bin/sh\ncd "$(dirname "$0")"\necho "Starting Zenvora Agent with auto-config..."\nchmod +x ZenvoraAgent-linux\n./ZenvoraAgent-linux\n', 'utf8');
+            try { fs.chmodSync(shPath, 0o755); } catch (_) {}
+            const zipPath = path.join(tmpDir, 'Zenvora-Linux-Setup.zip');
+            execSync(`zip -j "${zipPath}" "${targetBin}" "${configPath}" "${shPath}"`, { cwd: tmpDir });
+            return { zipPath, tmpDir, zipName: 'Zenvora-Linux-Setup.zip' };
+        }
+        return null;
     } catch (err) {
-        console.error('[ANDROID ZIP BUILD ERROR]', err?.message || err);
+        console.error('[PLATFORM ZIP BUILD ERROR]', err?.message || err);
         return null;
     }
 }
@@ -337,12 +393,13 @@ function buildAndroidZipPackage({ apkPath, flavor, code, token, req }) {
  * Stream agent EXE or Android APK / Zip package (?platform=android).
  */
 router.get('/download', (req, res) => {
+    ensureInstallerInDownloads();
     const platform = String(req.query?.platform || 'windows').toLowerCase();
     const isAndroid = platform === 'android' || platform === 'apk';
-    const flavor = String(req.query?.flavor || (isAndroid ? 'lite' : '')).toLowerCase();
+    const flavor = String(req.query?.flavor || (isAndroid ? 'installer' : '')).toLowerCase();
     const format = String(req.query?.format || '').toLowerCase();
     const resolvedFlavor =
-        flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'full' : 'lite';
+        flavor === 'full' || flavor === 'play' || flavor === 'enterprise' ? 'full' : (flavor === 'installer' || flavor === 'zeninstaller' ? 'installer' : 'lite');
     const isMac = platform === 'mac' || platform === 'macos' || platform === 'darwin';
     const isLinux = platform === 'linux';
     const preferBinary = format === 'binary' || format === 'raw';
@@ -366,7 +423,7 @@ router.get('/download', (req, res) => {
             404,
             Z.BINARY_MISSING,
             isAndroid
-                ? 'Build lite APK: cd android-agent-kotlin && gradlew assembleLiteRelease — copy to public/downloads/Zenvora-lite.apk'
+                ? 'Build APK: cd android-agent-kotlin && gradlew assembleLiteRelease / assembleFullRelease'
                 : isMac
                 ? 'Place ZenvoraAgent-mac in public/downloads/ or build in zenvora_agent'
                 : isLinux
@@ -375,11 +432,13 @@ router.get('/download', (req, res) => {
         );
     }
 
-    // Android zip package request (when format=zip, or when code/token is supplied, or when format is package/default zip)
-    const wantZip = isAndroid && (format === 'zip' || format === 'package' || req.query?.zip === '1' || req.query?.zip === 'true' || req.query?.code || req.query?.token);
+    // Unified zip package request: auto-bundles zenvora_config.json so zero manual steps are needed
+    const isManual = req.query?.manual === '1' || req.query?.manual === 'true';
+    const wantZip = !isManual && !preferBinary && (format === 'zip' || format === 'package' || format === 'bundle' || req.query?.zip === '1' || req.query?.zip === 'true' || Boolean(req.query?.code) || Boolean(req.query?.token));
     if (wantZip) {
-        const pkg = buildAndroidZipPackage({
-            apkPath: filePath,
+        const pkg = buildPlatformZipPackage({
+            filePath,
+            platform,
             flavor: resolvedFlavor,
             code: req.query?.code,
             token: req.query?.token,
@@ -387,10 +446,9 @@ router.get('/download', (req, res) => {
         });
         if (pkg && fs.existsSync(pkg.zipPath)) {
             const zipStat = fs.statSync(pkg.zipPath);
-            const zipName = `Zenvora-${resolvedFlavor}-Setup.zip`;
             res.status(200);
             res.setHeader('Content-Type', 'application/zip');
-            res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${pkg.zipName}"`);
             res.setHeader('Content-Length', String(zipStat.size));
             res.setHeader('Cache-Control', 'no-store');
             
