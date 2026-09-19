@@ -1265,7 +1265,8 @@ if (loadingDevices && devices.length === 0) {
 
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
               {/* TAB 2: 3D DATA FLOW GRAPH */}
               {activeTab === "charts" && (
