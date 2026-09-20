@@ -527,7 +527,11 @@ mod unix {
     pub fn ensure_macos_app_bundle() -> Result<PathBuf, String> {
         let current_exe = env::current_exe().map_err(|e| e.to_string())?;
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-        let app_dir = home.join("Applications").join("ZenvoraAgent.app");
+        let legacy_app = home.join("Applications").join("ZenvoraAgent.app");
+        if legacy_app.exists() {
+            let _ = fs::remove_dir_all(&legacy_app);
+        }
+        let app_dir = home.join("Library").join("Application Support").join("Zenvora").join("ZenvoraAgent.app");
         let contents_dir = app_dir.join("Contents");
         let macos_dir = contents_dir.join("MacOS");
         let target_exe = macos_dir.join("ZenvoraAgent");
