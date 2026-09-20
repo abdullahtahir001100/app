@@ -554,6 +554,11 @@ mod unix {
             }
         }
 
+        let resources_dir = contents_dir.join("Resources");
+        let _ = fs::create_dir_all(&resources_dir);
+        let icon_path = resources_dir.join("AppIcon.icns");
+        let _ = fs::write(&icon_path, crate::paths::ZENVORA_APP_ICON_ICNS);
+
         let plist_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -570,6 +575,8 @@ mod unix {
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Zenvora requires Screen Recording permission for screen streaming.</string>
     <key>NSCameraUsageDescription</key>
@@ -582,6 +589,11 @@ mod unix {
 </plist>"#;
 
         let _ = fs::write(&info_plist, plist_content);
+
+        // Self-sign the entire app bundle to stabilize macOS TCC permissions
+        let _ = Command::new("codesign")
+            .args(["--force", "--deep", "--sign", "-", app_dir.to_str().unwrap_or_default()])
+            .output();
 
         Ok(target_exe)
     }

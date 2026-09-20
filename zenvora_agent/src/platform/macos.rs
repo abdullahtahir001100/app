@@ -336,6 +336,8 @@ pub fn check_accessibility_permission() -> bool {
     true
 }
 
+static LAST_SCREEN_PROMPT_TS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn request_screen_capture_permission() {
     #[cfg(target_os = "macos")]
     {
@@ -347,6 +349,15 @@ pub fn request_screen_capture_permission() {
             if CGPreflightScreenCaptureAccess() {
                 return;
             }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let last = LAST_SCREEN_PROMPT_TS.load(std::sync::atomic::Ordering::Relaxed);
+            if now.saturating_sub(last) < 300 {
+                return;
+            }
+            LAST_SCREEN_PROMPT_TS.store(now, std::sync::atomic::Ordering::Relaxed);
             let _ = CGRequestScreenCaptureAccess();
         }
         let _ = open_screen_recording_settings();

@@ -80,6 +80,7 @@ pub fn migrate_legacy_file(file_name: &str) {
 }
 
 pub const ZENVORA_LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+pub const ZENVORA_APP_ICON_ICNS: &[u8] = include_bytes!("../assets/AppIcon.icns");
 
 /// Ensures that the official Zenvora logo is available locally for native GUI dialogs and notifications.
 pub fn ensure_logo_file() -> PathBuf {
