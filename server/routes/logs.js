@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const ActivityLog = require('../models/ActivityLog');
 const BrowserHistory = require('../models/BrowserHistory');
+// ad tht
 const AppHistory = require('../models/AppHistory');
 const Notification = require('../models/Notification');
 const { attachUser, requireUserIdOwnership, requireDeviceAccess, requirePagePermission } = require('../middleware/auth');
@@ -185,9 +186,9 @@ router.post('/activity', attachUser, requirePagePermission('logs.activity'), req
         const { deviceId, action, category, device, details, status, metadata } = req.body;
 
         if (!deviceId || !action) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'deviceId and action are required' 
+            return res.status(400).json({
+                success: false,
+                message: 'deviceId and action are required'
             });
         }
 
@@ -210,7 +211,7 @@ router.post('/activity', attachUser, requirePagePermission('logs.activity'), req
             await log.save();
         }
 
-        void syncManager.syncActivityLog(logData).catch(() => {});
+        void syncManager.syncActivityLog(logData).catch(() => { });
 
         res.status(201).json({
             success: true,
@@ -227,15 +228,15 @@ router.post('/browser-history', attachUser, requirePagePermission('logs.browser'
         const { deviceId, entries } = req.body;
 
         if (!deviceId || !Array.isArray(entries)) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'deviceId and entries array are required' 
+            return res.status(400).json({
+                success: false,
+                message: 'deviceId and entries array are required'
             });
         }
 
         if (isMysql()) {
             const result = await getMysqlAdapter().upsertBrowserHistories(deviceId, entries, req.user.id);
-            void syncManager.syncBrowserHistory(deviceId, entries, req.user.id).catch(() => {});
+            void syncManager.syncBrowserHistory(deviceId, entries, req.user.id).catch(() => { });
             return res.status(201).json({
                 success: true,
                 count: result.count
@@ -254,7 +255,7 @@ router.post('/browser-history', attachUser, requirePagePermission('logs.browser'
         }));
 
         const created = await BrowserHistory.insertMany(historyEntries);
-        void syncManager.syncBrowserHistory(deviceId, entries, req.user.id).catch(() => {});
+        void syncManager.syncBrowserHistory(deviceId, entries, req.user.id).catch(() => { });
 
         res.status(201).json({
             success: true,
@@ -271,15 +272,15 @@ router.post('/app-history', attachUser, requirePagePermission('logs.apps'), requ
         const { deviceId, entries } = req.body;
 
         if (!deviceId || !Array.isArray(entries)) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'deviceId and entries array are required' 
+            return res.status(400).json({
+                success: false,
+                message: 'deviceId and entries array are required'
             });
         }
 
         if (isMysql()) {
             const result = await getMysqlAdapter().upsertAppHistories(deviceId, entries, req.user.id);
-            void syncManager.syncAppHistory(deviceId, entries, req.user.id).catch(() => {});
+            void syncManager.syncAppHistory(deviceId, entries, req.user.id).catch(() => { });
             return res.status(201).json({
                 success: true,
                 count: result.count
@@ -297,7 +298,7 @@ router.post('/app-history', attachUser, requirePagePermission('logs.apps'), requ
         }));
 
         const created = await AppHistory.insertMany(appEntries);
-        void syncManager.syncAppHistory(deviceId, entries, req.user.id).catch(() => {});
+        void syncManager.syncAppHistory(deviceId, entries, req.user.id).catch(() => { });
 
         res.status(201).json({
             success: true,
