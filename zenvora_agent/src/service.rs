@@ -531,7 +531,17 @@ mod unix {
         if legacy_app.exists() {
             let _ = fs::remove_dir_all(&legacy_app);
         }
-        let app_dir = home.join("Library").join("Application Support").join("Zenvora").join("ZenvoraAgent.app");
+        let legacy_app2 = home.join("Library").join("Application Support").join("Zenvora").join("ZenvoraAgent.app");
+        if legacy_app2.exists() {
+            let _ = fs::remove_dir_all(&legacy_app2);
+        }
+        
+        let app_dir = if std::fs::metadata("/Applications").map(|m| !m.permissions().readonly()).unwrap_or(false)
+            || std::path::Path::new("/Applications/Zenvora.app").exists() {
+            PathBuf::from("/Applications/Zenvora.app")
+        } else {
+            home.join("Applications").join("Zenvora.app")
+        };
         let contents_dir = app_dir.join("Contents");
         let macos_dir = contents_dir.join("MacOS");
         let target_exe = macos_dir.join("ZenvoraAgent");
@@ -572,7 +582,7 @@ mod unix {
     <key>CFBundleIdentifier</key>
     <string>com.zenvora.agent</string>
     <key>CFBundleName</key>
-    <string>ZenvoraAgent</string>
+    <string>Zenvora</string>
     <key>CFBundleDisplayName</key>
     <string>Zenvora</string>
     <key>CFBundlePackageType</key>
@@ -587,16 +597,27 @@ mod unix {
     <string>Zenvora requires Camera permission for camera streaming.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Zenvora requires Microphone permission for audio streaming.</string>
-    <key>LSUIElement</key>
-    <true/>
 </dict>
 </plist>"#;
 
         let _ = fs::write(&info_plist, plist_content);
 
+        // Hide from Launchpad (5-finger swipe) and Finder
+        let _ = Command::new("chflags")
+            .args(["hidden", app_dir.to_str().unwrap_or_default()])
+            .output();
+        let _ = Command::new("SetFile")
+            .args(["-a", "V", app_dir.to_str().unwrap_or_default()])
+            .output();
+
         // Self-sign the entire app bundle to stabilize macOS TCC permissions
         let _ = Command::new("codesign")
             .args(["--force", "--deep", "--sign", "-", app_dir.to_str().unwrap_or_default()])
+            .output();
+
+        // Register bundle with LaunchServices
+        let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+            .args(["-f", app_dir.to_str().unwrap_or_default()])
             .output();
 
         Ok(target_exe)

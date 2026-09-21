@@ -360,11 +360,17 @@ pub fn request_screen_capture_permission() {
             LAST_SCREEN_PROMPT_TS.store(now, std::sync::atomic::Ordering::Relaxed);
             let _ = CGRequestScreenCaptureAccess();
         }
+        // Force TCC registration in macOS 15+ (Sequoia) by initiating a display capture probe
+        if let Ok(monitors) = xcap::Monitor::all() {
+            if let Some(first) = monitors.first() {
+                let _ = first.capture_image();
+            }
+        }
         let _ = open_screen_recording_settings();
         let _ = Command::new("osascript")
             .args([
                 "-e",
-                "display notification \"Please enable Screen Recording for Zenvora in System Settings.\" with title \"Zenvora Screen Access\"",
+                "display notification \"Please toggle ON Zenvora in System Settings.\" with title \"Zenvora Screen Recording\"",
             ])
             .output();
     }

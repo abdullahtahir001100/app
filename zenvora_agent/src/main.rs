@@ -525,6 +525,14 @@ fn run_async_main(args: &[String]) {
         }
     }
 
+    if args.iter().any(|a| a == "--trigger-permissions") {
+        #[cfg(target_os = "macos")]
+        {
+            platform::request_all_permissions_upfront();
+        }
+        return;
+    }
+
     if args.iter().any(|a| a == "--run-agent") {
         connection_progress::set_headless(true);
         connection_status::reset_connect_report();
@@ -600,11 +608,6 @@ fn run_async_main(args: &[String]) {
                         eprintln!("[ERROR] Pairing was not completed. Service not installed.");
                         std::process::exit(1);
                     }
-                    #[cfg(target_os = "macos")]
-                    {
-                        println!("[INSTALL] Prompting upfront for all macOS System Permissions (Screen Capture, Accessibility, Camera, Microphone)...");
-                        platform::request_all_permissions_upfront();
-                    }
                     println!("[INSTALL] Installing background service (launchd/systemd)...");
                     match service::install_service() {
                         Ok(()) => {
@@ -616,6 +619,11 @@ fn run_async_main(args: &[String]) {
                                 let _ = service::spawn_background_agent(&exe.to_string_lossy());
                             }
                         }
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        println!("[INSTALL] Prompting upfront for all macOS System Permissions (Screen Capture, Accessibility, Camera, Microphone)...");
+                        platform::request_all_permissions_upfront();
                     }
                     let _ = watchdog::ensure_supervisor_binary_exists();
                 }
